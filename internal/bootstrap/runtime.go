@@ -15,7 +15,10 @@ import (
 	"syscall"
 	"time"
 
+	"scanner-platform/internal/account"
 	"scanner-platform/internal/api"
+	"scanner-platform/internal/approvals"
+	"scanner-platform/internal/assets"
 	"scanner-platform/internal/repo"
 )
 
@@ -23,9 +26,18 @@ import (
 // commands keep their original entrypoint for work already in progress.
 func RunServer(args []string, stdout, stderr io.Writer) int {
 	for _, arg := range args {
-		for _, legacy := range []string{"--init-admin", "--password-file", "--dev-ui", "--status"} {
+		for _, legacy := range []string{"--init-admin", "--password-file"} {
 			if arg == legacy || strings.HasPrefix(arg, legacy+"=") {
-				return Run(Server, args, stdout, stderr)
+				initArgs := append([]string{}, args...)
+				hasDB := false
+				for _, a := range args {
+					hasDB = hasDB || a == "--db" || strings.HasPrefix(a, "--db=")
+				}
+				if !hasDB {
+					abs, _ := filepath.Abs(filepath.Join("runtime", "platform.db"))
+					initArgs = append(initArgs, "--db", abs)
+				}
+				return Run(Server, initArgs, stdout, stderr)
 			}
 		}
 	}
@@ -35,11 +47,17 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 	dbPath := flags.String("db", filepath.Join("runtime", "platform.db"), "SQLite database path")
 	uiDir := flags.String("ui-dir", filepath.Join("web", "dist"), "Built web UI directory")
 	seed := flags.Bool("seed-demo", false, "Create a single synthetic startup task")
+	flags.Bool("dev-ui", false, "Compatibility alias for the unified local Server")
+	status := flags.Bool("status", false, "Show local runtime capabilities")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
 		return 2
+	}
+	if *status {
+		fmt.Fprintln(stdout, `{"role":"sec-server","mode":"local","scanning":false}`)
+		return 0
 	}
 	if flags.NArg() != 0 || !isNumericLoopback(*addr) {
 		fmt.Fprintln(stderr, "provide flags only and use a numeric loopback listen address")
@@ -49,7 +67,28 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "Web UI is missing. Run make dev, or build web/ and pass --ui-dir.")
 		return 1
 	}
-	store, err := repo.OpenRuntime(*dbPath)
+	absoluteDB, err := filepath.Abs(*dbPath)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	accounts, err := account.New(absoluteDB)
+	if err != nil {
+		fmt.Fprintf(stderr, "open account database: %v\n", err)
+		return 1
+	}
+	defer accounts.Close()
+	assetStore, err := assets.New(accounts.SQLDB())
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	approvalsStore, err := approvals.New(accounts.SQLDB())
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	store, err := repo.NewRuntime(accounts.SQLDB())
 	if err != nil {
 		fmt.Fprintf(stderr, "open task database: %v\n", err)
 		return 1
@@ -57,13 +96,36 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 	defer store.Close()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// Synthetic tasks have no external side effects and may safely restart after a local restart.
+	if _, err := accounts.SQLDB().ExecContext(ctx, `UPDATE scan_tasks SET status='PENDING',worker_id='' WHERE status='RUNNING'`); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	if _, err := accounts.SQLDB().ExecContext(ctx, `UPDATE rule_jobs SET status='PENDING',data=json_set(data,'$.nodeId','') WHERE status='RUNNING'`); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	go func() {
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case now := <-ticker.C:
+				if err := store.Tick(ctx, now); err != nil && ctx.Err() == nil {
+					slog.Error("local scheduler tick failed", "error", err)
+				}
+			}
+		}
+	}()
 	if *seed {
 		if err := store.SeedSyntheticTask(ctx); err != nil {
 			fmt.Fprintf(stderr, "create startup task: %v\n", err)
 			return 1
 		}
 	}
-	handler := api.NewRuntimeHandler(store, nil, *uiDir)
+	handler := api.NewRuntimeHandler(store, api.NewDevelopmentHandler(accounts, assetStore, approvalsStore), *uiDir, accounts)
 	server := &http.Server{Addr: *addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		<-ctx.Done()

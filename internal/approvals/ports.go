@@ -81,6 +81,13 @@ func (s *Store) ReviewPort(ctx context.Context, actor, assetID string, port int,
 	}
 	// Quarantined ports must never be approved. Quarantine takes precedence
 	// even when a later operator tries to approve the same port.
+	var skipped int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM asset_ports WHERE asset_id=? AND port=? AND kind='EXCLUDED_PROXY'`, assetID, port).Scan(&skipped); err != nil {
+		return PortRequest{}, err
+	}
+	if skipped > 0 {
+		return PortRequest{}, ErrConflict
+	}
 	var quarantined int
 	err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM port_quarantine
    WHERE asset_id=? AND port=? AND status='ACTIVE'`, assetID, port).Scan(&quarantined)

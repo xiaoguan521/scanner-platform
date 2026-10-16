@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -58,7 +59,39 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("worker only accepts synthetic tasks with explicit targets")
 	}
 	slog.Info("synthetic task claimed", "task_id", task.ID, "worker_id", w.ID)
-	if err := waitFor(ctx, w.Delay); err != nil {
+	heartbeatCtx, stopHeartbeat := context.WithCancel(ctx)
+	defer stopHeartbeat()
+	go func() {
+		ticker := time.NewTicker(3 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-heartbeatCtx.Done():
+				return
+			case <-ticker.C:
+				_, _ = w.post(heartbeatCtx, "/api/v1/nodes/heartbeat", map[string]string{"id": w.ID, "kind": "worker", "currentTask": task.ID}, nil)
+			}
+		}
+	}()
+	workCtx := ctx
+	cancel := func() {}
+	if task.HardDeadline != "" {
+		deadline, err := time.Parse(time.RFC3339Nano, task.HardDeadline)
+		if err != nil {
+			return false, fmt.Errorf("invalid task deadline: %w", err)
+		}
+		workCtx, cancel = context.WithDeadline(ctx, deadline)
+	}
+	err = waitFor(workCtx, w.Delay)
+	cancel()
+	if err != nil {
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			_, err = w.post(ctx, "/api/v1/worker/report", Report{TaskID: task.ID, WorkerID: w.ID, Status: "PAUSED_WINDOW"}, nil)
+			return true, err
+		}
 		return false, err
 	}
 	report := Report{TaskID: task.ID, WorkerID: w.ID, Target: task.Chunks[0].Targets[0], Title: SyntheticTitle}

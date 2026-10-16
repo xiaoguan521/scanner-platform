@@ -29,15 +29,18 @@ export const DashboardPage: React.FC = () => {
     { key: '1', group: '金融支付核心', riskScore: 92, openVulns: 2, owner: '张三' },
     { key: '2', group: '用户与鉴权中台', riskScore: 68, openVulns: 1, owner: '李四' },
     { key: '3', group: '大数据分析平台', riskScore: 35, openVulns: 0, owner: '赵六' },
-  ] : [];
+  ] : Array.from(new Set(findings.map(f=>f.businessGroup).filter(Boolean))).map((group,index)=>{
+    const items=findings.filter(f=>f.businessGroup===group&&!['FALSE_POSITIVE','FIXED'].includes(f.status));
+    return {key:String(index+1),group,riskScore:Math.min(100,items.reduce((sum,f)=>sum+({CRITICAL:30,HIGH:20,MEDIUM:10,LOW:3,INFO:1}[f.severity]),0)),openVulns:items.length,owner:items[0]?.owner||'—'};
+  }).sort((a,b)=>b.riskScore-a.riskScore).slice(0,5);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       {/* 顶部安全合规与运行提示 */}
       <CollectionNotice loading={assetsLoading || findingsLoading || tasksLoading || rulesLoading} error={assetsError || findingsError || tasksError || rulesError} />
       <Alert
-        message={isDemoMode ? '仅演示：安全规则的设计目标' : 'Phase 0：真实扫描服务未启用'}
-        description="出站围栏、显式 IP:端口授权和非 root 引擎执行是架构要求，尚未完成实际节点验收；此页面不能证明这些防护已经生效。"
+        message={isDemoMode ? '仅演示：安全规则的设计目标' : '本地业务运行中 · 真实扫描留待验证'}
+        description="本地业务数据来自 SQLite。当前任务为模拟执行，不会连接目标；真实扫描结果与修复验证另行接入。"
         type="info"
         showIcon
         icon={<SafetyOutlined />}
@@ -83,7 +86,7 @@ export const DashboardPage: React.FC = () => {
               prefix={<ClockCircleOutlined style={{ color: '#fa8c16' }} />}
             />
             <div style={{ marginTop: 8, fontSize: 12, color: '#64748b' }}>
-              时间窗调度是设计目标，尚未启用
+              任务按指定时间窗等待、执行和恢复
             </div>
           </Card>
         </Col>
@@ -92,12 +95,12 @@ export const DashboardPage: React.FC = () => {
           <Card bordered={false}>
             <Statistic
               title="规则库版本 (CURRENT)"
-              value={isDemoMode ? currentRule?.version || '演示暂无' : '未验证'}
+              value={currentRule?.version || (isDemoMode?'演示暂无':'尚未导入')}
               prefix={<CheckCircleOutlined style={{ color: '#13c2c2' }} />}
               valueStyle={{ fontSize: 18 }}
             />
             <div style={{ marginTop: 8, fontSize: 12, color: '#64748b' }}>
-              仅展示演示版本；签名状态尚未验证
+              本地 Updater 上报的当前版本；未验签、未验证引擎兼容性
             </div>
           </Card>
         </Col>
@@ -106,8 +109,9 @@ export const DashboardPage: React.FC = () => {
       {/* 风险分布与风险业务组 */}
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={14}>
-          <Card title="TOP 风险业务组排名" bordered={false}>
+          <Card title="业务组发现项统计（含明确标注的模拟结果）" bordered={false}>
             <Table
+              scroll={{x:600}}
               dataSource={topRiskGroups}
               pagination={false}
               size="middle"
@@ -181,6 +185,7 @@ export const DashboardPage: React.FC = () => {
                 </div>
                 <Progress percent={totalFindings ? Math.round(findings.filter((f) => f.severity === 'LOW').length / totalFindings * 100) : 0} strokeColor="#1677ff" showInfo={false} />
               </div>
+              <div><Text>信息 (Info)：{findings.filter(f=>f.severity==='INFO').length} / {totalFindings}</Text><Progress percent={totalFindings?Math.round(findings.filter(f=>f.severity==='INFO').length/totalFindings*100):0} showInfo={false}/></div>
             </div>
           </Card>
         </Col>
@@ -189,6 +194,7 @@ export const DashboardPage: React.FC = () => {
       {/* 近期扫描任务执行流 */}
       <Card title="正在执行与近期任务" bordered={false}>
         <Table
+          scroll={{x:1000}}
           dataSource={tasks}
           rowKey="id"
           pagination={false}

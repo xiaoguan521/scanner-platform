@@ -30,6 +30,7 @@ type Asset struct {
 	Ports            []Port `json:"ports"`
 	RequestedPorts   []int  `json:"requestedPorts"`
 	QuarantinedPorts []int  `json:"quarantinedPorts"`
+	SkippedPorts     []int  `json:"skippedPorts"`
 }
 type Port struct {
 	Port   int    `json:"port"`
@@ -42,11 +43,13 @@ type Input struct {
 	BusinessGroup  string `json:"businessGroup"`
 	Owner          string `json:"owner"`
 	RequestedPorts []int  `json:"requestedPorts"`
+	SkippedPorts   []int  `json:"skippedPorts"`
 }
 type Edit struct {
 	BusinessGroup  string `json:"businessGroup"`
 	Owner          string `json:"owner"`
 	RequestedPorts []int  `json:"requestedPorts"`
+	SkippedPorts   []int  `json:"skippedPorts"`
 }
 type Repository interface {
 	List(context.Context) ([]Asset, error)
@@ -62,6 +65,34 @@ var imageRepoPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,254}$`
 func New(db *sql.DB) (*Store, error) {
 	if db == nil {
 		return nil, fmt.Errorf("%w: missing database", ErrInvalid)
+	}
+	// Preserve the unused asset table created by the first synthetic runtime.
+	// Never drop its contents when upgrading an existing local database.
+	rows, err := db.Query("PRAGMA table_info(assets)")
+	if err != nil {
+		return nil, err
+	}
+	legacy, current := false, false
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, kind string
+		var def any
+		if err := rows.Scan(&cid, &name, &kind, &notnull, &def, &pk); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		legacy = legacy || name == "data"
+		current = current || name == "kind"
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	if legacy && !current {
+		if _, err := db.Exec("ALTER TABLE assets RENAME TO assets_legacy_runtime"); err != nil {
+			return nil, fmt.Errorf("preserve legacy assets: %w", err)
+		}
 	}
 	for _, stmt := range []string{
 		`CREATE TABLE IF NOT EXISTS assets (
@@ -134,7 +165,7 @@ func normalize(in Input) (Input, error) {
 	switch in.Kind {
 	case "host":
 		ip := net.ParseIP(in.Address)
-		if ip == nil {
+		if ip == nil || ip.IsUnspecified() || ip.IsMulticast() || ip.Equal(net.IPv4bcast) {
 			return Input{}, ErrInvalid
 		}
 		in.Address = ip.String()
@@ -152,7 +183,29 @@ func normalize(in Input) (Input, error) {
 		return Input{}, err
 	}
 	in.RequestedPorts = ports
+	in.SkippedPorts, err = canonicalPorts(in.SkippedPorts)
+	if err != nil {
+		return Input{}, err
+	}
+	for _, port := range in.SkippedPorts {
+		found := false
+		for _, requested := range ports {
+			found = found || port == requested
+		}
+		if !found || in.Kind != "host" {
+			return Input{}, ErrInvalid
+		}
+	}
 	return in, nil
+}
+
+func storeSkipped(ctx context.Context, tx *sql.Tx, id string, ports []int) error {
+	for _, port := range ports {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO asset_ports(asset_id,port,kind,source) VALUES (?,?,'EXCLUDED_PROXY','manual_skip')", id, port); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 func newID() (string, error) { return rand.Text(), nil }
 func auditTx(ctx context.Context, tx *sql.Tx, actor, action, id string) error {
@@ -188,6 +241,7 @@ func decodeAsset(row interface{ Scan(...any) error }) (Asset, error) {
 	a.Ports = []Port{}
 	a.RequestedPorts = []int{}
 	a.QuarantinedPorts = []int{}
+	a.SkippedPorts = []int{}
 	return a, nil
 }
 
@@ -246,6 +300,9 @@ func (s *Store) List(ctx context.Context) ([]Asset, error) {
 				return nil, err
 			}
 			result[i].Ports = append(result[i].Ports, item)
+			if item.Kind == "EXCLUDED_PROXY" {
+				result[i].SkippedPorts = append(result[i].SkippedPorts, item.Port)
+			}
 		}
 		err = approved.Err()
 		approved.Close()
@@ -302,6 +359,9 @@ func (s *Store) Create(ctx context.Context, actor string, in Input) (Asset, erro
 	if err := storeRequests(ctx, tx, id, actor, in.RequestedPorts); err != nil {
 		return Asset{}, err
 	}
+	if err := storeSkipped(ctx, tx, id, in.SkippedPorts); err != nil {
+		return Asset{}, err
+	}
 	if err := auditTx(ctx, tx, actor, "create_asset", id); err != nil {
 		return Asset{}, err
 	}
@@ -310,7 +370,14 @@ func (s *Store) Create(ctx context.Context, actor string, in Input) (Asset, erro
 	}
 	return Asset{ID: id, Kind: in.Kind, Address: in.Address, ResolvedIP: resolved,
 		BusinessGroup: in.BusinessGroup, Owner: in.Owner, CreatedAt: createdAt,
-		Ports: []Port{}, RequestedPorts: in.RequestedPorts, QuarantinedPorts: []int{}}, nil
+		Ports: skippedPortRecords(in.SkippedPorts), RequestedPorts: in.RequestedPorts, QuarantinedPorts: []int{}, SkippedPorts: in.SkippedPorts}, nil
+}
+func skippedPortRecords(ports []int) []Port {
+	out := []Port{}
+	for _, p := range ports {
+		out = append(out, Port{Port: p, Kind: "EXCLUDED_PROXY", Source: "manual_skip"})
+	}
+	return out
 }
 func (s *Store) Update(ctx context.Context, actor, id string, edit Edit) (Asset, error) {
 	edit.BusinessGroup = strings.TrimSpace(edit.BusinessGroup)
@@ -334,6 +401,10 @@ func (s *Store) Update(ctx context.Context, actor, id string, edit Edit) (Asset,
 	if err != nil {
 		return Asset{}, err
 	}
+	normalized, err := normalize(Input{Kind: a.Kind, Address: a.Address, BusinessGroup: edit.BusinessGroup, Owner: edit.Owner, RequestedPorts: ports, SkippedPorts: edit.SkippedPorts})
+	if err != nil {
+		return Asset{}, err
+	}
 	if _, err := tx.ExecContext(ctx, "UPDATE assets SET business_group=?,owner=? WHERE id=?", edit.BusinessGroup, edit.Owner, id); err != nil {
 		return Asset{}, err
 	}
@@ -352,6 +423,9 @@ func (s *Store) Update(ctx context.Context, actor, id string, edit Edit) (Asset,
 	if err := storeRequests(ctx, tx, id, actor, ports); err != nil {
 		return Asset{}, err
 	}
+	if err := storeSkipped(ctx, tx, id, normalized.SkippedPorts); err != nil {
+		return Asset{}, err
+	}
 	if err := auditTx(ctx, tx, actor, "update_asset", id); err != nil {
 		return Asset{}, err
 	}
@@ -361,6 +435,7 @@ func (s *Store) Update(ctx context.Context, actor, id string, edit Edit) (Asset,
 	a.BusinessGroup = edit.BusinessGroup
 	a.Owner = edit.Owner
 	a.RequestedPorts = ports
-	a.Ports = []Port{}
+	a.Ports = skippedPortRecords(normalized.SkippedPorts)
+	a.SkippedPorts = normalized.SkippedPorts
 	return a, nil
 }

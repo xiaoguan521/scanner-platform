@@ -1,25 +1,27 @@
+---
 openapi: 3.0.3
 info:
-  title: Scanner Platform UI API (Phase 0 contract)
-  version: 0.4.0
-  description: |
-    Canonical contract for the control-plane UI. This is a scaffold, not an
-    authorization to scan. Local development mode implements SQLite-backed
-    authentication and admin-only user management. Scanner operations remain disabled.
-    All date-time strings are RFC 3339 with explicit offsets.
+  title: Scanner Platform local business API
+  version: 0.5.0
+  description: 'Same-origin local development API. UI mutations require X-Requested-With:
+    XMLHttpRequest and admin/security_engineer unless stated otherwise. Accounts use
+    HttpOnly session cookies. Worker/Updater endpoints are loopback-only local development
+    protocols. All task execution is synthetic; no targets are contacted. Rule integrity
+    validation is not signature or engine compatibility validation.'
 servers:
-  - url: /
-    description: Same-origin UI API (dev proxy for localhost)
+- url: "/"
+  description: Same-origin UI API (dev proxy for localhost)
 tags:
-  - name: system
-  - name: future
-  - name: accounts
-  - name: assets
-  - name: approvals
+- name: system
+- name: future
+- name: accounts
+- name: assets
+- name: approvals
 paths:
-  /healthz:
+  "/healthz":
     get:
-      tags: [system]
+      tags:
+      - system
       summary: Liveness only; not readiness
       responses:
         '200':
@@ -27,21 +29,29 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Health'
-  /readyz:
+                "$ref": "#/components/schemas/Health"
+  "/readyz":
     get:
-      tags: [system]
-      summary: Not ready until security gates, storage and node auth are integrated
+      summary: Local control-plane readiness, not scanner readiness
       responses:
-        '503':
-          description: Phase 0 is intentionally not ready
+        '200':
+          description: Local operation result
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/NotReady'
-  /api/v1/system/status:
+                type: object
+                properties:
+                  state:
+                    type: string
+                    enum:
+                    - ready
+                  mode:
+                    type: string
+                required: []
+  "/api/v1/system/status":
     get:
-      tags: [system]
+      tags:
+      - system
       summary: Read-only status (does not imply engine health)
       responses:
         '200':
@@ -49,10 +59,11 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SystemStatus'
-  /api/v1/system/capabilities:
+                "$ref": "#/components/schemas/SystemStatus"
+  "/api/v1/system/capabilities":
     get:
-      tags: [system]
+      tags:
+      - system
       summary: Explicitly enabled and unavailable capabilities
       responses:
         '200':
@@ -60,193 +71,291 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Capabilities'
-  /api/v1/auth/login:
+                "$ref": "#/components/schemas/Capabilities"
+  "/api/v1/auth/login":
     post:
-      tags: [accounts]
+      tags:
+      - accounts
       summary: Log in on local development server
       requestBody:
         required: true
         content:
           application/json:
-            schema: {$ref: '#/components/schemas/LoginRequest'}
+            schema:
+              "$ref": "#/components/schemas/LoginRequest"
       responses:
         '200':
           description: Session cookie issued
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/User'}
-        '401': {description: Invalid credentials}
-  /api/v1/auth/me:
+              schema:
+                "$ref": "#/components/schemas/User"
+        '401':
+          description: Invalid credentials
+      parameters:
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema:
+          type: string
+          enum:
+          - XMLHttpRequest
+  "/api/v1/auth/me":
     get:
-      tags: [accounts]
-      security: [{sessionCookie: []}]
+      tags:
+      - accounts
+      security:
+      - sessionCookie: []
       responses:
         '200':
           description: Current user
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/User'}
-        '401': {description: Missing or expired session}
-  /api/v1/auth/logout:
+              schema:
+                "$ref": "#/components/schemas/User"
+        '401':
+          description: Missing or expired session
+  "/api/v1/auth/logout":
     post:
-      tags: [accounts]
-      security: [{sessionCookie: []}]
+      tags:
+      - accounts
+      security:
+      - sessionCookie: []
       responses:
-        '200': {description: Session revoked}
-  /api/v1/users:
+        '200':
+          description: Session revoked
+      parameters:
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema:
+          type: string
+          enum:
+          - XMLHttpRequest
+  "/api/v1/users":
     get:
-      tags: [accounts]
+      tags:
+      - accounts
       summary: Admin-only SQLite user list
-      security: [{sessionCookie: []}]
+      security:
+      - sessionCookie: []
       responses:
-        '401': {description: Unauthenticated}
-        '403': {description: Admin role required}
+        '401':
+          description: Unauthenticated
+        '403':
+          description: Admin role required
         '200':
           description: User list
           content:
             application/json:
               schema:
                 allOf:
-                  - $ref: '#/components/schemas/Pagination'
-                  - type: object
-                    required: [items]
-                    properties:
+                - "$ref": "#/components/schemas/Pagination"
+                - type: object
+                  required:
+                  - items
+                  properties:
+                    items:
+                      type: array
                       items:
-                        type: array
-                        items:
-                          $ref: '#/components/schemas/User'
+                        "$ref": "#/components/schemas/User"
     post:
-      tags: [accounts]
+      tags:
+      - accounts
       summary: Admin-only account creation
-      security: [{sessionCookie: []}]
+      security:
+      - sessionCookie: []
       requestBody:
         required: true
         content:
           application/json:
-            schema: {$ref: '#/components/schemas/NewUserRequest'}
+            schema:
+              "$ref": "#/components/schemas/NewUserRequest"
       responses:
         '201':
           description: Created user
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/User'}
-        '401': {description: Unauthenticated}
-        '403': {description: Admin role required}
-  /api/v1/users/{id}:
-    patch:
-      tags: [accounts]
-      summary: Admin-only role and active-state update
-      security: [{sessionCookie: []}]
+              schema:
+                "$ref": "#/components/schemas/User"
+        '401':
+          description: Unauthenticated
+        '403':
+          description: Admin role required
       parameters:
-        - in: path
-          name: id
-          required: true
-          schema: {type: string}
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema:
+          type: string
+          enum:
+          - XMLHttpRequest
+  "/api/v1/users/{id}":
+    patch:
+      tags:
+      - accounts
+      summary: Admin-only role and active-state update
+      security:
+      - sessionCookie: []
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema:
+          type: string
+          enum:
+          - XMLHttpRequest
       requestBody:
         required: true
         content:
           application/json:
-            schema: {$ref: '#/components/schemas/UpdateUserRequest'}
+            schema:
+              "$ref": "#/components/schemas/UpdateUserRequest"
       responses:
         '200':
           description: Updated user
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/User'}
-        '401': {description: Unauthenticated}
-        '403': {description: Forbidden update}
-  /api/v1/assets:
+              schema:
+                "$ref": "#/components/schemas/User"
+        '401':
+          description: Unauthenticated
+        '403':
+          description: Forbidden update
+  "/api/v1/assets":
     get:
-      tags: [assets]
+      tags:
+      - assets
       summary: Authenticated SQLite asset registry list
-      security: [{sessionCookie: []}]
+      security:
+      - sessionCookie: []
       responses:
-        '401': {description: Missing session}
+        '401':
+          description: Missing session
         '200':
           description: Asset list (requested ports do not grant scanning permission)
           content:
             application/json:
               schema:
                 allOf:
-                  - $ref: '#/components/schemas/Pagination'
-                  - type: object
-                    required: [items]
-                    properties:
+                - "$ref": "#/components/schemas/Pagination"
+                - type: object
+                  required:
+                  - items
+                  properties:
+                    items:
+                      type: array
                       items:
-                        type: array
-                        items:
-                          $ref: '#/components/schemas/Asset'
+                        "$ref": "#/components/schemas/Asset"
     post:
-      tags: [assets]
+      tags:
+      - assets
       summary: Register an asset and unapproved port requests
-      description: Only admin or security_engineer can register assets. Does not approve ports or start scanning.
-      security: [{sessionCookie: []}]
+      description: Only admin or security_engineer can register assets. Does not approve
+        ports or start scanning.
+      security:
+      - sessionCookie: []
       requestBody:
         required: true
         content:
           application/json:
-            schema: {$ref: '#/components/schemas/NewAssetRequest'}
+            schema:
+              "$ref": "#/components/schemas/NewAssetRequest"
       responses:
         '201':
           description: Newly registered asset
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/Asset'}
-        '400': {description: Invalid address, metadata or port request}
-        '403': {description: Insufficient role}
-        '409': {description: Duplicate asset}
-  /api/v1/assets/{id}:
+              schema:
+                "$ref": "#/components/schemas/Asset"
+        '400':
+          description: Invalid address, metadata or port request
+        '403':
+          description: Insufficient role
+        '409':
+          description: Duplicate asset
+      parameters:
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema:
+          type: string
+          enum:
+          - XMLHttpRequest
+  "/api/v1/assets/{id}":
     patch:
-      tags: [assets]
+      tags:
+      - assets
       summary: Update owner, business group and unapproved port requests
       description: Only admin or security_engineer. Asset address and kind are immutable.
-      security: [{sessionCookie: []}]
+      security:
+      - sessionCookie: []
       parameters:
-        - in: path
-          name: id
-          required: true
-          schema: {type: string}
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema:
+          type: string
+          enum:
+          - XMLHttpRequest
       requestBody:
         required: true
         content:
           application/json:
-            schema: {$ref: '#/components/schemas/EditAssetRequest'}
+            schema:
+              "$ref": "#/components/schemas/EditAssetRequest"
       responses:
         '200':
           description: Updated asset
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/Asset'}
-        '400': {description: Invalid metadata or port request}
-        '403': {description: Insufficient role}
-        '404': {description: No matching asset}
-  /api/v1/port-quarantines:
+              schema:
+                "$ref": "#/components/schemas/Asset"
+        '400':
+          description: Invalid metadata or port request
+        '403':
+          description: Insufficient role
+        '404':
+          description: No matching asset
+  "/api/v1/port-quarantines":
     get:
-      tags: [future]
-      summary: Future quarantined port list (not implemented)
+      summary: Authenticated local port-quarantines
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
         '200':
-          description: Future quarantined ports
+          description: Local operation result
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/Pagination'
-                  - type: object
-                    required: [items]
-                    properties:
-                      items:
-                        type: array
-                        items:
-                          $ref: '#/components/schemas/PortQuarantine'
-  /api/v1/scopes:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      "$ref": "#/components/schemas/PortQuarantine"
+                  total:
+                    type: integer
+                required:
+                - items
+                - total
+      security:
+      - sessionCookie: []
+  "/api/v1/scopes":
     get:
-      tags: [approvals]
+      tags:
+      - approvals
       summary: Authenticated scope requests list, not execution rights
-      security: [{sessionCookie: []}]
+      security:
+      - sessionCookie: []
       responses:
         '200':
           description: All scope applications
@@ -254,61 +363,95 @@ paths:
             application/json:
               schema:
                 allOf:
-                  - $ref: '#/components/schemas/Pagination'
-                  - type: object
-                    required: [items]
-                    properties:
+                - "$ref": "#/components/schemas/Pagination"
+                - type: object
+                  required:
+                  - items
+                  properties:
+                    items:
+                      type: array
                       items:
-                        type: array
-                        items: {$ref: '#/components/schemas/AuthorizedScope'}
-        '401': {description: Missing session}
+                        "$ref": "#/components/schemas/AuthorizedScope"
+        '401':
+          description: Missing session
     post:
-      tags: [approvals]
+      tags:
+      - approvals
       summary: Apply for scope of a registered numeric host IP
       description: Requires admin or security_engineer; application starts PENDING.
-      security: [{sessionCookie: []}]
+      security:
+      - sessionCookie: []
       requestBody:
         required: true
         content:
           application/json:
-            schema: {$ref: '#/components/schemas/ScopeApplication'}
+            schema:
+              "$ref": "#/components/schemas/ScopeApplication"
       responses:
         '201':
           description: Pending request (not a Worker scan grant)
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/AuthorizedScope'}
-        '400': {description: Invalid scope or time window}
-        '403': {description: Insufficient role}
-  /api/v1/scopes/{id}/review:
-    post:
-      tags: [approvals]
-      summary: Review a pending scope application
-      description: Admin or ops_approver only, and must be a different user than the applicant.
-      security: [{sessionCookie: []}]
+              schema:
+                "$ref": "#/components/schemas/AuthorizedScope"
+        '400':
+          description: Invalid scope or time window
+        '403':
+          description: Insufficient role
       parameters:
-        - in: path
-          name: id
-          required: true
-          schema: {type: string}
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema:
+          type: string
+          enum:
+          - XMLHttpRequest
+  "/api/v1/scopes/{id}/review":
+    post:
+      tags:
+      - approvals
+      summary: Review a pending scope application
+      description: Admin or ops_approver only, and must be a different user than the
+        applicant.
+      security:
+      - sessionCookie: []
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema:
+          type: string
+          enum:
+          - XMLHttpRequest
       requestBody:
         required: true
         content:
           application/json:
-            schema: {$ref: '#/components/schemas/ReviewDecision'}
+            schema:
+              "$ref": "#/components/schemas/ReviewDecision"
       responses:
         '200':
           description: Reviewed scope
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/AuthorizedScope'}
-        '403': {description: Reviewer is applicant or insufficient role}
-        '409': {description: Already reviewed, expired or changed}
-  /api/v1/port-requests:
+              schema:
+                "$ref": "#/components/schemas/AuthorizedScope"
+        '403':
+          description: Reviewer is applicant or insufficient role
+        '409':
+          description: Already reviewed, expired or changed
+  "/api/v1/port-requests":
     get:
-      tags: [approvals]
+      tags:
+      - approvals
       summary: Authenticated list of registered port requests
-      security: [{sessionCookie: []}]
+      security:
+      - sessionCookie: []
       responses:
         '200':
           description: Port review status and request identities
@@ -316,125 +459,613 @@ paths:
             application/json:
               schema:
                 allOf:
-                  - $ref: '#/components/schemas/Pagination'
-                  - type: object
-                    required: [items]
-                    properties:
+                - "$ref": "#/components/schemas/Pagination"
+                - type: object
+                  required:
+                  - items
+                  properties:
+                    items:
+                      type: array
                       items:
-                        type: array
-                        items: {$ref: '#/components/schemas/PortRequest'}
-  /api/v1/port-requests/{assetId}/{port}/review:
+                        "$ref": "#/components/schemas/PortRequest"
+  "/api/v1/port-requests/{assetId}/{port}/review":
     post:
-      tags: [approvals]
+      tags:
+      - approvals
       summary: Explicit port review (not a scan command)
       description: Admin or ops_approver only; reviewer cannot be request author.
-      security: [{sessionCookie: []}]
+      security:
+      - sessionCookie: []
       parameters:
-        - in: path
-          name: assetId
-          required: true
-          schema: {type: string}
-        - in: path
-          name: port
-          required: true
-          schema: {type: integer, minimum: 1, maximum: 65535}
+      - in: path
+        name: assetId
+        required: true
+        schema:
+          type: string
+      - in: path
+        name: port
+        required: true
+        schema:
+          type: string
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema:
+          type: string
+          enum:
+          - XMLHttpRequest
       requestBody:
         required: true
         content:
           application/json:
-            schema: {$ref: '#/components/schemas/ReviewDecision'}
+            schema:
+              "$ref": "#/components/schemas/ReviewDecision"
       responses:
         '200':
           description: Port decision recorded
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/PortRequest'}
-        '403': {description: Reviewer is applicant or insufficient role}
-        '409': {description: Already reviewed or quarantined}
-  /api/v1/tasks:
+              schema:
+                "$ref": "#/components/schemas/PortRequest"
+        '403':
+          description: Reviewer is applicant or insufficient role
+        '409':
+          description: Already reviewed or quarantined
+  "/api/v1/tasks":
     get:
-      tags: [future]
-      summary: Future task and chunk list (not implemented)
+      summary: Authenticated local tasks
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
         '200':
-          description: Future task list
+          description: Local operation result
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/Pagination'
-                  - type: object
-                    required: [items]
-                    properties:
-                      items:
-                        type: array
-                        items:
-                          $ref: '#/components/schemas/ScanTask'
-  /api/v1/findings:
-    get:
-      tags: [future]
-      summary: Future findings list (not implemented)
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      "$ref": "#/components/schemas/ScanTask"
+                  total:
+                    type: integer
+                required:
+                - items
+                - total
+      security:
+      - sessionCookie: []
+    post:
+      summary: Queue an explicit-target synthetic task
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
-        '200':
-          description: Future findings list
+        '201':
+          description: Local operation result
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/Pagination'
-                  - type: object
-                    required: [items]
-                    properties:
-                      items:
-                        type: array
-                        items:
-                          $ref: '#/components/schemas/Finding'
-  /api/v1/nodes:
+                "$ref": "#/components/schemas/ScanTask"
+      security:
+      - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/TaskInput"
+      parameters:
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema:
+          type: string
+          enum:
+          - XMLHttpRequest
+  "/api/v1/findings":
     get:
-      tags: [future]
-      summary: Future authenticated node telemetry list (not implemented)
+      summary: Authenticated local findings
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
         '200':
-          description: Future node list
+          description: Local operation result
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/Pagination'
-                  - type: object
-                    required: [items]
-                    properties:
-                      items:
-                        type: array
-                        items:
-                          $ref: '#/components/schemas/NodeInfo'
-  /api/v1/rules:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      "$ref": "#/components/schemas/Finding"
+                  total:
+                    type: integer
+                required:
+                - items
+                - total
+      security:
+      - sessionCookie: []
+  "/api/v1/nodes":
     get:
-      tags: [future]
-      summary: Future verified rule bundle list (not implemented)
+      summary: Authenticated local nodes
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
         '200':
-          description: Future rule bundle list
+          description: Local operation result
           content:
             application/json:
               schema:
-                allOf:
-                  - $ref: '#/components/schemas/Pagination'
-                  - type: object
-                    required: [items]
-                    properties:
-                      items:
-                        type: array
-                        items:
-                          $ref: '#/components/schemas/RuleBundle'
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      "$ref": "#/components/schemas/NodeInfo"
+                  total:
+                    type: integer
+                required:
+                - items
+                - total
+      security:
+      - sessionCookie: []
+  "/api/v1/rules":
+    get:
+      summary: Authenticated local rules
+      responses:
+        '200':
+          description: Local operation result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      "$ref": "#/components/schemas/RuleBundle"
+                  total:
+                    type: integer
+                required:
+                - items
+                - total
+      security:
+      - sessionCookie: []
+  "/api/v1/schedules":
+    get:
+      summary: Authenticated local schedules
+      responses:
+        '200':
+          description: Local operation result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      "$ref": "#/components/schemas/Schedule"
+                  total:
+                    type: integer
+                required:
+                - items
+                - total
+      security:
+      - sessionCookie: []
+    post:
+      summary: Persist a one-shot or interval schedule
+      responses:
+        '201':
+          description: Local operation result
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Schedule"
+      security:
+      - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/Schedule"
+      parameters:
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema:
+          type: string
+          enum:
+          - XMLHttpRequest
+  "/api/v1/rule-jobs":
+    get:
+      summary: Authenticated local rule-jobs
+      responses:
+        '200':
+          description: Local operation result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      "$ref": "#/components/schemas/RuleJob"
+                  total:
+                    type: integer
+                required:
+                - items
+                - total
+      security:
+      - sessionCookie: []
+  "/api/v1/auth/setup":
+    get:
+      summary: Whether first-admin initialization is required
+      responses:
+        '200':
+          description: Local operation result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  required:
+                    type: boolean
+                required: []
+    post:
+      summary: Initialize exactly one first admin; returns 409 after setup
+      responses:
+        '201':
+          description: Local operation result
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/LoginRequest"
+      parameters:
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema:
+          type: string
+          enum:
+          - XMLHttpRequest
+  "/api/v1/tasks/{id}/cancel":
+    post:
+      summary: Cancel a queued/running synthetic task; no success finding is stored
+      responses:
+        '200':
+          description: Local operation result
+      security:
+      - sessionCookie: []
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema:
+          type: string
+          enum:
+          - XMLHttpRequest
+  "/api/v1/findings/{id}":
+    patch:
+      summary: Persist and audit manual finding status; FIXED is not exposed
+      responses:
+        '200':
+          description: Local operation result
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Finding"
+      security:
+      - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum:
+                  - OPEN
+                  - IN_PROGRESS
+                  - FALSE_POSITIVE
+              required:
+              - status
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema:
+          type: string
+          enum:
+          - XMLHttpRequest
+  "/api/v1/schedules/{id}":
+    patch:
+      summary: Enable/disable a schedule
+      responses:
+        '200':
+          description: Local operation result
+      security:
+      - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+              required:
+              - enabled
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema:
+          type: string
+          enum:
+          - XMLHttpRequest
+  "/api/v1/rules/import":
+    post:
+      summary: Queue a local ZIP import (up to 256 MiB)
+      responses:
+        '202':
+          description: Local operation result
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/RuleJob"
+      security:
+      - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                bundle:
+                  type: string
+                  format: binary
+              required:
+              - bundle
+      parameters:
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema:
+          type: string
+          enum:
+          - XMLHttpRequest
+  "/api/v1/rules/fetch":
+    post:
+      summary: Queue HTTPS ZIP download/import; no URL credentials, queries or redirects
+      responses:
+        '202':
+          description: Local operation result
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/RuleJob"
+      security:
+      - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                url:
+                  type: string
+                  format: uri
+                expectedSha256:
+                  type: string
+                  pattern: "^[0-9a-fA-F]{64}$"
+              required:
+              - url
+              - expectedSha256
+      parameters:
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema:
+          type: string
+          enum:
+          - XMLHttpRequest
+  "/api/v1/rules/{version}/activate":
+    post:
+      summary: Queue current-version activation or explicit rollback
+      responses:
+        '202':
+          description: Local operation result
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/RuleJob"
+      security:
+      - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                rollback:
+                  type: boolean
+              required:
+              - rollback
+      parameters:
+      - in: path
+        name: version
+        required: true
+        schema:
+          type: string
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema:
+          type: string
+          enum:
+          - XMLHttpRequest
+  "/api/v1/worker/claim":
+    post:
+      summary: Local-only worker/claim
+      responses:
+        '200':
+          description: Local operation result
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ScanTask"
+        '204':
+          description: Nothing queued
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                workerId:
+                  type: string
+              required:
+              - workerId
+  "/api/v1/worker/report":
+    post:
+      summary: Local-only worker/report
+      responses:
+        '200':
+          description: Local operation result
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                taskId:
+                  type: string
+                workerId:
+                  type: string
+                target:
+                  type: string
+                title:
+                  type: string
+                status:
+                  type: string
+                  enum:
+                  - PAUSED_WINDOW
+              required: []
+  "/api/v1/updater/claim":
+    post:
+      summary: Local-only updater/claim
+      responses:
+        '200':
+          description: Local operation result
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/RuleJob"
+        '204':
+          description: Nothing queued
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                nodeId:
+                  type: string
+              required:
+              - nodeId
+  "/api/v1/updater/report":
+    post:
+      summary: Local-only updater/report
+      responses:
+        '200':
+          description: Local operation result
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                jobId:
+                  type: string
+                nodeId:
+                  type: string
+                status:
+                  type: string
+                message:
+                  type: string
+                version:
+                  type: string
+                bundles:
+                  type: array
+                  items:
+                    "$ref": "#/components/schemas/RuleBundle"
+              required: []
+  "/api/v1/updater/state":
+    post:
+      summary: Local-only updater/state
+      responses:
+        '200':
+          description: Local operation result
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                nodeId:
+                  type: string
+                bundles:
+                  type: array
+                  items:
+                    "$ref": "#/components/schemas/RuleBundle"
+              required: []
+  "/api/v1/nodes/heartbeat":
+    post:
+      summary: Local-only nodes/heartbeat
+      responses:
+        '200':
+          description: Local operation result
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                id:
+                  type: string
+                kind:
+                  type: string
+                  enum:
+                  - worker
+                  - updater
+                currentTask:
+                  type: string
+              required: []
 components:
   securitySchemes:
     sessionCookie:
@@ -447,288 +1078,870 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/APIError'
+            "$ref": "#/components/schemas/APIError"
   schemas:
     APIError:
       type: object
-      required: [error, message]
+      required:
+      - error
+      - message
       properties:
-        error: {type: string, example: not_implemented}
-        message: {type: string}
+        error:
+          type: string
+          example: not_implemented
+        message:
+          type: string
     Health:
       type: object
-      required: [state, role]
+      required:
+      - state
+      - role
       properties:
-        state: {type: string, enum: [alive]}
-        role: {type: string}
+        state:
+          type: string
+          enum:
+          - alive
+        role:
+          type: string
     NotReady:
       type: object
-      required: [state, reason]
+      required:
+      - state
+      - reason
       properties:
-        state: {type: string, enum: [not_ready]}
-        reason: {type: string}
+        state:
+          type: string
+          enum:
+          - not_ready
+        reason:
+          type: string
     SystemStatus:
       type: object
-      required: [role, phase, state, ready, enabled, unavailable]
+      required:
+      - role
+      - phase
+      - state
+      - ready
+      - enabled
+      - unavailable
       properties:
-        role: {type: string, enum: [sec-server, sec-portable]}
-        phase: {type: string}
-        state: {type: string, enum: [SCAFFOLD]}
-        ready: {type: boolean}
+        role:
+          type: string
+          enum:
+          - sec-server
+          - sec-portable
+        phase:
+          type: string
+        state:
+          type: string
+          enum:
+          - SCAFFOLD
+          - RUNNING
+        ready:
+          type: boolean
         enabled:
           type: array
-          items: {type: string}
+          items:
+            type: string
         unavailable:
           type: array
-          items: {type: string}
+          items:
+            type: string
     Capabilities:
       type: object
-      required: [enabled, unavailable]
+      required:
+      - enabled
+      - unavailable
       properties:
         enabled:
           type: array
-          items: {type: string}
+          items:
+            type: string
         unavailable:
           type: array
-          items: {type: string}
+          items:
+            type: string
     Pagination:
       type: object
-      required: [total]
+      required:
+      - total
       properties:
-        total: {type: integer, minimum: 0}
+        total:
+          type: integer
+          minimum: 0
     LoginRequest:
       type: object
-      required: [username, password]
+      required:
+      - username
+      - password
       properties:
-        username: {type: string}
-        password: {type: string, format: password}
+        username:
+          type: string
+        password:
+          type: string
+          format: password
     NewUserRequest:
       type: object
-      required: [username, password, role]
+      required:
+      - username
+      - password
+      - role
       properties:
-        username: {type: string}
-        password: {type: string, format: password, minLength: 12}
-        role: {type: string, enum: [admin, security_engineer, ops_approver, viewer]}
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+          minLength: 12
+        role:
+          type: string
+          enum:
+          - admin
+          - security_engineer
+          - ops_approver
+          - viewer
     UpdateUserRequest:
       type: object
-      required: [role, isActive]
+      required:
+      - role
+      - isActive
       properties:
-        role: {type: string, enum: [admin, security_engineer, ops_approver, viewer]}
-        isActive: {type: boolean}
+        role:
+          type: string
+          enum:
+          - admin
+          - security_engineer
+          - ops_approver
+          - viewer
+        isActive:
+          type: boolean
     User:
       type: object
-      required: [id, username, role, isActive]
-      description: Read-only management DTO. Never includes password hashes, tokens, or credentials.
+      required:
+      - id
+      - username
+      - role
+      - isActive
+      description: Read-only management DTO. Never includes password hashes, tokens,
+        or credentials.
       properties:
-        id: {type: string}
-        username: {type: string}
-        role: {type: string, enum: [admin, security_engineer, ops_approver, viewer]}
-        isActive: {type: boolean}
+        id:
+          type: string
+        username:
+          type: string
+        role:
+          type: string
+          enum:
+          - admin
+          - security_engineer
+          - ops_approver
+          - viewer
+        isActive:
+          type: boolean
     TimeWindow:
       type: object
-      required: [weekdays, start, end, timeZone]
+      required:
+      - weekdays
+      - start
+      - end
+      - timeZone
       properties:
         weekdays:
           type: array
-          items: {type: integer, minimum: 0, maximum: 6}
-        start: {type: string, pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'}
-        end: {type: string, pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'}
-        timeZone: {type: string, example: Asia/Shanghai}
+          items:
+            type: integer
+            minimum: 0
+            maximum: 6
+        start:
+          type: string
+          pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+        end:
+          type: string
+          pattern: "^(([01][0-9]|2[0-3]):[0-5][0-9]|24:00)$"
+        timeZone:
+          type: string
+          example: Asia/Shanghai
+      description: End is exclusive; end before start means next day, assigned to
+        starting weekday. Empty task windows mean unrestricted time. Equal start/end
+        is invalid.
     NewAssetRequest:
       type: object
-      required: [kind, address, businessGroup, owner, requestedPorts]
+      required:
+      - kind
+      - address
+      - businessGroup
+      - owner
+      - requestedPorts
       properties:
-        kind: {type: string, enum: [host, image_repo]}
-        address: {type: string, description: Numeric host IP or registry path}
-        businessGroup: {type: string, maxLength: 100}
-        owner: {type: string, maxLength: 100}
+        kind:
+          type: string
+          enum:
+          - host
+          - image_repo
+        address:
+          type: string
+          description: Numeric host IP or registry path
+        businessGroup:
+          type: string
+          maxLength: 100
+        owner:
+          type: string
+          maxLength: 100
         requestedPorts:
           type: array
           maxItems: 50
           uniqueItems: true
-          items: {type: integer, minimum: 1, maximum: 65535}
+          items:
+            type: integer
+            minimum: 1
+            maximum: 65535
+        skippedPorts:
+          type: array
+          items:
+            type: integer
+            minimum: 1
+            maximum: 65535
+          maxItems: 50
+          uniqueItems: true
+          description: Subset of explicitly registered ports; never dispatched to
+            Worker.
     EditAssetRequest:
       type: object
-      required: [businessGroup, owner, requestedPorts]
+      required:
+      - businessGroup
+      - owner
+      - requestedPorts
       properties:
-        businessGroup: {type: string, maxLength: 100}
-        owner: {type: string, maxLength: 100}
+        businessGroup:
+          type: string
+          maxLength: 100
+        owner:
+          type: string
+          maxLength: 100
         requestedPorts:
           type: array
           maxItems: 50
           uniqueItems: true
-          items: {type: integer, minimum: 1, maximum: 65535}
+          items:
+            type: integer
+            minimum: 1
+            maximum: 65535
+        skippedPorts:
+          type: array
+          items:
+            type: integer
+            minimum: 1
+            maximum: 65535
+          maxItems: 50
+          uniqueItems: true
+          description: Subset of explicitly registered ports; never dispatched to
+            Worker.
     AssetPort:
       type: object
-      required: [port, kind, source]
+      required:
+      - port
+      - kind
+      - source
       properties:
-        port: {type: integer, minimum: 1, maximum: 65535}
-        kind: {type: string, enum: [WEB, NON_WEB, EXCLUDED_PROXY]}
-        source: {type: string}
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        kind:
+          type: string
+          enum:
+          - WEB
+          - NON_WEB
+          - EXCLUDED_PROXY
+        source:
+          type: string
     PortQuarantine:
       type: object
-      required: [assetId, address, port, reason, detectedAt, status]
+      required:
+      - assetId
+      - address
+      - port
+      - reason
+      - detectedAt
+      - status
       properties:
-        assetId: {type: string}
-        address: {type: string}
-        port: {type: integer, minimum: 1, maximum: 65535}
-        reason: {type: string}
-        detectedAt: {type: string, format: date-time}
-        status: {type: string, enum: [ACTIVE, RELEASED]}
-        reviewedBy: {type: string}
-        reviewedAt: {type: string, format: date-time}
+        assetId:
+          type: string
+        address:
+          type: string
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        reason:
+          type: string
+        detectedAt:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum:
+          - ACTIVE
+          - RELEASED
+        reviewedBy:
+          type: string
+        reviewedAt:
+          type: string
+          format: date-time
     Asset:
       type: object
-      required: [id, kind, address, businessGroup, owner, createdAt, ports]
+      required:
+      - id
+      - kind
+      - address
+      - businessGroup
+      - owner
+      - createdAt
+      - ports
       properties:
-        id: {type: string}
-        kind: {type: string, enum: [host, image_repo]}
-        address: {type: string}
-        resolvedIp: {type: string}
-        businessGroup: {type: string}
-        owner: {type: string}
-        createdAt: {type: string, format: date-time}
+        id:
+          type: string
+        kind:
+          type: string
+          enum:
+          - host
+          - image_repo
+        address:
+          type: string
+        resolvedIp:
+          type: string
+        businessGroup:
+          type: string
+        owner:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
         ports:
           type: array
           items:
-            $ref: '#/components/schemas/AssetPort'
+            "$ref": "#/components/schemas/AssetPort"
         requestedPorts:
           type: array
-          description: Unapproved registration requests, never scanning grants
+          description: Explicitly entered local targets; no CIDR or domain expansion.
           maxItems: 50
-          items: {type: integer, minimum: 1, maximum: 65535}
+          items:
+            type: integer
+            minimum: 1
+            maximum: 65535
         quarantinedPorts:
           type: array
-          items: {type: integer, minimum: 1, maximum: 65535}
+          items:
+            type: integer
+            minimum: 1
+            maximum: 65535
+        skippedPorts:
+          type: array
+          items:
+            type: integer
+            minimum: 1
+            maximum: 65535
+          maxItems: 50
+          uniqueItems: true
+          description: Subset of explicitly registered ports; never dispatched to
+            Worker.
     ScopeApplication:
       type: object
-      required: [assetId, timeWindows, expiresAt]
+      required:
+      - assetId
+      - timeWindows
+      - expiresAt
       properties:
-        assetId: {type: string, description: Existing asset ID for a numeric IP host}
+        assetId:
+          type: string
+          description: Existing asset ID for a numeric IP host
         timeWindows:
           type: array
           minItems: 1
-          maxItems: 1
-          items: {$ref: '#/components/schemas/TimeWindow'}
-        expiresAt: {type: string, format: date-time}
+          maxItems: 8
+          items:
+            "$ref": "#/components/schemas/TimeWindow"
+        expiresAt:
+          type: string
+          format: date-time
     ReviewDecision:
       type: object
-      required: [decision, approvalTicket, note]
+      required:
+      - decision
+      - approvalTicket
+      - note
       properties:
-        decision: {type: string, enum: [APPROVE, REJECT]}
-        approvalTicket: {type: string, minLength: 3, maxLength: 120}
-        note: {type: string, maxLength: 400}
-        kind: {type: string, enum: [WEB, NON_WEB], description: Required for port approval}
+        decision:
+          type: string
+          enum:
+          - APPROVE
+          - REJECT
+        approvalTicket:
+          type: string
+          minLength: 3
+          maxLength: 120
+        note:
+          type: string
+          maxLength: 400
+        kind:
+          type: string
+          enum:
+          - WEB
+          - NON_WEB
+          description: Required for port approval
     PortRequest:
       type: object
-      required: [assetId, address, port, kind, requestedBy, status, reviewedBy, approvalTicket, reviewedAt, reviewNote]
+      required:
+      - assetId
+      - address
+      - port
+      - kind
+      - requestedBy
+      - status
+      - reviewedBy
+      - approvalTicket
+      - reviewedAt
+      - reviewNote
       properties:
-        assetId: {type: string}
-        address: {type: string}
-        port: {type: integer, minimum: 1, maximum: 65535}
-        kind: {type: string}
-        requestedBy: {type: string}
-        status: {type: string, enum: [PENDING, APPROVED, REJECTED]}
-        reviewedBy: {type: string}
-        approvalTicket: {type: string}
-        reviewedAt: {type: string}
-        reviewNote: {type: string}
+        assetId:
+          type: string
+        address:
+          type: string
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        kind:
+          type: string
+        requestedBy:
+          type: string
+        status:
+          type: string
+          enum:
+          - PENDING
+          - APPROVED
+          - REJECTED
+        reviewedBy:
+          type: string
+        approvalTicket:
+          type: string
+        reviewedAt:
+          type: string
+        reviewNote:
+          type: string
     AuthorizedScope:
       type: object
-      required: [id, assetId, cidrOrHost, maxTargets, timeWindows, requestedBy, approvedBy, approvalTicket, expiresAt, isActive, status, reviewNote]
+      required:
+      - id
+      - assetId
+      - cidrOrHost
+      - maxTargets
+      - timeWindows
+      - requestedBy
+      - approvedBy
+      - approvalTicket
+      - expiresAt
+      - isActive
+      - status
+      - reviewNote
       properties:
-        id: {type: string}
-        assetId: {type: string}
-        cidrOrHost: {type: string}
-        maxTargets: {type: integer, minimum: 1}
+        id:
+          type: string
+        assetId:
+          type: string
+        cidrOrHost:
+          type: string
+        maxTargets:
+          type: integer
+          minimum: 1
         timeWindows:
           type: array
           items:
-            $ref: '#/components/schemas/TimeWindow'
-        requestedBy: {type: string}
-        approvedBy: {type: string}
-        approvalTicket: {type: string}
-        expiresAt: {type: string, format: date-time}
-        isActive: {type: boolean}
-        status: {type: string, enum: [PENDING, APPROVED, REJECTED, REVOKED]}
-        reviewNote: {type: string}
+            "$ref": "#/components/schemas/TimeWindow"
+        requestedBy:
+          type: string
+        approvedBy:
+          type: string
+        approvalTicket:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+        isActive:
+          type: boolean
+        status:
+          type: string
+          enum:
+          - PENDING
+          - APPROVED
+          - REJECTED
+          - REVOKED
+        reviewNote:
+          type: string
     TaskChunk:
       type: object
-      required: [id, taskId, targets, status]
+      required:
+      - id
+      - taskId
+      - targets
+      - status
       properties:
-        id: {type: string}
-        taskId: {type: string}
-        workerNodeId: {type: string}
-        pinnedRuleVersion: {type: string, example: '20261016.01'}
-        leaseExpiresAt: {type: string, format: date-time}
+        id:
+          type: string
+        taskId:
+          type: string
+        workerNodeId:
+          type: string
+        pinnedRuleVersion:
+          type: string
+          example: '20261016.01'
+        leaseExpiresAt:
+          type: string
+          format: date-time
         targets:
           type: array
-          items: {type: string, description: 'Preapproved numeric IP:port only'}
-        status: {type: string, enum: [PENDING, WAITING_WINDOW, RUNNING, PAUSED_WINDOW, COMPLETED, FAILED, CANCELED]}
-        completedFully: {type: boolean}
-        startedAt: {type: string, format: date-time}
-        finishedAt: {type: string, format: date-time}
+          items:
+            type: string
+            description: Preapproved numeric IP:port only
+        status:
+          type: string
+          enum:
+          - PENDING
+          - WAITING_WINDOW
+          - RUNNING
+          - PAUSED_WINDOW
+          - COMPLETED
+          - FAILED
+          - CANCELED
+        completedFully:
+          type: boolean
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: string
+          format: date-time
     ScanTask:
       type: object
-      required: [id, scopeId, scopeName, engines, status, hardDeadline, totalChunks, completedChunks, targetCount, createdAt, chunks]
+      required:
+      - id
+      - scopeId
+      - scopeName
+      - engines
+      - status
+      - hardDeadline
+      - totalChunks
+      - completedChunks
+      - targetCount
+      - createdAt
+      - chunks
       properties:
-        id: {type: string}
-        scopeId: {type: string}
-        scopeName: {type: string}
+        id:
+          type: string
+        scopeId:
+          type: string
+        scopeName:
+          type: string
         engines:
           type: array
-          items: {type: string, enum: [nuclei, trivy]}
-        status: {type: string, enum: [PENDING, WAITING_WINDOW, RUNNING, PAUSED_WINDOW, COMPLETED, FAILED, CANCELED]}
-        hardDeadline: {type: string, format: date-time}
-        totalChunks: {type: integer, minimum: 0}
-        completedChunks: {type: integer, minimum: 0}
-        targetCount: {type: integer, minimum: 0}
-        createdAt: {type: string, format: date-time}
+          items:
+            type: string
+            enum:
+            - nuclei
+            - trivy
+            - synthetic
+        status:
+          type: string
+          enum:
+          - PENDING
+          - WAITING_WINDOW
+          - RUNNING
+          - PAUSED_WINDOW
+          - COMPLETED
+          - FAILED
+          - CANCELED
+        hardDeadline:
+          type: string
+          description: RFC3339 deadline after claim; empty before dispatch.
+        totalChunks:
+          type: integer
+          minimum: 0
+        completedChunks:
+          type: integer
+          minimum: 0
+        targetCount:
+          type: integer
+          minimum: 0
+        createdAt:
+          type: string
+          format: date-time
         chunks:
           type: array
           items:
-            $ref: '#/components/schemas/TaskChunk'
+            "$ref": "#/components/schemas/TaskChunk"
+        synthetic:
+          type: boolean
+        skippedTargets:
+          type: array
+          items:
+            type: string
+        timeWindows:
+          type: array
+          items:
+            "$ref": "#/components/schemas/TimeWindow"
+        ruleVersion:
+          type: string
     Finding:
       type: object
-      required: [id, fingerprint, severity, title, engine, templateOrCve, target, status, firstSeen, lastSeen, consecutiveMisses, businessGroup, owner, verifiedInRun]
+      required:
+      - id
+      - fingerprint
+      - severity
+      - title
+      - engine
+      - templateOrCve
+      - target
+      - status
+      - firstSeen
+      - lastSeen
+      - consecutiveMisses
+      - businessGroup
+      - owner
+      - verifiedInRun
       properties:
-        id: {type: string}
-        fingerprint: {type: string}
-        severity: {type: string, enum: [CRITICAL, HIGH, MEDIUM, LOW, INFO]}
-        title: {type: string}
-        engine: {type: string, enum: [nuclei, trivy]}
-        templateOrCve: {type: string}
-        target: {type: string}
-        port: {type: integer, minimum: 1, maximum: 65535}
-        status: {type: string, enum: [OPEN, REOPENED, IN_PROGRESS, FIXED, FALSE_POSITIVE, ACCEPTED_RISK]}
-        firstSeen: {type: string, format: date-time}
-        lastSeen: {type: string, format: date-time}
-        consecutiveMisses: {type: integer, minimum: 0}
-        businessGroup: {type: string}
-        owner: {type: string}
-        verifiedInRun: {type: boolean}
+        id:
+          type: string
+        fingerprint:
+          type: string
+        severity:
+          type: string
+          enum:
+          - CRITICAL
+          - HIGH
+          - MEDIUM
+          - LOW
+          - INFO
+        title:
+          type: string
+        engine:
+          type: string
+          enum:
+          - nuclei
+          - trivy
+          - synthetic
+        templateOrCve:
+          type: string
+        target:
+          type: string
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        status:
+          type: string
+          enum:
+          - OPEN
+          - REOPENED
+          - IN_PROGRESS
+          - FIXED
+          - FALSE_POSITIVE
+          - ACCEPTED_RISK
+        firstSeen:
+          type: string
+          format: date-time
+        lastSeen:
+          type: string
+          format: date-time
+        consecutiveMisses:
+          type: integer
+          minimum: 0
+        businessGroup:
+          type: string
+        owner:
+          type: string
+        verifiedInRun:
+          type: boolean
+        synthetic:
+          type: boolean
+        taskId:
+          type: string
     NodeInfo:
       type: object
-      required: [id, kind, hostId, ip, status, lastHeartbeat, fenceStatus, dropCount]
+      required:
+      - id
+      - kind
+      - hostId
+      - ip
+      - status
+      - lastHeartbeat
+      - fenceStatus
+      - dropCount
       properties:
-        id: {type: string}
-        kind: {type: string, enum: [worker, updater]}
-        hostId: {type: string}
-        ip: {type: string}
-        status: {type: string, enum: [ONLINE, OFFLINE, BUSY, UNKNOWN]}
-        currentTask: {type: string}
-        boundRuleVersion: {type: string}
-        lastHeartbeat: {type: string, format: date-time}
-        fenceStatus: {type: string, enum: [ACTIVE, NOT_SUPPORTED, NOT_VERIFIED]}
-        dropCount: {type: integer, minimum: 0}
+        id:
+          type: string
+        kind:
+          type: string
+          enum:
+          - worker
+          - updater
+        hostId:
+          type: string
+        ip:
+          type: string
+        status:
+          type: string
+          enum:
+          - ONLINE
+          - OFFLINE
+          - BUSY
+          - UNKNOWN
+        currentTask:
+          type: string
+        boundRuleVersion:
+          type: string
+        lastHeartbeat:
+          type: string
+          format: date-time
+        fenceStatus:
+          type: string
+          enum:
+          - ACTIVE
+          - NOT_SUPPORTED
+          - NOT_VERIFIED
+        dropCount:
+          type: integer
+          minimum: 0
     RuleBundle:
       type: object
-      required: [version, channel, manifestSha256, publishedAt, isCurrent, isBackup, inUseByTasks]
+      required:
+      - version
+      - channel
+      - manifestSha256
+      - publishedAt
+      - isCurrent
+      - isBackup
+      - inUseByTasks
       properties:
-        version: {type: string, pattern: '^[0-9]{8}\.[0-9]{2,8}$', example: '20261016.01'}
-        channel: {type: string, enum: [stable, beta]}
-        manifestSha256: {type: string}
-        publishedAt: {type: string, format: date-time}
-        isCurrent: {type: boolean}
-        isBackup: {type: boolean}
-        inUseByTasks: {type: integer, minimum: 0}
+        version:
+          type: string
+          pattern: "^[0-9]{8}\\.[0-9]{2,8}$"
+          example: '20261016.01'
+        channel:
+          type: string
+          enum:
+          - stable
+          - beta
+          - local
+        manifestSha256:
+          type: string
+        publishedAt:
+          type: string
+          format: date-time
+        isCurrent:
+          type: boolean
+        isBackup:
+          type: boolean
+        inUseByTasks:
+          type: integer
+          minimum: 0
+        engines:
+          type: array
+          items:
+            type: string
+            enum:
+            - nuclei
+            - trivy
+        integrityVerified:
+          type: boolean
+        signatureVerified:
+          type: boolean
+        engineValidated:
+          type: boolean
+    TaskInput:
+      type: object
+      properties:
+        synthetic:
+          type: boolean
+          enum:
+          - true
+        targets:
+          type: array
+          items:
+            type: string
+          minItems: 1
+          maxItems: 100
+          uniqueItems: true
+        timeWindows:
+          type: array
+          items:
+            "$ref": "#/components/schemas/TimeWindow"
+          maxItems: 8
+      required:
+      - synthetic
+      - targets
+    Schedule:
+      allOf:
+      - "$ref": "#/components/schemas/TaskInput"
+      - type: object
+        properties:
+          id:
+            type: string
+          name:
+            type: string
+            minLength: 1
+            maxLength: 100
+          nextRun:
+            type: string
+            format: date-time
+          intervalMinutes:
+            type: integer
+            minimum: 0
+            maximum: 525600
+            description: 0 means once. Repeating missed runs are coalesced.
+          enabled:
+            type: boolean
+          lastTaskId:
+            type: string
+          lastError:
+            type: string
+          createdBy:
+            type: string
+        required:
+        - name
+        - nextRun
+        - intervalMinutes
+    RuleJob:
+      type: object
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+          enum:
+          - IMPORT
+          - FETCH
+          - ACTIVATE
+        status:
+          type: string
+          enum:
+          - PENDING
+          - RUNNING
+          - COMPLETED
+          - FAILED
+        version:
+          type: string
+        message:
+          type: string
+        createdAt:
+          type: string
+        completedAt:
+          type: string
+        url:
+          type: string
+        expectedSha256:
+          type: string
+        rollback:
+          type: boolean
+        nodeId:
+          type: string
+      required: []

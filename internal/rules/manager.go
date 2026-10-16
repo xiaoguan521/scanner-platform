@@ -1,0 +1,419 @@
+// Package rules is owned by sec-updater. Server only queues jobs and stores catalog metadata.
+package rules
+
+import (
+	"archive/zip"
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"path"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"scanner-platform/internal/versionmgr"
+)
+
+const MaxArchive = 256 << 20
+
+var versionPattern = regexp.MustCompile(`^[0-9]{8}\.[0-9]{2,8}$`)
+
+type Manifest struct {
+	Version string            `json:"version"`
+	Engines []string          `json:"engines"`
+	Files   map[string]string `json:"files"`
+}
+type Bundle struct {
+	Version           string   `json:"version"`
+	Engines           []string `json:"engines"`
+	Channel           string   `json:"channel"`
+	ManifestSHA256    string   `json:"manifestSha256"`
+	PublishedAt       string   `json:"publishedAt"`
+	IsCurrent         bool     `json:"isCurrent"`
+	IsBackup          bool     `json:"isBackup"`
+	InUseByTasks      int      `json:"inUseByTasks"`
+	IntegrityVerified bool     `json:"integrityVerified"`
+	SignatureVerified bool     `json:"signatureVerified"`
+	EngineValidated   bool     `json:"engineValidated"`
+}
+type Job struct {
+	ID             string `json:"id"`
+	Kind           string `json:"kind"`
+	Status         string `json:"status"`
+	URL            string `json:"url,omitempty"`
+	ExpectedSHA256 string `json:"expectedSha256,omitempty"`
+	Version        string `json:"version,omitempty"`
+	Rollback       bool   `json:"rollback"`
+	Message        string `json:"message"`
+	CreatedAt      string `json:"createdAt"`
+	CompletedAt    string `json:"completedAt"`
+	Bundle         []byte `json:"bundle,omitempty"`
+	NodeID         string `json:"nodeId,omitempty"`
+}
+type Report struct {
+	JobID   string   `json:"jobId"`
+	NodeID  string   `json:"nodeId"`
+	Status  string   `json:"status"`
+	Message string   `json:"message"`
+	Version string   `json:"version"`
+	Bundles []Bundle `json:"bundles"`
+}
+type Manager struct {
+	Root   string
+	Client *http.Client
+}
+
+func ValidateVersion(version string) bool { return versionPattern.MatchString(version) }
+func ValidateSource(raw, expected string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || len(raw) > 2048 {
+		return fmt.Errorf("规则更新地址须为无凭据的 HTTPS ZIP 地址")
+	}
+	decoded, err := hex.DecodeString(expected)
+	if err != nil || len(decoded) != 32 {
+		return fmt.Errorf("请提供规则包的 SHA-256")
+	}
+	return nil
+}
+func validFile(name string, engines map[string]bool) bool {
+	if name == "" || len(name) > 240 || strings.ContainsAny(name, "\\:\x00") || path.Clean(name) != name || !filepath.IsLocal(filepath.FromSlash(name)) {
+		return false
+	}
+	parts := strings.Split(name, "/")
+	if len(parts) < 2 || !engines[parts[0]] {
+		return false
+	}
+	for _, part := range parts {
+		if part == "" || part == "." || part == ".." || strings.HasSuffix(part, ".") || strings.HasSuffix(part, " ") {
+			return false
+		}
+	}
+	return true
+}
+func decodeManifest(data []byte) (Manifest, error) {
+	var m Manifest
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.DisallowUnknownFields()
+	if d.Decode(&m) != nil || d.Decode(new(any)) != io.EOF || !ValidateVersion(m.Version) || len(m.Files) == 0 || len(m.Files) > 50000 || len(m.Engines) == 0 || len(m.Engines) > 2 {
+		return m, fmt.Errorf("manifest.json 格式或版本无效")
+	}
+	engines := map[string]bool{}
+	for _, engine := range m.Engines {
+		if (engine != "nuclei" && engine != "trivy") || engines[engine] {
+			return m, fmt.Errorf("规则引擎无效")
+		}
+		engines[engine] = true
+	}
+	for name, hash := range m.Files {
+		raw, err := hex.DecodeString(hash)
+		if !validFile(name, engines) || err != nil || len(raw) != 32 {
+			return m, fmt.Errorf("manifest 文件路径或哈希无效")
+		}
+	}
+	return m, nil
+}
+func hashBytes(data []byte) string { h := sha256.Sum256(data); return hex.EncodeToString(h[:]) }
+func (m *Manager) initialize() error {
+	root, err := filepath.Abs(m.Root)
+	if err != nil {
+		return err
+	}
+	m.Root = root
+	if err := os.MkdirAll(filepath.Join(root, "releases"), 0700); err != nil {
+		return err
+	}
+	for _, p := range []string{root, filepath.Join(root, "releases")} {
+		info, err := os.Lstat(p)
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("规则目录不能是符号链接")
+		}
+	}
+	return nil
+}
+func readLimited(r io.Reader, max int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(r, max+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > max {
+		return nil, fmt.Errorf("规则文件过大")
+	}
+	return data, nil
+}
+
+func (m *Manager) Import(ctx context.Context, data []byte) (Bundle, error) {
+	if len(data) == 0 || len(data) > MaxArchive {
+		return Bundle{}, fmt.Errorf("ZIP 大小须在 1 字节至 256 MiB 之间")
+	}
+	if err := m.initialize(); err != nil {
+		return Bundle{}, err
+	}
+	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return Bundle{}, fmt.Errorf("无效的 ZIP 规则包")
+	}
+	if len(zr.File) > 100001 {
+		return Bundle{}, fmt.Errorf("ZIP 文件数量过多")
+	}
+	entries := map[string]*zip.File{}
+	var manifestData []byte
+	for _, f := range zr.File {
+		if f.FileInfo().IsDir() {
+			continue
+		}
+		if !f.Mode().IsRegular() || entries[f.Name] != nil {
+			return Bundle{}, fmt.Errorf("规则包含链接或重复文件")
+		}
+		entries[f.Name] = f
+		if f.Name == "manifest.json" {
+			r, err := f.Open()
+			if err != nil {
+				return Bundle{}, err
+			}
+			manifestData, err = readLimited(r, 8<<20)
+			r.Close()
+			if err != nil {
+				return Bundle{}, err
+			}
+		}
+	}
+	manifest, err := decodeManifest(manifestData)
+	if err != nil {
+		return Bundle{}, err
+	}
+	if len(entries) != len(manifest.Files)+1 {
+		return Bundle{}, fmt.Errorf("ZIP 文件与 manifest 不一致")
+	}
+	stage, err := os.MkdirTemp(m.Root, ".import-")
+	if err != nil {
+		return Bundle{}, err
+	}
+	defer os.RemoveAll(stage)
+	var total uint64
+	names := make([]string, 0, len(manifest.Files))
+	for name := range manifest.Files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if err := ctx.Err(); err != nil {
+			return Bundle{}, err
+		}
+		f := entries[name]
+		if f == nil || f.UncompressedSize64 > 1<<30 {
+			return Bundle{}, fmt.Errorf("规则文件缺失或过大")
+		}
+		total += f.UncompressedSize64
+		if total > 2<<30 {
+			return Bundle{}, fmt.Errorf("规则包解压大小超限")
+		}
+		r, err := f.Open()
+		if err != nil {
+			return Bundle{}, err
+		}
+		dest := filepath.Join(stage, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(dest), 0700); err != nil {
+			r.Close()
+			return Bundle{}, err
+		}
+		output, err := os.OpenFile(dest, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		if err != nil {
+			r.Close()
+			return Bundle{}, err
+		}
+		digest := sha256.New()
+		count, copyErr := io.Copy(io.MultiWriter(output, digest), io.LimitReader(r, (1<<30)+1))
+		r.Close()
+		syncErr := output.Sync()
+		closeErr := output.Close()
+		if copyErr != nil {
+			return Bundle{}, copyErr
+		}
+		if syncErr != nil {
+			return Bundle{}, syncErr
+		}
+		if closeErr != nil {
+			return Bundle{}, closeErr
+		}
+		if count > 1<<30 || !strings.EqualFold(hex.EncodeToString(digest.Sum(nil)), manifest.Files[name]) {
+			return Bundle{}, fmt.Errorf("规则文件 SHA-256 校验失败或大小超限")
+		}
+
+	}
+	if err := os.WriteFile(filepath.Join(stage, "manifest.json"), manifestData, 0600); err != nil {
+		return Bundle{}, err
+	}
+	destination := filepath.Join(m.Root, "releases", manifest.Version)
+	if _, err := os.Lstat(destination); err == nil {
+		old, err := m.inspect(ctx, manifest.Version)
+		if err != nil {
+			return Bundle{}, err
+		}
+		if old.ManifestSHA256 != hashBytes(manifestData) {
+			return Bundle{}, fmt.Errorf("版本已存在，内容不可覆盖")
+		}
+		return old, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return Bundle{}, err
+	}
+	if err := os.Rename(stage, destination); err != nil {
+		return Bundle{}, err
+	}
+	return m.inspect(ctx, manifest.Version)
+}
+
+func (m *Manager) inspect(ctx context.Context, version string) (Bundle, error) {
+	if !ValidateVersion(version) {
+		return Bundle{}, fmt.Errorf("版本无效")
+	}
+	dir := filepath.Join(m.Root, "releases", version)
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return Bundle{}, err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return Bundle{}, fmt.Errorf("规则版本目录无效")
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
+	if err != nil {
+		return Bundle{}, err
+	}
+	manifest, err := decodeManifest(data)
+	if err != nil || manifest.Version != version {
+		return Bundle{}, fmt.Errorf("规则 manifest 无效")
+	}
+	for name, expected := range manifest.Files {
+		if err := ctx.Err(); err != nil {
+			return Bundle{}, err
+		}
+		dest := filepath.Join(dir, filepath.FromSlash(name))
+		rel := filepath.FromSlash(name)
+		for p := rel; p != "."; p = filepath.Dir(p) {
+			info, err := os.Lstat(filepath.Join(dir, p))
+			if err != nil || info.Mode()&os.ModeSymlink != 0 {
+				return Bundle{}, fmt.Errorf("规则路径缺失或包含链接")
+			}
+		}
+		info, err := os.Stat(dest)
+		if err != nil || !info.Mode().IsRegular() || info.Size() > 1<<30 {
+			return Bundle{}, fmt.Errorf("规则文件无效")
+		}
+		input, err := os.Open(dest)
+		if err != nil {
+			return Bundle{}, err
+		}
+		digest := sha256.New()
+		_, copyErr := io.Copy(digest, io.LimitReader(input, (1<<30)+1))
+		input.Close()
+		if copyErr != nil || !strings.EqualFold(hex.EncodeToString(digest.Sum(nil)), expected) {
+			return Bundle{}, fmt.Errorf("已存规则文件 SHA-256 校验失败")
+		}
+
+	}
+	return Bundle{Version: version, Engines: manifest.Engines, Channel: "local", ManifestSHA256: hashBytes(data), PublishedAt: info.ModTime().UTC().Format(time.RFC3339Nano), IntegrityVerified: true}, nil
+}
+func older(a, b string) bool {
+	ap := strings.Split(a, ".")
+	bp := strings.Split(b, ".")
+	if ap[0] != bp[0] {
+		return ap[0] < bp[0]
+	}
+	ai, _ := strconv.Atoi(ap[1])
+	bi, _ := strconv.Atoi(bp[1])
+	return ai < bi
+}
+func (m *Manager) Activate(ctx context.Context, version string, rollback bool) error {
+	if err := m.initialize(); err != nil {
+		return err
+	}
+	if _, err := m.inspect(ctx, version); err != nil {
+		return err
+	}
+	current, err := versionmgr.ReadLocalCurrent(ctx, m.Root)
+	if err != nil && !errors.Is(err, versionmgr.ErrWaitingForRules) {
+		return err
+	}
+	if current != "" && older(version, current) && !rollback {
+		return fmt.Errorf("较旧版本必须通过显式回滚操作激活")
+	}
+	return versionmgr.WriteLocalCurrent(ctx, m.Root, version)
+}
+func (m *Manager) List(ctx context.Context) ([]Bundle, error) {
+	if err := m.initialize(); err != nil {
+		return nil, err
+	}
+	current, err := versionmgr.ReadLocalCurrent(ctx, m.Root)
+	if err != nil && !errors.Is(err, versionmgr.ErrWaitingForRules) {
+		return nil, err
+	}
+	entries, err := os.ReadDir(filepath.Join(m.Root, "releases"))
+	if err != nil {
+		return nil, err
+	}
+	out := []Bundle{}
+	for _, entry := range entries {
+		if !ValidateVersion(entry.Name()) {
+			continue
+		}
+		bundle, err := m.inspect(ctx, entry.Name())
+		if err != nil {
+			return nil, err
+		}
+		bundle.IsCurrent = bundle.Version == current
+		out = append(out, bundle)
+	}
+	sort.Slice(out, func(i, j int) bool { return older(out[j].Version, out[i].Version) })
+	for i := range out {
+		if !out[i].IsCurrent {
+			out[i].IsBackup = true
+			break
+		}
+	}
+	return out, nil
+}
+func (m *Manager) Fetch(ctx context.Context, raw, expected string) (Bundle, error) {
+	if err := ValidateSource(raw, expected); err != nil {
+		return Bundle{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
+	if err != nil {
+		return Bundle{}, err
+	}
+	client := m.Client
+	if client == nil {
+		client = &http.Client{Timeout: 2 * time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	}
+	copyClient := *client
+	copyClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	client = &copyClient
+	response, err := client.Do(req)
+	if err != nil {
+		return Bundle{}, fmt.Errorf("规则包下载失败")
+	}
+	defer response.Body.Close()
+	if response.StatusCode != 200 {
+		return Bundle{}, fmt.Errorf("规则源返回 HTTP %d", response.StatusCode)
+	}
+	data, err := readLimited(response.Body, MaxArchive)
+	if err != nil {
+		return Bundle{}, err
+	}
+	if !strings.EqualFold(hashBytes(data), expected) {
+		return Bundle{}, fmt.Errorf("下载包 SHA-256 校验失败")
+	}
+	return m.Import(ctx, data)
+}

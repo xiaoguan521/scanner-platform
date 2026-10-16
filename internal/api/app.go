@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -127,6 +128,45 @@ func NewDevelopmentHandler(s account.Repository, assetStore assets.Repository, a
 	limiter := &loginLimiter{}
 	scaffold := NewScaffoldHandler("sec-server")
 	mux.Handle("/", scaffold)
+	mux.HandleFunc("GET /api/v1/auth/setup", func(w http.ResponseWriter, r *http.Request) {
+		users, err := s.List(r.Context())
+		if err != nil {
+			bad(w, 500, "db_error")
+			return
+		}
+		respond(w, 200, map[string]bool{"required": len(users) == 0})
+	})
+	mux.HandleFunc("POST /api/v1/auth/setup", func(w http.ResponseWriter, r *http.Request) {
+		if !mutationGuard(w, r) {
+			return
+		}
+		initializer, ok := s.(interface {
+			InitAdmin(context.Context, string, string) error
+		})
+		if !ok {
+			bad(w, 501, "setup_unavailable")
+			return
+		}
+		var body struct {
+			Username string `json:"username"`
+			Password string `json:"password"`
+		}
+		if !readJSON(w, r, &body) {
+			return
+		}
+		if err := initializer.InitAdmin(r.Context(), body.Username, body.Password); err != nil {
+			switch {
+			case errors.Is(err, account.ErrExists):
+				bad(w, 409, "already_initialized")
+			case errors.Is(err, account.ErrInvalid):
+				bad(w, 400, "invalid_user")
+			default:
+				bad(w, 500, "db_error")
+			}
+			return
+		}
+		respond(w, 201, map[string]string{"state": "initialized"})
+	})
 	mux.HandleFunc("GET /api/v1/system/status", func(w http.ResponseWriter, r *http.Request) {
 		respond(w, 200, Status{
 			Role: "sec-server", Phase: "Phase 0 / early MVP", State: "SCAFFOLD", Ready: false,

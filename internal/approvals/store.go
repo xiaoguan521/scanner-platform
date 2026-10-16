@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"scanner-platform/internal/scheduler"
 	"strings"
 	"time"
 )
@@ -21,12 +22,7 @@ var (
 	ErrForbidden = errors.New("approval forbidden")
 )
 
-type TimeWindow struct {
-	Weekdays []int  `json:"weekdays"`
-	Start    string `json:"start"`
-	End      string `json:"end"`
-	TimeZone string `json:"timeZone"`
-}
+type TimeWindow = scheduler.Window
 type Scope struct {
 	ID             string       `json:"id"`
 	AssetID        string       `json:"assetId"`
@@ -116,36 +112,7 @@ func validDecision(d Decision) bool {
 		len(d.Note) <= 400
 }
 func validWindows(windows []TimeWindow) bool {
-	if len(windows) != 1 {
-		return false
-	} // first iteration: one daytime window
-	for _, w := range windows {
-		if len(w.Weekdays) == 0 || len(w.Weekdays) > 7 {
-			return false
-		}
-		seen := map[int]bool{}
-		for _, day := range w.Weekdays {
-			if day < 0 || day > 6 || seen[day] {
-				return false
-			}
-			seen[day] = true
-		}
-		if len(w.Start) != 5 || len(w.End) != 5 {
-			return false
-		}
-		start, err1 := time.Parse("15:04", w.Start)
-		end, err2 := time.Parse("15:04", w.End)
-		if err1 != nil || err2 != nil || !start.Before(end) {
-			return false
-		}
-		if len(w.TimeZone) > 64 {
-			return false
-		}
-		if _, err := time.LoadLocation(w.TimeZone); err != nil {
-			return false
-		}
-	}
-	return true
+	return len(windows) > 0 && scheduler.ValidateWindows(windows) == nil
 }
 func normalizeScopeInput(in ScopeInput) (ScopeInput, error) {
 	in.AssetID = strings.TrimSpace(in.AssetID)

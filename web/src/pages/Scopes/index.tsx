@@ -52,7 +52,7 @@ export const ScopesPage: React.FC = () => {
     try {
       const expiry = new Date(values.expiresAt);
       if (!Number.isFinite(expiry.getTime())) throw new Error('请选择有效的截止时间');
-      if (values.start >= values.end) throw new Error('当前版本只支持同一天内的时间窗');
+      if (values.start === values.end) throw new Error('开始与结束时间不能相同');
       if (!values.weekdays?.length) throw new Error('请选择允许的星期');
       const windows: TimeWindow[] = [{
         weekdays: values.weekdays, start: values.start, end: values.end, timeZone: values.timeZone,
@@ -104,7 +104,7 @@ export const ScopesPage: React.FC = () => {
   return <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
     <CollectionNotice loading={loading || portsLoading} error={error || portsError} />
     <Alert showIcon type="warning" message="审批记录不等于扫描执行许可"
-      description="当前只保存已登记主机 IP 的授权申请及端口人工审核结果。完整的任务准入、租约、网络围栏及扫描器仍未连通，审批通过不会自动发起扫描。" />
+      description="当前只保存已登记主机 IP 的授权申请及端口人工审核结果。审批记录用于管理台账；早期开发模式中，任务按明确登记的端口和任务时间窗执行，跳过端口不会下发。当前仅模拟执行。" />
     <Card title="扫描授权范围与执行时间窗" extra={
       <Button type="primary" icon={<PlusOutlined />} disabled={!canRequest}
         onClick={() => setRequestOpen(true)}>申请范围授权</Button>
@@ -132,7 +132,7 @@ export const ScopesPage: React.FC = () => {
             </Space> },
         ]} />
     </Card>
-    <Card title="资产端口申请审批" extra={<Text type="secondary">仅人工审核已登记端口，未实现扫描任务派发</Text>}>
+    <Card title="资产端口申请审批" extra={<Text type="secondary">已标记跳过的端口不会派发</Text>}>
       <Table<PortRequest> dataSource={ports} loading={portsLoading} pagination={{pageSize:10}}
         rowKey={p => p.assetId + ':' + p.port} scroll={{x:1050}}
         columns={[
@@ -140,7 +140,7 @@ export const ScopesPage: React.FC = () => {
           {title:'端口',dataIndex:'port'},
           {title:'端口类型',dataIndex:'kind',render:(v:string)=>v||'待审核'},
           {title:'状态',render: (_:unknown, p:PortRequest) =>
-            renderDecision(p.status,{kind:'port',id:p.assetId,port:p.port,requestedBy:p.requestedBy})},
+            p.kind==='EXCLUDED_PROXY'?<Tag>已跳过</Tag>:renderDecision(p.status,{kind:'port',id:p.assetId,port:p.port,requestedBy:p.requestedBy})},
           {title:'审批单',dataIndex:'approvalTicket',render:(v:string)=>v||'—'},
           {title:'审核人',dataIndex:'reviewedBy',render:(v:string)=>v||'—'},
           {title:'备注',dataIndex:'reviewNote'},
@@ -160,7 +160,7 @@ export const ScopesPage: React.FC = () => {
           <Form.Item name="start" label="起始时间" rules={[{required:true}]}>
             <Input placeholder="09:00" maxLength={5}/>
           </Form.Item>
-          <Form.Item name="end" label="结束时间" rules={[{required:true}]}>
+          <Form.Item name="end" label="结束时间（可跨午夜）" rules={[{required:true}]}>
             <Input placeholder="18:00" maxLength={5}/>
           </Form.Item>
         </Space>
@@ -175,7 +175,7 @@ export const ScopesPage: React.FC = () => {
     <Modal title="人工审批" open={!!reviewTarget} onCancel={()=>setReviewTarget(null)}
       onOk={()=>reviewForm.submit()} okButtonProps={{loading:busy}}>
       <Alert type="info" showIcon style={{marginBottom:14}}
-        message="不能审批自己提交的申请；审批必须填写真实工单。"/>
+        message="不能审批自己提交的申请；审批需填写记录编号；本地验证请使用示例编号。"/>
       <Form form={reviewForm} layout="vertical" onFinish={submitReview}>
         <Form.Item name="decision" label="处理意见" rules={[{required:true}]}>
           <Select options={[{value:'APPROVE',label:'批准'},{value:'REJECT',label:'驳回'}]}/>

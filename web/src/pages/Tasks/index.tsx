@@ -1,283 +1,75 @@
 import React, { useState } from 'react';
-import {
-  Card,
-  Table,
-  Tag,
-  Button,
-  Space,
-  Modal,
-  Form,
-  Select,
-  Progress,
-  Typography,
-  Alert,
-  message,
-} from 'antd';
-import {
-  PlayCircleOutlined,
-  PauseCircleOutlined,
-  FieldTimeOutlined,
-  StopOutlined,
-  RadarChartOutlined,
-  PlusOutlined,
-} from '@ant-design/icons';
-import { mockTasks, mockScopes } from '../../mock/data';
-import { ScanTask, TaskChunk } from '../../types';
-import { isDemoMode } from '../../api/client';
+import { Alert, Button, Card, Form, Input, InputNumber, message, Modal, Select, Space, Table, Tag, Typography } from 'antd';
+import { PlusOutlined } from '@ant-design/icons';
 import { useCollection } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
-import { createSyntheticTask } from '../../api/runtime';
+import { isDemoMode } from '../../api/client';
+import { cancelTask, createSyntheticTask, saveSchedule, toggleSchedule } from '../../api/runtime';
+import { useAuth } from '../../auth/AuthProvider';
+import { mockAssets, mockTasks } from '../../mock/data';
+import type { ScanTask, Schedule, TaskInput } from '../../types';
 
-const { Text } = Typography;
-
-export const TasksPage: React.FC = () => {
-  const { data: tasks, setData: setTasks, loading, error } = useCollection('tasks', mockTasks);
-  const { data: scopes } = useCollection('scopes', mockScopes);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [creating, setCreating] = useState(false);
-  const [form] = Form.useForm();
-
-  const handleCreateTask = async (values: any) => {
-    if (!isDemoMode) {
-      setCreating(true);
-      try {
-        const task = await createSyntheticTask();
-        setTasks((previous) => [task, ...previous.filter((item) => item.id !== task.id)]);
-        setIsModalOpen(false);
-        message.success('模拟任务已入队，等待 Worker 领取');
-      } catch (cause) {
-        message.error(cause instanceof Error ? cause.message : '创建任务失败');
-      } finally { setCreating(false); }
-      return;
-    }
-    const scope = scopes.find((s) => s.id === values.scopeId && s.isActive);
-    if (!scope) return message.warning('没有有效的演示授权范围');
-    const newTask: ScanTask = {
-      id: `task-${Date.now().toString().slice(-4)}`,
-      scopeId: values.scopeId,
-      scopeName: scope ? `${scope.cidrOrHost}` : '自定义目标段',
-      engines: values.engines || ['nuclei'],
-      status: 'PENDING',
-      hardDeadline: new Date(Date.now() + 3600000).toISOString(),
-      totalChunks: 0,
-      completedChunks: 0,
-      targetCount: 0,
-      createdAt: new Date().toISOString(),
-      chunks: [],
-    };
-    setTasks((prev) => [newTask, ...prev]);
-    message.info('仅演示：添加待处理任务草稿，未分块下发或启动 Worker');
-    setIsModalOpen(false);
-    form.resetFields();
+const dayOptions=['周日','周一','周二','周三','周四','周五','周六'].map((label,value)=>({label,value}));
+const names:Record<string,string>={PENDING:'待领取',RUNNING:'执行中',WAITING_WINDOW:'等待时间窗',PAUSED_WINDOW:'窗口结束，等待恢复',COMPLETED:'已完成',CANCELED:'已取消',FAILED:'失败'};
+type Values={targets:string[];mode:'now'|'schedule';name:string;nextRun:string;intervalMinutes:number;window:boolean;weekdays:number[];start:string;end:string;timeZone:string};
+export const TasksPage:React.FC=()=>{
+  const {user}=useAuth();const canWrite=!isDemoMode&&(user?.role==='admin'||user?.role==='security_engineer');
+  const {data:tasks,setData:setTasks,loading,error}=useCollection('tasks',mockTasks);
+  const {data:assets}=useCollection('assets',mockAssets);
+  const {data:schedules,loading:scheduleLoading,error:scheduleError}=useCollection('schedules',[]);
+  const [open,setOpen]=useState(false);const [busy,setBusy]=useState(false);const [form]=Form.useForm<Values>();
+  const mode=Form.useWatch('mode',form);const useWindow=Form.useWatch('window',form);
+  const options=assets.filter(a=>a.kind==='host').flatMap(a=>(a.requestedPorts??[]).map(port=>{
+    const target=(a.address.includes(':')?'['+a.address+']':a.address)+':'+port;
+    return {value:target,label:target+((a.skippedPorts??[]).includes(port)?'（已标记跳过）':'')};
+  }));
+  const create=async(values:Values)=>{
+    setBusy(true);
+    try{
+      const input:TaskInput={synthetic:true,targets:values.targets,timeWindows:values.window?[{weekdays:values.weekdays,start:values.start,end:values.end,timeZone:values.timeZone}]:[]};
+      if(values.mode==='schedule'){
+        const date=new Date(values.nextRun);if(!Number.isFinite(date.getTime())||date.getTime()<=Date.now()) throw new Error('首次运行时间必须晚于现在');
+        await saveSchedule({...input,name:values.name,nextRun:date.toISOString(),intervalMinutes:values.intervalMinutes??0});
+        message.success('定时任务已保存，到点由 Server 创建任务');
+      }else{const task=await createSyntheticTask(input);setTasks(prev=>[task,...prev]);message.success(task.status==='WAITING_WINDOW'?'已创建，等待允许的时间窗':'任务已入队');}
+      setOpen(false);form.resetFields();
+    }catch(e){message.error(e instanceof Error?e.message:'创建失败');}finally{setBusy(false);}
   };
-
-  const handleStopTask = (taskId: string) => {
-    if (!isDemoMode) return message.warning('停止任务必须由 Server 处理');
-    Modal.confirm({
-      title: '确认手动停止该扫描任务？',
-      content: '仅改变演示页面；不会撤销实际租约或停止真实 Worker。',
-      okText: '终止任务',
-      okType: 'danger',
-      onOk: () => {
-        setTasks((prev) =>
-          prev.map((t) => (t.id === taskId ? { ...t, status: 'CANCELED' } : t))
-        );
-        message.info(`仅演示：任务 ${taskId} 本地状态已变化，Server 未发生变更`);
-      },
-    });
-  };
-
-  // 展开行：展示每个分块详情
-  const expandedRowRender = (record: ScanTask) => {
-    const chunkColumns = [
-      { title: '分块 ID', dataIndex: 'id', width: 120 },
-      {
-        title: '分派 Worker',
-        dataIndex: 'workerNodeId',
-        render: (w?: string) => (w ? <Tag color="geekblue">{w}</Tag> : <Text type="secondary">待领取</Text>),
-      },
-      {
-        title: '已固定目标清单 (纯数字 IP:端口)',
-        dataIndex: 'targets',
-        render: (targets: string[]) => (
-          <Space wrap size={[4, 4]}>
-            {targets.map((t) => (
-              <Tag key={t}>{t}</Tag>
-            ))}
-          </Space>
-        ),
-      },
-      {
-        title: '分块状态',
-        dataIndex: 'status',
-        width: 140,
-        render: (status: string) => (
-          <Tag color={status === 'COMPLETED' ? 'green' : status === 'RUNNING' ? 'processing' : 'default'}>
-            {status}
-          </Tag>
-        ),
-      },
-      { title: '执行耗时', render: (_: any, r: TaskChunk) => `${r.startedAt || '-'} ~ ${r.finishedAt || '扫描中'}` },
-    ];
-
-    return (
-      <div style={{ margin: '8px 0', background: 'rgba(0,0,0,0.1)', padding: 12, borderRadius: 6 }}>
-        <Text strong style={{ display: 'block', marginBottom: 8 }}>
-          任务分块执行明细 (Task Chunks) · 块间自动核验时间窗
-        </Text>
-        <Table
-          columns={chunkColumns}
-          dataSource={record.chunks}
-          pagination={false}
-          rowKey="id"
-          size="small"
-        />
-      </div>
-    );
-  };
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-      <CollectionNotice loading={loading} error={error} />
-      <Alert
-        message={isDemoMode ? '调度策略：按目标分块与时间窗保护' : 'SQLite → Worker → 结果入库'}
-        description={isDemoMode ? '演示模式仅显示样例调度数据。' : '当前使用模拟 Worker，不连接目标、不调用真实扫描引擎。任务与模拟发现项来自 SQLite，并每秒自动刷新。'}
-        type="info"
-        showIcon
-        icon={<RadarChartOutlined />}
-      />
-
-      <Card
-        title="扫描任务队列与调度监控"
-        bordered={false}
-        extra={
-          <Button type="primary" icon={<PlusOutlined />}
-          onClick={() => setIsModalOpen(true)}>
-            {isDemoMode ? '新建扫描任务' : '创建模拟任务'}
-          </Button>
-        }
-      >
-        <Table
-          dataSource={tasks}
-          rowKey="id"
-          expandable={{ expandedRowRender, defaultExpandedRowKeys: ['task-8091'] }}
-          columns={[
-            { title: '任务 ID', dataIndex: 'id', width: 110 },
-            { title: '目标授权范围', dataIndex: 'scopeName' },
-            {
-              title: '指定引擎',
-              dataIndex: 'engines',
-              width: 180,
-              render: (engines: string[]) => (
-                <Space>
-                  {engines.map((e) => (
-                    <Tag key={e} color={e === 'nuclei' ? 'purple' : 'cyan'}>
-                      {e.toUpperCase()}
-                    </Tag>
-                  ))}
-                </Space>
-              ),
-            },
-            {
-              title: '总进度 (完成块/总块)',
-              render: (_, record) => (
-                <div style={{ width: 160 }}>
-                  <Progress
-                    percent={record.totalChunks ? Math.round((record.completedChunks / record.totalChunks) * 100) : 0}
-                    size="small"
-                    status={record.status === 'COMPLETED' ? 'success' : 'active'}
-                  />
-                  <div style={{ fontSize: 11, color: '#64748b' }}>
-                    {record.completedChunks} / {record.totalChunks} 分块 ({record.targetCount} 个目标)
-                  </div>
-                </div>
-              ),
-            },
-            {
-              title: '任务状态',
-              dataIndex: 'status',
-              width: 140,
-              render: (status: string) => {
-                const map: Record<string, { color: string; label: string }> = {
-                  RUNNING: { color: 'processing', label: '执行中' },
-                  WAITING_WINDOW: { color: 'warning', label: '等待时间窗' },
-                  COMPLETED: { color: 'success', label: '已完成' },
-                  PENDING: { color: 'default', label: '待领取' },
-                  PAUSED_WINDOW: { color: 'default', label: '窗口期暂停' },
-                  CANCELED: { color: 'error', label: '已终止' },
-                };
-                return <Tag color={map[status]?.color || 'default'}>{map[status]?.label || status}</Tag>;
-              },
-            },
-            {
-              title: '本地硬截止时间',
-              dataIndex: 'hardDeadline',
-              width: 180,
-              render: (d: string) => (
-                <Space size={4}>
-                  <FieldTimeOutlined style={{ color: '#fa8c16' }} />
-                  <span style={{ fontSize: 12 }}>{d || '—'}</span>
-                </Space>
-              ),
-            },
-            {
-              title: '操作',
-              width: 100,
-              render: (_, record) =>
-                record.status === 'RUNNING' ? (
-                  <Button
-                    type="link"
-                    danger
-                    size="small"
-                    icon={<StopOutlined />}
-                    disabled={!isDemoMode}
-                    onClick={() => handleStopTask(record.id)}
-                  >
-                    停止
-                  </Button>
-                ) : (
-                  <Text type="secondary">-</Text>
-                ),
-            },
-          ]}
-        />
-      </Card>
-
-      <Modal
-        title={isDemoMode ? '演示：创建待处理任务草稿' : '创建模拟任务'}
-        open={isModalOpen}
-        onCancel={() => setIsModalOpen(false)}
-        onOk={() => form.submit()}
-        confirmLoading={creating}
-      >
-        <Form form={form} layout="vertical" onFinish={handleCreateTask}>
-          {!isDemoMode && <Alert type="info" showIcon message="将创建一个固定模拟任务，Worker 完成后生成一条明确标注的模拟发现项。不会连接任何扫描目标。" />}
-          {isDemoMode && <><Form.Item
-            name="scopeId"
-            label="选择已审批范围"
-            rules={[{ required: true, message: '必须选择经审批的范围' }]}
-          >
-            <Select placeholder="请选择授权范围">
-              {scopes.map((s) => (
-                <Select.Option key={s.id} value={s.id} disabled={!s.isActive}>
-                  {s.cidrOrHost} (审批单: {s.approvalTicket})
-                </Select.Option>
-              ))}
-            </Select>
-          </Form.Item>
-          <Form.Item
-            name="engines"
-            label="指定扫描引擎"
-            initialValue={['nuclei']}
-            rules={[{ required: true }]}
-          >
-            <Select mode="multiple">
-              <Select.Option value="nuclei">Nuclei (Web/服务漏洞 POC)</Select.Option>
-              <Select.Option value="trivy">Trivy (镜像系统与依赖漏洞)</Select.Option>
-            </Select>
-          </Form.Item></>}
-        </Form>
-      </Modal>
-    </div>
-  );
+  const stop=async(id:string)=>{try{await cancelTask(id);setTasks(prev=>prev.map(t=>t.id===id?{...t,status:'CANCELED'}:t));message.success('任务已取消，不会写入成功结果');}catch(e){message.error(String(e));}};
+  return <div style={{display:'flex',flexDirection:'column',gap:16}}>
+    <CollectionNotice loading={loading||scheduleLoading} error={error||scheduleError}/>
+    <Alert type="info" showIcon message="本地任务与定时调度" description="只下发已登记的 IP:端口，跳过标记和隔离端口会被排除。当前为模拟执行，不连接目标；时间窗支持跨午夜，到点暂停并在下个窗口恢复。"/>
+    <Card title="任务队列" extra={<Button type="primary" icon={<PlusOutlined/>} disabled={!canWrite} onClick={()=>setOpen(true)}>创建任务 / 定时任务</Button>}>
+      <Table<ScanTask> dataSource={tasks} rowKey="id" loading={loading} scroll={{x:1000}}
+        expandable={{expandedRowRender:t=><Space direction="vertical"><Typography.Text>下发目标：{t.chunks?.flatMap(c=>c.targets).join('、')||'无'}</Typography.Text><Typography.Text>跳过目标：{t.skippedTargets?.join('、')||'无'}</Typography.Text><Typography.Text>规则版本：{t.ruleVersion||'未选择规则包（模拟任务不依赖规则）'}</Typography.Text></Space>}}
+        columns={[
+          {title:'任务 ID',dataIndex:'id',width:230,ellipsis:true},
+          {title:'执行方式',render:()=> <Tag color="blue">模拟 Worker</Tag>},
+          {title:'目标 / 跳过',render:(_,t)=>`${t.targetCount} / ${t.skippedTargets?.length??0}`},
+          {title:'进度',render:(_,t)=>`${t.completedChunks} / ${t.totalChunks}`},
+          {title:'状态',dataIndex:'status',render:(s:string)=><Tag color={s==='COMPLETED'?'success':s==='RUNNING'?'processing':'default'}>{names[s]??s}</Tag>},
+          {title:'本地截止时间',dataIndex:'hardDeadline',render:(v:string)=>v?new Date(v).toLocaleString():'—'},
+          {title:'操作',render:(_,t)=><Button size="small" danger disabled={!canWrite||['COMPLETED','CANCELED','FAILED'].includes(t.status)} onClick={()=>void stop(t.id)}>取消任务</Button>},
+        ]}/>
+    </Card>
+    <Card title="定时任务" extra={<Typography.Text type="secondary">间隔 0 表示仅运行一次；错过的重复任务不会集中补跑</Typography.Text>}>
+      <Table<Schedule> dataSource={schedules} rowKey="id" scroll={{x:950}} columns={[
+        {title:'名称',dataIndex:'name'},
+        {title:'下一次运行',dataIndex:'nextRun',render:(v:string)=>new Date(v).toLocaleString()},
+        {title:'重复间隔',dataIndex:'intervalMinutes',render:(v:number)=>v?`${v} 分钟`:'仅一次'},
+        {title:'状态',render:(_,s)=><Tag color={s.enabled?'green':'default'}>{s.enabled?'启用':'停用 / 单次已触发'}</Tag>},
+        {title:'最近任务 / 错误',render:(_,s)=>s.lastError||s.lastTaskId||'尚未触发'},
+        {title:'操作',render:(_,s)=><Space><Button size="small" disabled={!canWrite} onClick={async()=>{try{await toggleSchedule(s.id,!s.enabled);message.success('定时任务状态已保存');}catch(e){message.error(String(e));}}}>{s.enabled?'停用':'启用'}</Button><Button size="small" disabled={!canWrite} onClick={async()=>{try{await createSyntheticTask({synthetic:true,targets:s.targets,timeWindows:s.timeWindows});message.success('已另建一条任务，仍遵守时间窗');}catch(e){message.error(String(e));}}}>手动运行</Button></Space>},
+      ]}/>
+    </Card>
+    <Modal title="创建本地模拟任务" open={open} onCancel={()=>setOpen(false)} onOk={()=>form.submit()} confirmLoading={busy} destroyOnClose>
+      <Form<Values> form={form} layout="vertical" onFinish={create} initialValues={{mode:'now',window:false,weekdays:[0,1,2,3,4,5,6],start:'09:00',end:'18:00',timeZone:'Asia/Shanghai',intervalMinutes:0}}>
+        <Form.Item name="targets" label="目标 IP:端口" rules={[{required:true,type:'array',min:1}]} extra="先在资产页面登记目标和端口；被标记跳过的端口会被排除。"><Select mode="multiple" showSearch optionFilterProp="label" options={options} placeholder="选择明确登记的目标"/></Form.Item>
+        <Form.Item name="mode" label="发起方式"><Select options={[{value:'now',label:'立即入队'},{value:'schedule',label:'定时发起'}]}/></Form.Item>
+        {mode==='schedule'&&<><Form.Item name="name" label="定时任务名称" rules={[{required:true}]}><Input maxLength={100}/></Form.Item><Form.Item name="nextRun" label="首次运行时间" rules={[{required:true}]}><Input type="datetime-local" step={1}/></Form.Item><Form.Item name="intervalMinutes" label="重复间隔（分钟，0 为仅一次）"><InputNumber min={0} max={525600}/></Form.Item></>}
+        <Form.Item name="window" label="限制执行时间窗"><Select options={[{value:false,label:'不限时间'},{value:true,label:'使用指定时间窗'}]}/></Form.Item>
+        {useWindow&&<><Form.Item name="weekdays" label="允许开始的星期" rules={[{required:true,type:'array',min:1}]}><Select mode="multiple" options={dayOptions}/></Form.Item><Space><Form.Item name="start" label="开始时间" rules={[{required:true}]}><Input placeholder="09:00" maxLength={5}/></Form.Item><Form.Item name="end" label="结束时间（较早表示次日）" rules={[{required:true}]}><Input placeholder="18:00" maxLength={5}/></Form.Item></Space><Form.Item name="timeZone" label="时区" rules={[{required:true}]}><Select options={['Asia/Shanghai','UTC','America/New_York'].map(value=>({value,label:value}))}/></Form.Item></>}
+      </Form>
+    </Modal>
+  </div>;
 };

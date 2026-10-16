@@ -39,6 +39,7 @@ export interface Asset {
   ports: AssetPort[];
   requestedPorts?: number[]; // Registration request only; NOT an approved scan port
   quarantinedPorts?: number[];
+  skippedPorts?: number[];
 }
 
 export interface TimeWindow {
@@ -118,6 +119,9 @@ export interface ScanTask {
   createdAt: string;
   chunks: TaskChunk[];
   synthetic?: boolean;
+  skippedTargets?: string[];
+  timeWindows?: TimeWindow[];
+  ruleVersion?: string;
 }
 
 export type FindingSeverity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO';
@@ -164,10 +168,24 @@ export interface NodeInfo {
 
 export interface RuleBundle {
   version: string;
-  channel: 'stable' | 'beta';
+  channel: 'stable' | 'beta' | 'local';
+  engines?: string[];
+  integrityVerified?: boolean;
+  signatureVerified?: boolean;
+  engineValidated?: boolean;
   manifestSha256: string;
   publishedAt: string;
   isCurrent: boolean;
   isBackup: boolean;
   inUseByTasks: number;
+}
+
+export interface TaskInput { synthetic: boolean; targets: string[]; timeWindows: TimeWindow[] }
+export interface Schedule extends TaskInput {
+  id: string; name: string; nextRun: string; intervalMinutes: number; enabled: boolean;
+  lastTaskId: string; lastError: string; createdBy: string;
+}
+export interface RuleJob {
+  id: string; kind: 'IMPORT'|'FETCH'|'ACTIVATE'; status: 'PENDING'|'RUNNING'|'COMPLETED'|'FAILED';
+  version: string; message: string; createdAt: string; completedAt: string;
 }

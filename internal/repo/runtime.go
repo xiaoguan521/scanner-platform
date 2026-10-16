@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"scanner-platform/internal/assets"
+	"scanner-platform/internal/scheduler"
 	"scanner-platform/internal/taskflow"
 
 	_ "modernc.org/sqlite"
@@ -27,7 +29,10 @@ type RuntimeRepository interface {
 	ListRuntimeFindings(context.Context) ([]taskflow.Finding, error)
 }
 
-type RuntimeStore struct{ db *sql.DB }
+type RuntimeStore struct {
+	db     *sql.DB
+	ownsDB bool
+}
 
 func OpenRuntime(path string) (*RuntimeStore, error) {
 	if path == "" {
@@ -41,15 +46,25 @@ func OpenRuntime(path string) (*RuntimeStore, error) {
 		return nil, fmt.Errorf("open task database: %w", err)
 	}
 	db.SetMaxOpenConns(1)
+	store, err := NewRuntime(db)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	store.ownsDB = true
+	return store, nil
+}
+
+func NewRuntime(db *sql.DB) (*RuntimeStore, error) {
+	if _, err := assets.New(db); err != nil {
+		return nil, err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	for _, statement := range []string{
 		`PRAGMA busy_timeout=5000`,
 		`PRAGMA foreign_keys=ON`,
 		`PRAGMA journal_mode=WAL`,
-		`CREATE TABLE IF NOT EXISTS assets (
-			id TEXT PRIMARY KEY, address TEXT NOT NULL UNIQUE,
-			created_at TEXT NOT NULL, data TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS scan_tasks (
 			id TEXT PRIMARY KEY, status TEXT NOT NULL,
 			worker_id TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
@@ -64,10 +79,19 @@ func OpenRuntime(path string) (*RuntimeStore, error) {
 			return nil, fmt.Errorf("initialize task database: %w", err)
 		}
 	}
-	return &RuntimeStore{db: db}, nil
+	store := &RuntimeStore{db: db}
+	if err := store.initLocal(ctx); err != nil {
+		return nil, fmt.Errorf("initialize local task features: %w", err)
+	}
+	return store, nil
 }
 
-func (s *RuntimeStore) Close() error { return s.db.Close() }
+func (s *RuntimeStore) Close() error {
+	if s.ownsDB {
+		return s.db.Close()
+	}
+	return nil
+}
 
 func (s *RuntimeStore) CreateSyntheticTask(ctx context.Context) (taskflow.Task, error) {
 	return s.createRuntimeTask(ctx, "task-"+rand.Text(), []string{"192.0.2.10:8080"})
@@ -92,15 +116,15 @@ func (s *RuntimeStore) createRuntimeTask(ctx context.Context, id string, targets
 	return readRuntimeTask(s.db.QueryRowContext(ctx, `SELECT `+taskColumns+` FROM scan_tasks WHERE id=?`, id))
 }
 
-const taskColumns = `id,status,worker_id,created_at,started_at,finished_at,targets`
+const taskColumns = `id,status,worker_id,created_at,started_at,finished_at,targets,details`
 
 type rowScanner interface{ Scan(...any) error }
 
 func readRuntimeTask(row rowScanner) (taskflow.Task, error) {
 	var task taskflow.Task
-	var worker, created, targets string
+	var worker, created, targets, details string
 	var started, finished sql.NullString
-	if err := row.Scan(&task.ID, &task.Status, &worker, &created, &started, &finished, &targets); err != nil {
+	if err := row.Scan(&task.ID, &task.Status, &worker, &created, &started, &finished, &targets, &details); err != nil {
 		return taskflow.Task{}, fmt.Errorf("read task: %w", err)
 	}
 	var err error
@@ -129,6 +153,20 @@ func readRuntimeTask(row rowScanner) (taskflow.Task, error) {
 		task.CompletedChunks, chunk.CompletedFully = 1, true
 	}
 	task.Chunks = []taskflow.Chunk{chunk}
+	var detail taskDetails
+	if err := json.Unmarshal([]byte(details), &detail); err != nil {
+		return taskflow.Task{}, err
+	}
+	task.HardDeadline = detail.Deadline
+	task.SkippedTargets = detail.Skipped
+	task.TimeWindows = detail.Input.TimeWindows
+	if task.TimeWindows == nil {
+		task.TimeWindows = []scheduler.Window{}
+	}
+	task.RuleVersion = detail.RuleVersion
+	if task.SkippedTargets == nil {
+		task.SkippedTargets = []string{}
+	}
 	return task, nil
 }
 
@@ -150,7 +188,82 @@ func (s *RuntimeStore) ListRuntimeTasks(ctx context.Context) ([]taskflow.Task, e
 }
 
 func (s *RuntimeStore) ClaimRuntimeTask(ctx context.Context, worker string) (*taskflow.Task, error) {
-	task, err := readRuntimeTask(s.db.QueryRowContext(ctx, `UPDATE scan_tasks SET status='RUNNING',worker_id=?,started_at=?
+	for attempt := 0; attempt < 10; attempt++ {
+		task, err := s.claimRuntimeTask(ctx, worker)
+		var sqliteErr interface{ Code() int }
+		if err == nil || !errors.As(err, &sqliteErr) || sqliteErr.Code()&255 != 5 {
+			return task, err
+		}
+		timer := time.NewTimer(time.Duration(attempt+1) * 10 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return nil, fmt.Errorf("claim queue remained busy")
+}
+
+func (s *RuntimeStore) claimRuntimeTask(ctx context.Context, worker string) (*taskflow.Task, error) {
+	// Check each queued task against its persisted window immediately before dispatch.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	for {
+		var id, data string
+		err = tx.QueryRowContext(ctx, `SELECT id,details FROM scan_tasks WHERE status='PENDING' ORDER BY created_at,id LIMIT 1`).Scan(&id, &data)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, tx.Commit()
+		}
+		if err != nil {
+			return nil, err
+		}
+		var detail taskDetails
+		if err := json.Unmarshal([]byte(data), &detail); err != nil {
+			return nil, err
+		}
+		if len(detail.Input.Targets) > 0 {
+			targets, fresh, err := resolveTargets(ctx, tx, detail.Input)
+			if errors.Is(err, ErrInvalidTask) {
+				if _, err := tx.ExecContext(ctx, "UPDATE scan_tasks SET status='CANCELED' WHERE id=?", id); err != nil {
+					return nil, err
+				}
+				if err := logLocal(ctx, tx, "local-server", "cancel_changed_targets", "task", id, "登记目标或跳过标记已变化，请重新创建任务"); err != nil {
+					return nil, err
+				}
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			fresh.RuleVersion = detail.RuleVersion
+			detail = fresh
+			encoded, _ := json.Marshal(targets)
+			if _, err := tx.ExecContext(ctx, "UPDATE scan_tasks SET targets=? WHERE id=?", string(encoded), id); err != nil {
+				return nil, err
+			}
+		}
+		deadline, allowed, err := scheduler.AllowedUntil(detail.Input.TimeWindows, time.Now())
+		if err != nil {
+			return nil, err
+		}
+		if !allowed {
+			if _, err := tx.ExecContext(ctx, "UPDATE scan_tasks SET status='WAITING_WINDOW' WHERE id=?", id); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		detail.Deadline = deadline.UTC().Format(time.RFC3339Nano)
+		encoded, _ := json.Marshal(detail)
+		if _, err := tx.ExecContext(ctx, "UPDATE scan_tasks SET details=? WHERE id=?", string(encoded), id); err != nil {
+			return nil, err
+		}
+		break
+	}
+	task, err := readRuntimeTask(tx.QueryRowContext(ctx, `UPDATE scan_tasks SET status='RUNNING',worker_id=?,started_at=?
 		WHERE id=(SELECT id FROM scan_tasks WHERE status='PENDING' ORDER BY created_at,id LIMIT 1)
 		AND status='PENDING' RETURNING `+taskColumns, worker, time.Now().UTC().Format(time.RFC3339Nano)))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -158,6 +271,9 @@ func (s *RuntimeStore) ClaimRuntimeTask(ctx context.Context, worker string) (*ta
 	}
 	if err != nil {
 		return nil, fmt.Errorf("claim task: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
 	}
 	return &task, nil
 }
@@ -176,6 +292,12 @@ func (s *RuntimeStore) CompleteRuntimeTask(ctx context.Context, report taskflow.
 		return err
 	}
 	chunk := task.Chunks[0]
+	if task.Status == "RUNNING" && chunk.WorkerNodeID == report.WorkerID && report.Status == "PAUSED_WINDOW" {
+		if _, err := tx.ExecContext(ctx, "UPDATE scan_tasks SET status='PAUSED_WINDOW',worker_id='' WHERE id=?", task.ID); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
 	if chunk.WorkerNodeID != report.WorkerID || len(chunk.Targets) == 0 || report.Target != chunk.Targets[0] || report.Title != taskflow.SyntheticTitle {
 		return ErrTaskConflict
 	}
@@ -185,12 +307,38 @@ func (s *RuntimeStore) CompleteRuntimeTask(ctx context.Context, report taskflow.
 	if task.Status != "RUNNING" {
 		return ErrTaskConflict
 	}
+	if task.HardDeadline != "" {
+		deadline, err := time.Parse(time.RFC3339Nano, task.HardDeadline)
+		if err != nil {
+			return err
+		}
+		if !time.Now().Before(deadline) {
+			if _, err := tx.ExecContext(ctx, "UPDATE scan_tasks SET status='PAUSED_WINDOW',worker_id='' WHERE id=?", task.ID); err != nil {
+				return err
+			}
+			if err := tx.Commit(); err != nil {
+				return err
+			}
+			return ErrTaskConflict
+		}
+	}
 	now := time.Now().UTC()
 	finding := taskflow.Finding{
 		ID: "finding-" + task.ID, TaskID: task.ID, Fingerprint: "synthetic-" + task.ID,
 		Severity: "INFO", Title: taskflow.SyntheticTitle, Engine: "synthetic", TemplateOrCVE: "framework-check",
 		Target: report.Target, Status: "OPEN", FirstSeen: now, LastSeen: now, Synthetic: true,
 	}
+	var rawDetails string
+	if err := tx.QueryRowContext(ctx, "SELECT details FROM scan_tasks WHERE id=?", task.ID).Scan(&rawDetails); err != nil {
+		return err
+	}
+	var detail taskDetails
+	if err := json.Unmarshal([]byte(rawDetails), &detail); err != nil {
+		return err
+	}
+	owner := detail.Owners[report.Target]
+	finding.BusinessGroup = owner.Group
+	finding.Owner = owner.Owner
 	data, err := json.Marshal(finding)
 	if err != nil {
 		return fmt.Errorf("encode finding: %w", err)

@@ -31,7 +31,7 @@ export function useCollection<K extends keyof Resources>(name: K, demoFixtures: 
     });
     };
     load();
-    const timer = name === 'tasks' || name === 'findings' ? window.setInterval(load, 1000) : undefined;
+    const timer = ['tasks','findings','nodes','rules','schedules','rule-jobs'].includes(name) ? window.setInterval(load, 1000) : undefined;
     return () => {
       controller.abort();
       if (timer !== undefined) window.clearInterval(timer);
@@ -47,16 +47,11 @@ export function useSystemStatus() {
   useEffect(() => {
     if (isDemoMode) return;
     const controller = new AbortController();
-    Promise.all([apiClient.systemStatus(controller.signal), apiClient.capabilities(controller.signal)])
-      .then(([nextStatus, nextCapabilities]) => {
-        if (!controller.signal.aborted) {
-          setStatus(nextStatus);
-          setCapabilities(nextCapabilities);
-        }
-      }).catch((cause: unknown) => {
-        if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Server unavailable');
-      });
-    return () => controller.abort();
+    const load=()=>Promise.all([apiClient.systemStatus(controller.signal), apiClient.capabilities(controller.signal)])
+      .then(([nextStatus,nextCapabilities])=>{if(!controller.signal.aborted){setStatus(nextStatus);setCapabilities(nextCapabilities);setError(null);}})
+      .catch((cause:unknown)=>{if(!controller.signal.aborted){setStatus(null);setError(cause instanceof Error?cause.message:'Server unavailable');}});
+    void load(); const timer=window.setInterval(()=>void load(),3000);
+    return () => {controller.abort();window.clearInterval(timer);};
   }, []);
   return { status, capabilities, error };
 }

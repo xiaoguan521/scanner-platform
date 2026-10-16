@@ -9,7 +9,7 @@ import { CollectionNotice } from '../../api/CollectionNotice';
 import { useAuth } from '../../auth/AuthProvider';
 
 const { Text } = Typography;
-type AssetForm = {kind:'host'|'image_repo';address:string;businessGroup:string;owner:string;requestedPorts?:string};
+type AssetForm = {kind:'host'|'image_repo';address:string;businessGroup:string;owner:string;requestedPorts?:string;skippedPorts?:string};
 function parsePorts(text?: string): number[] {
   if (!text?.trim()) return [];
   const tokens = text.split(',').map(v => v.trim());
@@ -30,31 +30,33 @@ export const AssetsPage: React.FC = () => {
   const [saving,setSaving] = useState(false);
   const [filter,setFilter] = useState('');
   const [createForm] = Form.useForm<AssetForm>();
-  const [editForm] = Form.useForm<Pick<AssetForm,'businessGroup'|'owner'|'requestedPorts'>>();
+  const [editForm] = Form.useForm<Pick<AssetForm,'businessGroup'|'owner'|'requestedPorts'|'skippedPorts'>>();
   const rows = useMemo(()=>assets.filter(a=>(a.address+' '+a.businessGroup+' '+a.owner).toLowerCase().includes(filter.toLowerCase())),[assets,filter]);
 
   const create = async (input: AssetForm) => {
     setSaving(true);
     try {
       const requestedPorts=parsePorts(input.requestedPorts);
+      const skippedPorts=parsePorts(input.skippedPorts);
+      if(skippedPorts.some(p=>!requestedPorts.includes(p))) throw new Error('跳过端口必须来自目标端口列表');
       let asset: Asset;
       if (isDemoMode) {
         asset={id:'demo-'+Date.now(),kind:input.kind,address:input.address,businessGroup:input.businessGroup,
           owner:input.owner,createdAt:new Date().toISOString(),ports:[],requestedPorts,quarantinedPorts:[]};
         message.info('仅演示：添加本地草稿，端口尚未获扫描授权');
       } else {
-        asset=await apiClient.createAsset({...input,requestedPorts});
-        message.success('资产已登记到 SQLite；端口仅为申请记录，不允许扫描');
+        asset=await apiClient.createAsset({...input,requestedPorts,skippedPorts});
+        message.success('资产与明确输入的端口已保存；跳过端口不会下发给 Worker');
       }
       setAssets(prev=>[asset,...prev]);setCreateOpen(false);createForm.resetFields();
     } catch(e) {message.error(e instanceof Error?e.message:'登记失败');}
     finally {setSaving(false);}
   };
-  const update = async (input: Pick<AssetForm,'businessGroup'|'owner'|'requestedPorts'>) => {
+  const update = async (input: Pick<AssetForm,'businessGroup'|'owner'|'requestedPorts'|'skippedPorts'>) => {
     if (!editing) return;
     setSaving(true);
     try {
-      const patch={businessGroup:input.businessGroup!,owner:input.owner!,requestedPorts:parsePorts(input.requestedPorts)};
+      const patch={businessGroup:input.businessGroup!,owner:input.owner!,requestedPorts:parsePorts(input.requestedPorts),skippedPorts:parsePorts(input.skippedPorts)};
       const result=isDemoMode?{...editing,...patch}:await apiClient.updateAsset(editing.id,patch);
       setAssets(prev=>prev.map(a=>a.id===editing.id?result:a));
       setEditing(null);
@@ -75,9 +77,9 @@ export const AssetsPage: React.FC = () => {
   return <div style={{display:'flex',flexDirection:'column',gap:16}}>
     <CollectionNotice loading={loading} error={error}/>
     <Alert type="warning" showIcon
-      message="资产登记 ≠ 扫描授权"
-      description="资产及拟申请端口登记不会自动允许扫描。端口由“授权范围”页面人工审批；编辑资产会重置该资产已有端口审批。审批成功也不会自动启动扫描任务。"/>
-    {!isDemoMode && <Alert type="info" showIcon message="端口隔离列表接口仍在开发中；未加载到记录不代表没有隔离端口。"/>}
+      message="只处理明确登记的 IP 与端口"
+      description="在任务中心选择已登记的 IP:端口。Nginx 四层转发等端口请填入“跳过端口”，它们会被排除。当前只运行模拟任务，不连接目标。"/>
+
     {quarantines.length > 0 && <Card title="疑似四层转发隔离区（仅演示）">
       <Table rowKey={q=>q.assetId+'-'+q.port} dataSource={quarantines} size="small" pagination={false}
         columns={[
@@ -95,13 +97,13 @@ export const AssetsPage: React.FC = () => {
           {title:'资产地址',dataIndex:'address',render:(value:string)=><Text strong>{value}</Text>},
           {title:'类型',dataIndex:'kind',render:(v:string)=><Tag>{v==='host'?'主机':'镜像仓库'}</Tag>},
           {title:'业务组',dataIndex:'businessGroup'},{title:'责任人',dataIndex:'owner'},
-          {title:'已登记的申请端口',dataIndex:'requestedPorts',render:(ports:number[]|undefined)=>
-            ports?.length?<Space wrap>{ports.map(port=><Tag key={port} color="gold">{port} 申请中</Tag>)}</Space>:<Text type="secondary">未填写</Text>},
-          {title:'人工批准端口（仍不可自动扫描）',dataIndex:'ports',render:(ports:Asset['ports'])=>
-            ports?.length?<Space wrap>{ports.map(p=><Tag key={p.port} color={p.kind==='WEB'?'green':'default'}>{p.port} {p.kind}</Tag>)}</Space>:<Text type="secondary">无（不可扫）</Text>},
+          {title:'明确登记的目标端口',dataIndex:'requestedPorts',render:(ports:number[]|undefined)=>
+            ports?.length?<Space wrap>{ports.map(port=><Tag key={port} color="gold">{port} 已登记</Tag>)}</Space>:<Text type="secondary">未填写</Text>},
+          {title:'端口分类 / 跳过标记',dataIndex:'ports',render:(ports:Asset['ports'])=>
+            ports?.length?<Space wrap>{ports.map(p=><Tag key={p.port} color={p.kind==='WEB'?'green':'default'}>{p.port} {p.kind==='EXCLUDED_PROXY'?'跳过':p.kind}</Tag>)}</Space>:<Text type="secondary">无（不可扫）</Text>},
           {title:'登记时间',dataIndex:'createdAt',render:(value:string)=>new Date(value).toLocaleString()},
           {title:'操作',render:(_:unknown,asset:Asset)=><Button type="link" disabled={!canEdit} onClick={()=>{
-            editForm.setFieldsValue({businessGroup:asset.businessGroup,owner:asset.owner,requestedPorts:asset.requestedPorts?.join(', ')??''});
+            editForm.setFieldsValue({businessGroup:asset.businessGroup,owner:asset.owner,requestedPorts:asset.requestedPorts?.join(', ')??'',skippedPorts:asset.skippedPorts?.join(', ')??''});
             setEditing(asset);
           }}>编辑信息</Button>}
         ]}/>
@@ -117,9 +119,10 @@ export const AssetsPage: React.FC = () => {
         </Form.Item>
         <Form.Item name="businessGroup" label="所属业务组" rules={[{required:true}]}><Input maxLength={100}/></Form.Item>
         <Form.Item name="owner" label="责任人" rules={[{required:true}]}><Input maxLength={100}/></Form.Item>
-        <Form.Item name="requestedPorts" label="拟申请端口（不会自动授权）" extra="英文逗号分隔，如 80,443；空值表示未申请">
+        <Form.Item name="requestedPorts" label="目标端口" extra="英文逗号分隔，如 80,443；空值表示未申请">
           <Input placeholder="80, 443"/>
         </Form.Item>
+        <Form.Item name="skippedPorts" label="跳过端口（Nginx 四层转发等）" extra="必须属于上面的目标端口，英文逗号分隔；不会下发给 Worker"><Input placeholder="例如 443"/></Form.Item>
       </Form>
     </Modal>
     <Modal title={'编辑资产：'+(editing?.address??'')} open={!!editing}
@@ -128,6 +131,7 @@ export const AssetsPage: React.FC = () => {
         <Form.Item name="businessGroup" label="业务组" rules={[{required:true}]}><Input maxLength={100}/></Form.Item>
         <Form.Item name="owner" label="责任人" rules={[{required:true}]}><Input maxLength={100}/></Form.Item>
         <Form.Item name="requestedPorts" label="拟申请端口" extra="只是申请记录，不是扫描授权"><Input/></Form.Item>
+        <Form.Item name="skippedPorts" label="跳过端口（Nginx 四层转发等）" extra="必须属于上面的目标端口，英文逗号分隔；不会下发给 Worker"><Input placeholder="例如 443"/></Form.Item>
       </Form>
     </Modal>
   </div>;

@@ -18,12 +18,16 @@ import {
 import { mockFindings } from '../../mock/data';
 import { Finding, FindingSeverity, FindingStatus } from '../../types';
 import { isDemoMode } from '../../api/client';
+import { useAuth } from '../../auth/AuthProvider';
+import { updateFinding } from '../../api/runtime';
 import { useCollection } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
 
 const { Text } = Typography;
 
 export const FindingsPage: React.FC = () => {
+  const {user}=useAuth();
+  const canWrite=!isDemoMode&&(user?.role==='admin'||user?.role==='security_engineer');
   const { data: findings, setData: setFindings, loading, error } = useCollection('findings', mockFindings);
   const [severityFilter, setSeverityFilter] = useState<string>('ALL');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
@@ -34,14 +38,14 @@ export const FindingsPage: React.FC = () => {
     return true;
   });
 
-  const handleUpdateStatus = (id: string, newStatus: FindingStatus) => {
+  const handleUpdateStatus = async (id: string, newStatus: FindingStatus) => {
     // FIXED is a Server-only decision based on a complete verified scan.
     if (newStatus === 'FIXED') {
       message.warning('FIXED 必须经 Server 确认完整扫描、规则执行和未检出阈值，目前不可操作');
       return;
     }
     if (!isDemoMode) {
-      message.warning('真实漏洞状态变更必须由 Server 鉴权与审计');
+      try{const item=await updateFinding(id,newStatus);setFindings(prev=>prev.map(f=>f.id===id?item:f));message.success('状态已保存并记录审计');}catch(e){message.error(String(e));}
       return;
     }
     setFindings((prev) => prev.map((f) => f.id === id ? { ...f, status: newStatus } : f));
@@ -97,6 +101,7 @@ export const FindingsPage: React.FC = () => {
                 { value: 'HIGH', label: '高危 (High)' },
                 { value: 'MEDIUM', label: '中危 (Medium)' },
                 { value: 'LOW', label: '低危 (Low)' },
+                { value: 'INFO', label: '信息 (Info)' },
               ]}
             />
             <Select
@@ -119,6 +124,7 @@ export const FindingsPage: React.FC = () => {
         <Table
           dataSource={filteredFindings}
           rowKey="id"
+          scroll={{x:1300}}
           columns={[
             {
               title: '等级',
@@ -187,12 +193,13 @@ export const FindingsPage: React.FC = () => {
               title: '状态流转',
               width: 150,
               render: (_, r) => (
-                <Space size={4}>
+                <Space size={4} wrap>
+                  {r.status!=='OPEN'&&r.status!=='FIXED'&&<Button type="link" size="small" disabled={!isDemoMode&&!canWrite} onClick={()=>void handleUpdateStatus(r.id,'OPEN')}>恢复待处理</Button>}
                   {r.status === 'OPEN' && (
                     <Button
                       type="link"
                       size="small"
-                      disabled={!isDemoMode}
+                      disabled={!isDemoMode&&!canWrite}
                       onClick={() => handleUpdateStatus(r.id, 'IN_PROGRESS')}
                     >
                       标记处理中
@@ -214,7 +221,7 @@ export const FindingsPage: React.FC = () => {
                       type="link"
                       size="small"
                       danger
-                      disabled={!isDemoMode}
+                      disabled={!isDemoMode&&!canWrite}
                       onClick={() => handleUpdateStatus(r.id, 'FALSE_POSITIVE')}
                     >
                       误报

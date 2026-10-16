@@ -1,4 +1,4 @@
-import type { Asset, AuthorizedScope, Finding, NodeInfo, PortQuarantine, RuleBundle, ScanTask, User, UserRole, PortRequest, TimeWindow, ApprovalDecision } from '../types';
+import type { Asset, AuthorizedScope, Finding, NodeInfo, PortQuarantine, RuleBundle, ScanTask, User, UserRole, PortRequest, TimeWindow, ApprovalDecision, Schedule, RuleJob } from '../types';
 
 export const dataMode: 'demo' | 'server' = import.meta.env.VITE_DATA_MODE === 'server' ? 'server' : 'demo';
 export const isDemoMode = dataMode === 'demo';
@@ -6,7 +6,7 @@ export const isDemoMode = dataMode === 'demo';
 export interface SystemStatus {
   role: 'sec-server' | 'sec-portable';
   phase: string;
-  state: 'SCAFFOLD';
+  state: 'SCAFFOLD' | 'RUNNING';
   ready: boolean;
   enabled: string[];
   unavailable: string[];
@@ -24,6 +24,8 @@ export interface Resources {
   findings: Finding;
   nodes: NodeInfo;
   rules: RuleBundle;
+  schedules: Schedule;
+  'rule-jobs': RuleJob;
 }
 export class ApiRequestError extends Error {
   constructor(public readonly status: number, message: string) {
@@ -31,7 +33,7 @@ export class ApiRequestError extends Error {
     this.name = 'ApiRequestError';
   }
 }
-async function requestJSON<T>(path: string, method = 'GET', body?: unknown, signal?: AbortSignal): Promise<T> {
+export async function requestJSON<T>(path: string, method = 'GET', body?: unknown, signal?: AbortSignal): Promise<T> {
   const response = await fetch(path, {
     method,
     headers: {
@@ -45,10 +47,14 @@ async function requestJSON<T>(path: string, method = 'GET', body?: unknown, sign
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   });
   if (!response.ok) {
+    if (response.status === 401) window.dispatchEvent(new Event('scanner-session-expired'));
     let description = response.statusText || 'Request failed';
     try {
       const err: ApiErrorBody = await response.json();
-      if (typeof err.message === 'string') description = err.message;
+      if (typeof err.message === 'string') {
+        const messages:Record<string,string>={invalid_user:'用户名、角色或密码不符合要求（密码 12–72 字节）',user_exists:'用户名已存在',invalid_asset:'请输入有效数字 IP、业务组、负责人和端口；跳过端口须属于目标端口',asset_exists:'资产已存在',forbidden:'当前账号无权执行此操作',invalid_approval:'审批记录或时间窗格式不正确',approval_conflict:'记录已审核、已过期或端口被标记跳过',db_error:'保存失败，请查看 Server 日志',already_initialized:'管理员已初始化，请直接登录'};
+        description=messages[err.error]??err.message;
+      }
     } catch { /* Unknown error bodies stay generic. */ }
     throw new ApiRequestError(response.status, description);
   }
@@ -60,6 +66,8 @@ export const apiClient = {
   collection<K extends keyof Resources>(name: K, signal?: AbortSignal) {
     return requestJSON<ListResponse<Resources[K]>>('/api/v1/' + name, 'GET', undefined, signal);
   },
+  setupStatus() { return requestJSON<{required:boolean}>('/api/v1/auth/setup'); },
+  setup(username:string,password:string) { return requestJSON('/api/v1/auth/setup','POST',{username,password}); },
   me() { return requestJSON<User>('/api/v1/auth/me'); },
   login(username: string, password: string) { return requestJSON<User>('/api/v1/auth/login', 'POST', { username, password }); },
   logout() { return requestJSON<{state:string}>('/api/v1/auth/logout', 'POST'); },
@@ -69,10 +77,10 @@ export const apiClient = {
   updateUser(id: string, role: UserRole, isActive: boolean) {
     return requestJSON<User>('/api/v1/users/' + encodeURIComponent(id), 'PATCH', {role,isActive});
   },
-  createAsset(input: {kind: Asset['kind']; address: string; businessGroup: string; owner: string; requestedPorts: number[]}) {
+  createAsset(input: {kind: Asset['kind']; address: string; businessGroup: string; owner: string; requestedPorts: number[]; skippedPorts?: number[]}) {
     return requestJSON<Asset>('/api/v1/assets', 'POST', input);
   },
-  updateAsset(id: string, input: {businessGroup: string; owner: string; requestedPorts: number[]}) {
+  updateAsset(id: string, input: {businessGroup: string; owner: string; requestedPorts: number[]; skippedPorts?: number[]}) {
     return requestJSON<Asset>('/api/v1/assets/' + encodeURIComponent(id), 'PATCH', input);
   },
   requestScope(input: {assetId:string; timeWindows:TimeWindow[]; expiresAt:string}) {

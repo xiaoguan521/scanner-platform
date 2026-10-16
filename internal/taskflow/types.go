@@ -1,7 +1,28 @@
 // Package taskflow contains the task protocol shared by Server and Worker.
 package taskflow
 
-import "time"
+import (
+	"scanner-platform/internal/scheduler"
+	"time"
+)
+
+type TaskInput struct {
+	Synthetic   bool               `json:"synthetic"`
+	Targets     []string           `json:"targets"`
+	TimeWindows []scheduler.Window `json:"timeWindows"`
+}
+
+type Schedule struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	TaskInput
+	NextRun         string `json:"nextRun"`
+	IntervalMinutes int    `json:"intervalMinutes"`
+	Enabled         bool   `json:"enabled"`
+	LastTaskID      string `json:"lastTaskId"`
+	LastError       string `json:"lastError"`
+	CreatedBy       string `json:"createdBy"`
+}
 
 const SyntheticTitle = "模拟发现项：任务链路已完成（未执行真实扫描）"
 
@@ -17,18 +38,21 @@ type Chunk struct {
 }
 
 type Task struct {
-	ID              string    `json:"id"`
-	ScopeID         string    `json:"scopeId"`
-	ScopeName       string    `json:"scopeName"`
-	Engines         []string  `json:"engines"`
-	Status          string    `json:"status"`
-	HardDeadline    string    `json:"hardDeadline"`
-	TotalChunks     int       `json:"totalChunks"`
-	CompletedChunks int       `json:"completedChunks"`
-	TargetCount     int       `json:"targetCount"`
-	CreatedAt       time.Time `json:"createdAt"`
-	Chunks          []Chunk   `json:"chunks"`
-	Synthetic       bool      `json:"synthetic"`
+	ID              string             `json:"id"`
+	ScopeID         string             `json:"scopeId"`
+	ScopeName       string             `json:"scopeName"`
+	Engines         []string           `json:"engines"`
+	Status          string             `json:"status"`
+	HardDeadline    string             `json:"hardDeadline"`
+	TotalChunks     int                `json:"totalChunks"`
+	CompletedChunks int                `json:"completedChunks"`
+	TargetCount     int                `json:"targetCount"`
+	CreatedAt       time.Time          `json:"createdAt"`
+	Chunks          []Chunk            `json:"chunks"`
+	Synthetic       bool               `json:"synthetic"`
+	SkippedTargets  []string           `json:"skippedTargets"`
+	TimeWindows     []scheduler.Window `json:"timeWindows"`
+	RuleVersion     string             `json:"ruleVersion"`
 }
 
 type Finding struct {
@@ -55,4 +79,5 @@ type Report struct {
 	WorkerID string `json:"workerId"`
 	Target   string `json:"target"`
 	Title    string `json:"title"`
+	Status   string `json:"status,omitempty"`
 }

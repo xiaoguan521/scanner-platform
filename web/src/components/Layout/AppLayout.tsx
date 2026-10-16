@@ -80,6 +80,8 @@ export const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children })
   return (
     <Layout style={{ minHeight: '100vh' }}>
       <Sider
+        breakpoint="lg"
+        collapsedWidth={64}
         collapsible
         collapsed={collapsed}
         onCollapse={(val) => setCollapsed(val)}
@@ -120,7 +122,7 @@ export const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children })
         />
       </Sider>
 
-      <Layout>
+      <Layout style={{minWidth:0}}>
         <Header
           style={{
             padding: '0 24px',
@@ -129,7 +131,10 @@ export const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children })
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            height: 64,
+            minHeight: 64,
+            height: 'auto',
+            flexWrap: 'wrap',
+            gap: 8,
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
@@ -141,7 +146,7 @@ export const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children })
             </Tag>
           </div>
 
-          <Space size="large">
+          <Space size="middle" wrap>
             {!isDemoMode && user && <Space size={8}><span>{user.username} · {user.role}</span><Button size="small" onClick={() => { void logout(); }}>退出</Button></Space>}
             <Tooltip title={isDemoMode ? '演示数据，不代表真实运行状态' : error ?? '来自 Server 的控制面状态（不是扫描器状态）'}>
               <Space size={6}>
@@ -152,7 +157,7 @@ export const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children })
               </Space>
             </Tooltip>
             <Tooltip title="实际规则激活版本需由 Server/Updater 验证并提供">
-              <Tag style={{ margin: 0 }}>规则库: 未验证</Tag>
+              <Tag style={{ margin: 0 }}>规则版本见节点页</Tag>
             </Tooltip>
 
             <Tooltip title={isDark ? '切换至浅色模式' : '切换至暗色科技模式'}>
@@ -178,7 +183,7 @@ export const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children })
             showIcon
             style={{ marginBottom: 16 }}
             message={isDemoMode ? '演示模式：所有资产、任务、漏洞及节点信息均为模拟数据' : status?.enabled.includes('synthetic-worker') ? '本地框架运行中：任务和结果已接入 SQLite' : '账号管理已连接 Server；扫描业务仍未开放'}
-            description={status?.enabled.includes('synthetic-worker') ? '当前仅运行模拟 Worker。任务会自动领取、完成并生成明确标注的模拟结果，不连接目标或执行真实扫描。' : isDemoMode ? '演示操作仅影响当前浏览器内的页面；不会发起扫描、写数据库、解除隔离或生成审计。' : error ? `Server 状态接口不可用：${error}` : '用户和会话已接 SQLite；资产、任务、漏洞和规则业务仍保持关闭。'}
+            description={status?.enabled.includes('synthetic-worker') ? '当前仅运行模拟 Worker。任务会自动领取、完成并生成明确标注的模拟结果，不连接目标或执行真实扫描。' : isDemoMode ? '演示操作仅影响当前浏览器内的页面；不会发起扫描、写数据库、解除隔离或生成审计。' : error ? `Server 状态接口不可用：${error}` : '本地业务已接 SQLite；真实扫描尚未启用。'}
           />
           {children}
         </Content>
