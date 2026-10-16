@@ -39,3 +39,13 @@
 *.swp
 *~
 
+# 前端开发与构建
+web/node_modules/
+web/dist/
+web/.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+

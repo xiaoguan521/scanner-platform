@@ -1,3 +1,3 @@
-# Portable entry point
+# Portable client scaffold
 
-The portable single-process entry point is deferred to a later roadmap phase. It is intentionally not built or runnable during the current Phase 0 PoC scaffold.
+`main.go` is intentionally limited to `--status` and opt-in `--dev-ui` on numeric loopback. The single-process engine, embedded UI and SQLite storage remain disabled until safety and storage interfaces are verified.
