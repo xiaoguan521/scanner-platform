@@ -2,7 +2,7 @@
 
 > 使用方法:把本文件第 9–13 节追加到 `AGENTS.md` 末尾,并把"对 8.3 的补充"合并进原 8.3 节。
 > 硬规则编号接续原文(原文到第 27 条)。建议作为一个独立的小 PR(`docs(agents): add PR discipline, web and supply-chain rules`)由人工合并。
-> 合入后的 `AGENTS.md` 不保留本标题、使用说明或独立的"对 8.3 的补充"章节,避免重复追加。补充条款 PR 由人工合并后,再执行 `docs/codex-task-split-pr1.md`。
+> 合入后的 `AGENTS.md` 不保留本标题、使用说明或独立的"对 8.3 的补充"章节,避免重复追加。补充条款 PR 由人工合并后,先读取 `docs/codex-task-split-pr1.md` 的状态更新;PR #1 已合并,原拆分方案暂停执行。
 
 ---
 

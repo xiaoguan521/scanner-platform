@@ -1,11 +1,11 @@
 package main
 
 import (
-	"log/slog"
 	"os"
+
+	"scanner-platform/internal/bootstrap"
 )
 
 func main() {
-	slog.Error("sec-server is a Phase 0 scaffold and is not configured to start")
-	os.Exit(2)
+	os.Exit(bootstrap.Run(bootstrap.Server, os.Args[1:], os.Stdout, os.Stderr))
 }

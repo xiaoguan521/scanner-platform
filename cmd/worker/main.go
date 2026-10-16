@@ -1,11 +1,11 @@
 package main
 
 import (
-	"log/slog"
 	"os"
+
+	"scanner-platform/internal/bootstrap"
 )
 
 func main() {
-	slog.Error("sec-worker is a Phase 0 scaffold and will not start a scanner")
-	os.Exit(2)
+	os.Exit(bootstrap.Run(bootstrap.Worker, os.Args[1:], os.Stdout, os.Stderr))
 }

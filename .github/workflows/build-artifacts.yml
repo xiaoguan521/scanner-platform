@@ -20,9 +20,45 @@ jobs:
     permissions:
       contents: read
 
+  frontend:
+    name: Build Server-mode frontend
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js LTS
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install locked frontend dependencies
+        run: npm ci --prefix web
+
+      - name: Build static UI (no demo fallback)
+        env:
+          VITE_DATA_MODE: server
+        run: npm run build --prefix web
+
+      - name: Upload frontend static bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: web/dist/
+          if-no-files-found: error
+          retention-days: 14
+
   build:
     name: Package (${{ matrix.goos }}/${{ matrix.goarch }})
-    needs: verify
+    needs: [verify, frontend]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -80,6 +116,23 @@ jobs:
               -o "build_output/sec-portable$ext" ./cmd/portable
           fi
 
+      - name: Download reviewed frontend bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: build_output/web
+
+      - name: Verify frontend bundle exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s build_output/web/index.html
+          shopt -s nullglob
+          scripts=(build_output/web/assets/*.js)
+          test "${#scripts[@]}" -gt 0
+          # Static files are packaged for future integration. The Phase 0
+          # Go Server does not currently serve these files.
+
       - name: Package artifacts and checksums
         shell: bash
         env:
@@ -114,7 +167,7 @@ jobs:
   release:
     name: Create Phase 0 Draft Release
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: [verify, build]
+    needs: [verify, frontend, build]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -155,4 +208,7 @@ jobs:
             Phase 0 / PoC artifacts only. Not production-ready.
             Server, Updater and Worker are currently fail-closed scaffolds.
             The portable client is included only after its entry point is implemented.
+            Each platform archive includes web/ static assets built in Server mode.
+            These static assets are not yet served by the Phase 0 Go Server.
+            User management/auth/RBAC and business APIs are not operational.
             Review security validation and platform runtime tests before publication.
