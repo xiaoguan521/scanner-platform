@@ -43,17 +43,24 @@ func checkedEndpoint(e scope.Endpoint) (netip.Addr, error) {
 	return ip, nil
 }
 
+// RuleSet can only contain generated, validated rules. Its script field is
+// unexported so consumers cannot pass arbitrary nft commands to a configurator.
+type RuleSet struct{ script string }
+
+// String is intended for audits and read-only testing, never arbitrary input.
+func (r RuleSet) String() string { return r.script }
+
 // Rules validates all permits before rendering. The nft transaction is
 // exclusive to the worker's network namespace; never run it on a host netns.
-func Rules(p Plan, now time.Time) (string, error) {
+func Rules(p Plan, now time.Time) (RuleSet, error) {
 	if p.Decision.Status != "READY" || !p.Decision.HardDeadline.After(now) {
-		return "", errors.New("worker was not admitted or deadline expired")
+		return RuleSet{}, errors.New("worker was not admitted or deadline expired")
 	}
 	if len(p.Decision.Targets) == 0 || len(p.Infrastructure) == 0 {
-		return "", errors.New("targets and explicit infrastructure permits required")
+		return RuleSet{}, errors.New("targets and explicit infrastructure permits required")
 	}
 	if len(p.Decision.Targets)+len(p.Infrastructure) > maxPermits {
-		return "", errors.New("permit count exceeds fixed safety limit")
+		return RuleSet{}, errors.New("permit count exceeds fixed safety limit")
 	}
 
 	permits := make(map[string]Permit, len(p.Decision.Targets)+len(p.Infrastructure))
@@ -74,12 +81,12 @@ func Rules(p Plan, now time.Time) (string, error) {
 	}
 	for _, target := range p.Decision.Targets {
 		if err := add(Permit{Endpoint: target, Protocol: TCP}); err != nil {
-			return "", fmt.Errorf("invalid worker target: %w", err)
+			return RuleSet{}, fmt.Errorf("invalid worker target: %w", err)
 		}
 	}
 	for _, infra := range p.Infrastructure {
 		if err := add(infra); err != nil {
-			return "", fmt.Errorf("invalid infrastructure permit: %w", err)
+			return RuleSet{}, fmt.Errorf("invalid infrastructure permit: %w", err)
 		}
 	}
 	keys := make([]string, 0, len(permits))
@@ -107,5 +114,5 @@ func Rules(p Plan, now time.Time) (string, error) {
 	}
 	out.WriteString("add rule inet sec_scan_fence egress counter drop\n")
 	out.WriteString("add rule inet sec_scan_fence forward counter drop\n")
-	return out.String(), nil
+	return RuleSet{script: out.String()}, nil
 }

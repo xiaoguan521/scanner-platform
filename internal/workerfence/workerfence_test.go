@@ -40,12 +40,12 @@ func TestRulesDefaultDropAndExactPermits(t *testing.T) {
 		"ip daddr 198.51.100.7 tcp dport 8443 counter accept",
 		"egress counter drop", "forward counter drop",
 	} {
-		if !strings.Contains(got, needle) {
+		if !strings.Contains(got.String(), needle) {
 			t.Errorf("missing %q in rules", needle)
 		}
 	}
 	for _, unsafe := range []string{"ct state established", "0.0.0.0/0", "flush ruleset", "accept all"} {
-		if strings.Contains(got, unsafe) {
+		if strings.Contains(got.String(), unsafe) {
 			t.Errorf("unsafe permissive rule %q", unsafe)
 		}
 	}
@@ -81,7 +81,7 @@ func TestRulesDeniedInputs(t *testing.T) {
 			p := samplePlan()
 			tc.change(&p)
 			got, err := Rules(p, time.Now())
-			if err == nil || got != "" {
+			if err == nil || got.String() != "" {
 				t.Fatalf("unsafe plan admitted: %s", got)
 			}
 		})
@@ -100,7 +100,7 @@ func TestRulesIPv6AndUDPInfrastructure(t *testing.T) {
 		"ip6 daddr 2001:db8::20 tcp dport 443",
 		"ip6 daddr 2001:db8::53 udp dport 53",
 	} {
-		if !strings.Contains(rules, want) {
+		if !strings.Contains(rules.String(), want) {
 			t.Errorf("missing %s", want)
 		}
 	}
@@ -113,7 +113,7 @@ type fakeConfigurator struct {
 	block   <-chan struct{}
 }
 
-func (f *fakeConfigurator) Apply(ctx context.Context, _ string) error {
+func (f *fakeConfigurator) Apply(ctx context.Context, _ RuleSet) error {
 	f.applied.Add(1)
 	if f.started != nil {
 		close(f.started)
@@ -132,6 +132,8 @@ type fakeLauncher struct {
 	called atomic.Int32
 	run    func(context.Context) error
 }
+
+func (f *fakeLauncher) restrictedWorkerLauncher() {}
 
 func (f *fakeLauncher) Launch(ctx context.Context) error {
 	f.called.Add(1)

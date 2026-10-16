@@ -64,7 +64,7 @@ func (c *nftConfigurator) requireIsolatedNamespace() error {
 	return nil
 }
 
-func (c *nftConfigurator) Apply(ctx context.Context, rules string) error {
+func (c *nftConfigurator) Apply(ctx context.Context, rules RuleSet) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("firewall context canceled: %w", err)
 	}
@@ -77,11 +77,11 @@ func (c *nftConfigurator) Apply(ctx context.Context, rules string) error {
 	if os.Geteuid() != 0 {
 		return errors.New("nft supervisor requires root in its isolated namespace")
 	}
-	if rules == "" {
+	if rules.script == "" {
 		return errors.New("refusing empty nft policy")
 	}
 	cmd := exec.CommandContext(ctx, c.executable, "-f", "-")
-	cmd.Stdin = strings.NewReader(rules)
+	cmd.Stdin = strings.NewReader(rules.script)
 	// Do not return raw nft stderr: it may contain internal asset addresses.
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("atomic firewall transaction rejected: %w", err)

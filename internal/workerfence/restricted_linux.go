@@ -5,7 +5,7 @@ package workerfence
 import (
 	"context"
 	"fmt"
-	"os"
+	"io"
 	"os/exec"
 	"syscall"
 )
@@ -25,8 +25,10 @@ func (p RestrictedExec) Launch(ctx context.Context) error {
 	cmd := exec.Command(p.SetprivPath, argv...)
 	cmd.Env = env
 	cmd.Stdin = nil
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	// Never stream raw scanner output into supervisor logs: it can contain
+	// secrets or response bodies. Output ingestion is a separate audited path.
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("restricted launch failed: %w", err)

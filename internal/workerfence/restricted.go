@@ -16,6 +16,9 @@ type RestrictedExec struct {
 	RuntimeDir  string
 }
 
+// Only the built-in restricted launcher satisfies the supervisor launch gate.
+func (RestrictedExec) restrictedWorkerLauncher() {}
+
 // restrictedCommand assembles an argv vector, never a shell string.
 // setpriv is required to clear UID/GID, groups, inherited, ambient and
 // bounding capabilities and to prevent privilege gain across execve.

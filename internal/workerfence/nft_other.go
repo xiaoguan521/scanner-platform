@@ -15,6 +15,6 @@ func NewConfigurator(_ string, _ *os.File) Configurator {
 	return unsupportedConfigurator{}
 }
 
-func (unsupportedConfigurator) Apply(_ context.Context, _ string) error {
+func (unsupportedConfigurator) Apply(_ context.Context, _ RuleSet) error {
 	return errors.New("kernel-enforced worker fence requires Linux isolated network namespace")
 }

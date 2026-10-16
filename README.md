@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-仓库目前提供 Go 项目骨架、构建入口和六项 PoC 的验收说明。PoC 1 已有不产生网络流量的目标准入校验代码和单元/fuzz 测试，但尚未实现 supervisor 防火墙围栏等实验部分。Server、Updater、Worker 目前均为 fail-closed 占位入口，不会连接数据库、写规则目录或启动扫描引擎。此骨架不是可部署的扫描平台。
+仓库目前提供 Go 项目骨架、构建入口和六项 PoC 的验收说明。PoC 1 已有不产生网络流量的目标准入校验、Linux nftables 围栏规则生成、受限启动器的预备代码，以及单元/fuzz/隔离实验测试入口（见 `pocs/01/README.md`）。**Linux 实际应用围栏、DROP 计数和 UID/capabilities 验收尚未执行**，且这些模块尚未与 Worker 入口集成。Server、Updater、Worker 当前均为 fail-closed 占位入口，不会连接数据库、写规则目录或启动扫描引擎。此骨架不是可部署的扫描平台。
 
 ## 目录
 

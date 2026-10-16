@@ -10,13 +10,14 @@ import (
 
 // Configurator installs an nftables transaction in the worker's private netns.
 type Configurator interface {
-	Apply(context.Context, string) error
+	Apply(context.Context, RuleSet) error
 }
 
 // Launcher MUST start the approved engine without root or capabilities.
 // Production integrations must use the Linux restricted launcher, not arbitrary callbacks.
 type Launcher interface {
 	Launch(context.Context) error
+	restrictedWorkerLauncher()
 }
 
 // Supervisor is single-use: one fresh network namespace per worker task.
