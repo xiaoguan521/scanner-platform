@@ -1,0 +1,594 @@
+# 企业安全漏洞扫描平台:架构设计与实施方案(V3.2)
+
+> 本版整合了 V3.0 / V3.1 与前几轮评审意见,并纳入运维提出的三项生产要求。
+> 标记 **【待核对】** 的内容表示尚未在官方文档或实测中确认,编码前必须验证。
+
+---
+
+## 0. 修订摘要(相对 V3.1)
+
+| 类别 | 主要调整 |
+|---|---|
+| 数据模型 | 指纹只取稳定字段;`FIXED` 增加严格判定条件;补充资产、端口范围、端口隔离、审计、节点、规则包等缺失表 |
+| 围栏 | 端口纳入显式授权与网络白名单;基础设施白名单精确到 IP:端口;增加失联自终止与本地硬截止时间 |
+| 调度 | 任务按目标分块,块间检查时间窗;不再依赖中途强杀进程 |
+| 规则包 | 增加防回滚、私钥保管与轮换要求 |
+| Harbor | 默认推荐复用 Harbor 内置 Trivy,自研扫描作为备选;补充容量测算与待核实项 |
+| 路线图 | 便携版骨架前移到 MVP;工期改为"待 PoC 修正的估算" |
+
+---
+
+## 1. 目标、范围与原则
+
+### 1.1 需求
+
+- 多端可用(Web 控制台、CLI、便携离线版)。
+- 可定时执行,且遵守允许扫描的时间窗。
+- 支持在线与离线两种运行方式。
+- 支持 AI 辅助研判(后期阶段,见第 11 章)。
+- 以成熟开源引擎为内核,逐步定制成公司专属产品。
+
+### 1.2 运维提出的三项硬性要求
+
+1. **内网扫描范围必须明确输入并严格遵守**,不得自动发现或扫描范围外的同网段服务器。
+2. **目标服务器可能部署 nginx 四层(stream)代理**,不能持续向这类端口发包,避免经目标服务器探测到其他外围系统。
+3. **公司 Harbor 每天上传大量镜像**,Trivy 扫描耗时可能很长,必须有可控的吞吐方案。
+
+### 1.3 架构原则
+
+1. **引擎与规则库分离**:引擎低频升级,规则和漏洞库高频热更新,更新不重启容器。
+2. **三权分立**:控制面(唯一连库)、更新器(唯一写规则盘)、执行器(处理不可信目标,零数据库凭据)。
+3. **默认安全**:未登记的目标、端口一律不扫;高风险模板默认关闭。
+4. **同源构建**:一套 Go 代码,既能部署为集群,也能编译为单进程便携版。
+
+### 1.4 非目标(MVP 不做)
+
+SAST、密钥扫描、重型 DAST 爬虫、AI 自动研判、任何自动利用类能力。
+
+---
+
+## 2. 路线图
+
+> 工期为估算,假设 3–5 人团队,以 PoC 结果为准重新评估。
+
+| 阶段 | 估算周期 | 内容 | 退出标准 |
+|---|---|---|---|
+| **Phase 0:PoC** | 约 2 周 | 完成第 12 章的 6 项验证 | 6 项 PoC 全部达到验收标准 |
+| **Phase 1:MVP** | 约 2–3 个月 | 资产与授权范围、Nuclei + Trivy、归一化去重入库、漏洞生命周期、时间窗调度、规则包与离线导入、Server/Updater/Worker 三权分立;**存储抽象层与"嵌入式单进程"骨架** | 可在真实内网资产和一批 Harbor 样本上稳定运行 |
+| **Phase 2:扩展** | 约 2 个月 | 便携版打包与跨平台发布、ZAP sidecar、按需接入 Gitleaks 和 Semgrep(仅自研规则)、报表与看板 | 便携版在目标终端通过 EDR 与签名验证 |
+| **Phase 3:智能** | 约 2 个月 | AI 研判与修复建议、工单闭环 | AI 在评测集上显著降低误报,数据外发策略已审批 |
+
+---
+
+## 3. 组件选型与许可证
+
+### 3.1 选型决定
+
+| 类别 | 选择 | 说明 |
+|---|---|---|
+| 扫描引擎 | Nuclei、Trivy(MVP);ZAP、Semgrep、Gitleaks(后期) | 均以子进程方式调用,统一输出归一化 JSON |
+| 控制面 | Go + PostgreSQL | 任务队列使用 `SELECT ... FOR UPDATE SKIP LOCKED`,中心端不引入 Redis |
+| 离线版存储 | SQLite(纯 Go 驱动) | 通过 `Repository` 接口与 PostgreSQL 共用一套业务代码 |
+| 前端 | 静态单页应用,可 `go:embed` | Next.js、Vue、React 均可,按团队熟悉程度选;离线版不得依赖 CDN 与外部字体 |
+| 资产接入 | 标准 CSV/JSON 导入 + 通用 Webhook API | 不集成 ScopeSentry |
+
+### 3.2 明确不采用
+
+- **ARTEX 及其分支**:涉及真实攻击事件,上游已闭源,副本来源不明,AGPL-3.0。
+- **ScopeSentry**:技术栈异构(Python + MongoDB + Redis),与自研控制面功能重叠;其 README 声明公司和营利实体使用、分发或修改前需取得商业授权(此信息来自一个 fork 页面,需核对上游 LICENSE)。除非法务确认并取得授权,不部署、不依赖。
+
+### 3.3 许可证核查表
+
+> 本表**不是法律意见**。仅 Semgrep 规则库一行已在官方文档中核实,其余请法务对照各仓库最新 LICENSE 逐项确认。
+
+| 组件 | 许可证(待法务确认) | 核实状态 | 备注 |
+|---|---|---|---|
+| Nuclei 引擎、nuclei-templates | MIT | 待核对 | |
+| Trivy 引擎 | Apache-2.0 | 待核对 | |
+| trivy-db / trivy-java-db | 含多源数据 | 待核对 | 对外分发前核查上游公告源条款 |
+| OWASP ZAP | Apache-2.0 | 待核对 | 第三方插件许可证需逐个筛选 |
+| Semgrep 引擎 | LGPL-2.1 | 已核实 | |
+| Semgrep 官方规则库 | Semgrep Rules License v1.0 | 已核实 | 仅限内部业务使用,不得分发或以服务形式提供给他人;后期只用自研规则 |
+
+---
+
+## 4. 总体架构
+
+### 4.1 组件与权限
+
+| 组件 | 职责 | 数据库凭据 | 规则目录 | 网络 |
+|---|---|---|---|---|
+| `sec-server` | Web UI、任务调度、节点 API、结果入库、租约登记 | **唯一持有** | 无 | 控制网络 + 执行网络 |
+| `sec-updater` | 拉取并验签规则包、切换 `CURRENT`、回收旧版本 | 无 | **读写** | 执行网络 |
+| `sec-worker` | 领取任务、执行扫描、回传结果 | 无 | **只读**(+ 自己的私有可写运行目录) | 执行网络 |
+| PostgreSQL | 业务存储、任务队列 | — | — | 仅控制网络 |
+
+### 4.2 通信与凭据
+
+- Web UI 与节点 API 使用**两个独立监听端口**。节点 API 不发布到宿主机。
+- 节点与 Server 通信必须使用 TLS;多主机部署时使用 mTLS 或每节点独立令牌(可吊销)。
+- 令牌通过 Docker secrets 或文件挂载传入,不放在环境变量里。
+- Worker 横向扩容时,每个副本拥有独立令牌和独立私有 runtime 目录(用脚本生成,避免手工复制)。
+
+### 4.3 进程权限
+
+- Worker 入口为 supervisor(root,仅用于设置网络围栏),设置完成后以 `uid=10001`、无任何 capabilities 的身份拉起 `nuclei` / `trivy`。
+- 引擎的 HOME、配置、缓存、恢复文件全部指向该 Worker 的 `/runtime` 下,保证规则目录只读时引擎仍能正常运行。
+
+---
+
+## 5. 规则库与引擎管理
+
+### 5.1 引擎版本与内容版本分离
+
+- 引擎镜像或二进制:固定版本号,按季度评估升级,不使用 `latest`。
+- 内容包(漏洞库 + 模板):按日或按周更新,独立版本号。
+- 引擎自带的联网更新全部关闭,统一由 Updater 控制。
+
+### 5.2 三段式发布流水线
+
+1. **Staging**:拉取上游内容,生成与上一版本的差异清单,按协议类型和标签清理高风险模板,执行 `nuclei -validate`。
+2. **Canary**:在固定内部靶场上做冒烟扫描,对比耗时、退出码、基准漏洞检出数。
+3. **Stable**:生成 `manifest.json` 并签名,推送到内网制品库。**上游变更不自动进入 Stable,需要人工审核差异后晋级。**
+
+### 5.3 内容包目录与 `CURRENT` 指针
+
+使用纯文本 `CURRENT` 指针文件(而非符号链接),在 Linux、macOS、Windows 上行为一致,并避开 bind mount 提前解析软链接的问题。
+
+```text
+/var/lib/sec-agent/vuln-data/          # 本地 SSD,不使用 NFS
+├── CURRENT                            # 一行文本:当前版本号
+├── staging/                           # 下载与验签临时区
+├── .trash/                            # 两阶段删除隔离区
+└── releases/
+    └── 20261016.01/
+        ├── manifest.json
+        ├── manifest.json.sig
+        ├── trivy-db/                  # trivy.db + metadata.json (+ java-db 或占位库)
+        └── nuclei-templates/
+            ├── official/
+            └── custom/                # 公司自研模板
+```
+
+切换方式:写临时文件 → `fsync` → `rename` 覆盖 `CURRENT`。Windows 上 rename 覆盖可能因文件被占用失败,需要带重试。
+
+### 5.4 manifest 规范
+
+```json
+{
+  "bundle_version": "20261016.01",
+  "channel": "stable",
+  "created_at": "2026-10-16T02:00:00Z",
+  "bundle_type": "core",
+  "engine_compatibility": {
+    "trivy": { "min": "<实测通过的最低版本>", "max": "<实测通过的最高版本>",
+               "db_schema": 2, "java_db_schema": 1 },
+    "nuclei": { "min": "<实测通过的最低版本>", "max": "<实测通过的最高版本>" }
+  },
+  "files": { "<相对路径>": "sha256:<哈希>" }
+}
+```
+
+> 版本范围必须由 CI 实测后填入,不得照抄示例数字。
+
+### 5.5 签名与防回滚
+
+- 使用离线私钥(如 Ed25519)签名,公钥内置在 Updater。
+- 私钥离线保管,制定轮换流程。
+- **拒绝版本号低于当前的包**,除非通过显式的"回滚"操作并留审计记录。
+
+### 5.6 版本租约与垃圾回收
+
+**租约(Server 侧登记)**
+1. Worker 读取本地 `CURRENT`,领取任务时上报 `local_rule_version`。
+2. Server 记录 `pinned_rule_version`、`worker_node_id`、`lease_expires_at`。
+3. Worker 每 60 秒续约,并把真实版本目录的绝对路径传给引擎子进程。
+4. **失联自终止**:Worker 连续续约失败超过租约时长,必须主动终止扫描,避免任务被重新分配后出现重复扫描,或版本目录被回收。
+
+**回收规则(两阶段、带宽限期)**
+一个旧版本同时满足以下条件才可回收:
+1. 不是 `CURRENT`,且不是最近一个备用回滚版本。
+2. 退役时间超过宽限期(默认 2 小时)。新任务只会绑定 `CURRENT`,退役后不会再产生新租约。
+3. Updater 向 Server 查询:**本节点上**没有任何 `RUNNING` 任务绑定该版本(多主机部署时按节点查询)。
+
+满足后先 `rename` 到 `.trash/`,再次复查,最后删除。
+
+**首次启动**:没有 `CURRENT` 时,Worker 上报 `WAITING_FOR_RULES` 并退避等待,不报错退出。
+
+### 5.6.1 Trivy 只读库与可写缓存
+
+- 可写缓存目录:`/runtime/trivy-cache-v<引擎版本>/`(缓存键含引擎版本)。
+- 每个内容版本**只复制一次**漏洞库到该缓存的 `db/`(跨挂载点无法使用硬链接),并写 `.synced_version` 标记。
+- 轻量包中预置合法的 Java 库占位,避免离线生成 SBOM 时报错【待核对:新版本行为是否仍如此】。
+
+---
+
+## 6. 运维三项要求的落地方案
+
+### 6.1 范围严格锁死
+
+**输入层**
+- 只接受显式的"IP:端口"清单,或经审批的 CIDR(带规模上限)。
+- 去掉相邻网段发现、ARP 探测、子域名泛解析等一切自动扩展模块。
+- 域名在 Server 端解析为 IP 并核对白名单,**固定解析结果**,Worker 只拿到"IP:端口"清单,不自行展开 CIDR 或重新解析。
+
+**引擎层**
+- 重定向只允许同主机(`-fhr`)。
+- **不得使用 `-restrict-local-network-access`**:它会阻止连接私有网络,导致内网目标本身被拦截。
+- 内网扫描使用 `-ni` 关闭 OAST,或自建内网 interactsh 并用 `-iserver` 指向它(见 6.1.1)。
+
+**网络层(执行时强制)**
+- **每个 Worker 同一时刻只跑一个任务**,横向扩容靠增加副本,避免同一网络命名空间内多个任务的规则互相覆盖。
+- supervisor 先设置出站默认 `DROP`,仅放行:回环、Server 节点 API(IP:端口)、内网 DNS、Harbor、制品库(均为**精确 IP:端口**,不放行整个网段)、本任务目标的"IP:端口"清单。
+- 规则生效后降权为 `uid=10001` 且清空 capabilities 再拉起引擎,被攻陷的引擎无法修改规则。
+- 记录被 `DROP` 的数据包计数或日志,出现范围外连接尝试时告警。
+
+**便携版(无防火墙权限)**:在应用层做范围校验,直接把具体 IP 传给引擎,并配合同主机重定向限制;范围检查与端口清单校验必须在 Go 层强制执行。
+
+**事后对账**:比对任务实际连接的目标与授权清单,范围外的发现项丢弃并告警。
+
+#### 6.1.1 关于 OAST
+
+`-ni` 会同时排除依赖 OAST 的模板,盲注、盲 SSRF 类检测的覆盖率会下降。若覆盖率重要,在内网自建 interactsh,否则接受这一取舍并在产品中注明。
+
+### 6.2 Nginx 四层代理防穿透
+
+**主控手段:显式授权**
+1. **端口必须显式输入**:每个资产只扫描 `allowed_ports` 中登记的端口,未列出的端口一律不探测。
+2. **端口分类**:`WEB`(可跑 Web 模板)、`NON_WEB`(仅做协议指纹)、`EXCLUDED_PROXY`(已知四层转发端口,永久跳过)。
+3. **隔离记录持久化**:扫描中被判定为"疑似四层转发"的端口,写入 `port_quarantine` 表,后续任务一律跳过,直到人工复核解除。
+4. **请求预算**:每个"主机:端口"设置请求总数与速率上限,不只依赖出错熔断。
+5. **指纹先行**:先识别服务类型再选对应模板,不对每个端口跑全部模板【待核对:Nuclei 自动按技术指纹选模板的参数】。
+6. **熔断**:`-mhe` 在连续出错后跳过该主机(默认阈值为 30,可调小)。
+
+**辅助手段**:时延探针只对 `WEB` 类端口启用,阈值可配置,且不作为唯一判断依据(慢启动应用会被误判)。
+
+### 6.3 Harbor 大量镜像
+
+**默认推荐:复用 Harbor 内置 Trivy(模式 A)**
+- Harbor 自带 Trivy 作为默认扫描器,支持推送即扫和定时扫描全部镜像,并支持扫描完成事件的 Webhook。
+- 平台通过 Webhook 与 API 拉取扫描报告,负责聚合、去重、生命周期、SLA 与 AI 研判。
+- **待核对**:Webhook 事件名、报告 API 路径、仓库名含斜杠时的编码方式、SBOM 能力,均以所用 Harbor 版本的 Swagger 文档为准。
+- **治理缺口**:Harbor 内置 Trivy 的漏洞库更新来源(在线或内网镜像)不在本平台的规则发布流水线内,需要单独明确。
+
+**备选:自建 Worker 扫描(模式 B)**,适用于需要统一纳管多镜像源、统一规则版本、定制离线库的场景。
+
+| 手段 | 说明 |
+|---|---|
+| 摘要去重 | 去重键 = `平台摘要 + 规则版本 + 引擎版本`;多架构镜像按各平台摘要分别处理 |
+| 层缓存 | 持久化 Trivy 层缓存,仅分析新增层;缓存键含引擎版本;每个 Worker 私有缓存,命中率随 Worker 数下降,可按项目或基础镜像做粘性分配 |
+| 精简扫描 | 先只做漏洞扫描(`--scanners vuln`),生产或高风险项目再加深度检查【待核对:参数与提速幅度需实测】 |
+| SBOM 复扫 | 首扫生成 CycloneDX SBOM,压缩后存对象存储(数据库只存路径和哈希);规则更新后用 SBOM 本地复扫,不再拉镜像 |
+| 队列 | 优先级:新推送 > 每日重扫;限制并发保护 Harbor;设置超时与重试 |
+
+**容量测算(必做)**:取一天真实镜像样本,测单镜像耗时的中位数与 P95 及并发扩展曲线,再用 `每日镜像数 × 平均耗时 ÷ 并发数` 估算所需 Worker 数。
+
+---
+
+## 7. 数据模型
+
+> 使用与 SQLite 兼容的类型(JSON 以 TEXT 存储)。以下为核心表,字段可在详细设计时扩展。
+
+```sql
+-- 组织与权限
+CREATE TABLE users (
+  id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL,
+  role TEXT NOT NULL,                 -- admin / security_engineer / ops_approver / viewer
+  is_active BOOLEAN DEFAULT TRUE
+);
+
+-- 资产与业务组(看板的"TOP5 风险业务组"依赖于此)
+CREATE TABLE assets (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,                 -- host / image_repo
+  address TEXT NOT NULL,              -- IP、域名(已解析并固定的 IP 另存)或镜像仓库
+  resolved_ip TEXT,
+  business_group TEXT, owner TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 资产的端口授权(显式输入,未登记不扫)
+CREATE TABLE asset_ports (
+  asset_id TEXT NOT NULL REFERENCES assets(id),
+  port INTEGER NOT NULL,
+  kind TEXT NOT NULL,                 -- WEB / NON_WEB / EXCLUDED_PROXY
+  source TEXT,                        -- 台账导入 / 人工登记
+  PRIMARY KEY (asset_id, port)
+);
+
+-- 被判定为疑似四层转发的端口(后续任务跳过,人工复核后解除)
+CREATE TABLE port_quarantine (
+  asset_id TEXT NOT NULL, port INTEGER NOT NULL,
+  reason TEXT NOT NULL, detected_at TIMESTAMP NOT NULL,
+  status TEXT NOT NULL DEFAULT 'ACTIVE',   -- ACTIVE / RELEASED
+  reviewed_by TEXT, reviewed_at TIMESTAMP,
+  PRIMARY KEY (asset_id, port)
+);
+
+-- 扫描授权范围与审批
+CREATE TABLE authorized_scopes (
+  id TEXT PRIMARY KEY,
+  cidr_or_host TEXT NOT NULL,
+  max_targets INTEGER NOT NULL,       -- CIDR 规模上限
+  time_windows TEXT NOT NULL,         -- JSON:星期、起止时间、时区;明确跨午夜语义
+  approved_by TEXT NOT NULL, approval_ticket TEXT NOT NULL,
+  expires_at TIMESTAMP,               -- 授权到期
+  is_active BOOLEAN DEFAULT TRUE
+);
+
+-- 节点与令牌
+CREATE TABLE nodes (
+  id TEXT PRIMARY KEY, kind TEXT NOT NULL,   -- worker / updater
+  host_id TEXT NOT NULL,                     -- 多主机部署时按主机回收规则版本
+  token_hash TEXT NOT NULL, revoked_at TIMESTAMP,
+  last_heartbeat TIMESTAMP
+);
+
+-- 规则包版本
+CREATE TABLE rule_bundles (
+  version TEXT PRIMARY KEY, channel TEXT NOT NULL,
+  manifest_sha256 TEXT NOT NULL, published_at TIMESTAMP NOT NULL
+);
+
+-- 扫描任务与分块
+CREATE TABLE scan_tasks (
+  id TEXT PRIMARY KEY,
+  scope_id TEXT NOT NULL REFERENCES authorized_scopes(id),
+  engines TEXT NOT NULL,              -- JSON 数组
+  status TEXT NOT NULL DEFAULT 'PENDING',
+  -- PENDING / WAITING_WINDOW / RUNNING / PAUSED_WINDOW / COMPLETED / FAILED / CANCELED
+  hard_deadline TIMESTAMP,            -- 下发给 Worker 的本地强制截止时间
+  created_by TEXT NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE scan_task_chunks (
+  id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES scan_tasks(id),
+  targets TEXT NOT NULL,              -- JSON:已校验的"IP:端口"清单
+  status TEXT NOT NULL DEFAULT 'PENDING',
+  worker_node_id TEXT, pinned_rule_version TEXT,
+  lease_expires_at TIMESTAMP,
+  completed_fully BOOLEAN DEFAULT FALSE,     -- 是否完整完成(无中断、无熔断跳过、无超时)
+  started_at TIMESTAMP, finished_at TIMESTAMP
+);
+CREATE INDEX idx_chunks_poll ON scan_task_chunks(status, lease_expires_at);
+
+-- 发现项(指纹只含稳定字段)
+CREATE TABLE security_findings (
+  id TEXT PRIMARY KEY,
+  asset_id TEXT NOT NULL REFERENCES assets(id),
+  fingerprint_hash TEXT NOT NULL,
+  -- Nuclei: sha256(资产 | 端口 | 引擎 | 模板ID | 规范化匹配路径)
+  -- Trivy : sha256(镜像摘要或主机 | 软件包名 | 已安装版本 | 漏洞ID)
+  -- 请求/响应、时间戳、横幅等易变证据不参与哈希
+  engine_name TEXT NOT NULL, rule_id TEXT NOT NULL,
+  severity TEXT NOT NULL, title TEXT NOT NULL, location TEXT NOT NULL,
+  evidence_json TEXT NOT NULL,        -- 证据另存,可随扫描更新
+  lifecycle_status TEXT NOT NULL DEFAULT 'OPEN',
+  accepted_until TIMESTAMP,           -- ACCEPTED_RISK 到期复审
+  sla_deadline TIMESTAMP,
+  first_seen_task_id TEXT NOT NULL, last_seen_task_id TEXT NOT NULL,
+  first_seen_at TIMESTAMP, last_seen_at TIMESTAMP, resolved_at TIMESTAMP,
+  UNIQUE (asset_id, fingerprint_hash)
+);
+
+-- 状态流转历史
+CREATE TABLE finding_events (
+  id TEXT PRIMARY KEY, finding_id TEXT NOT NULL,
+  from_status TEXT, to_status TEXT NOT NULL,
+  actor TEXT, reason TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 镜像摘要与 SBOM 索引
+CREATE TABLE artifact_sboms (
+  manifest_digest TEXT NOT NULL, rule_version TEXT NOT NULL, engine_version TEXT NOT NULL,
+  repo_name TEXT NOT NULL, sbom_uri TEXT NOT NULL, sbom_sha256 TEXT NOT NULL,
+  scanned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (manifest_digest, rule_version, engine_version)
+);
+
+-- 审计日志(谁批准了什么、谁发起了什么、AI 做了什么)
+CREATE TABLE audit_logs (
+  id TEXT PRIMARY KEY, actor TEXT NOT NULL, action TEXT NOT NULL,
+  object_type TEXT, object_id TEXT, detail TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+### 7.1 漏洞生命周期规则
+
+状态:`OPEN`(新增)、`REOPENED`(复现)、`IN_PROGRESS`(修复中)、`FIXED`(已修复)、`FALSE_POSITIVE`(误报)、`ACCEPTED_RISK`(接受风险)。
+
+**转为 `FIXED` 必须同时满足:**
+1. 对该资产的相关范围,本次扫描**完整完成**(`completed_fully = true`,没有中断、熔断跳过、超时)。
+2. 检出该问题的规则在本次规则版本中**仍然存在且确实执行过**(模板被删除或被排除,不能算修复)。
+3. 连续未检出次数达到配置阈值(默认 1 次,可调整)。
+
+否则保持 `OPEN`,并标记"本次未验证"。
+
+其他规则:
+- 已 `FIXED` 的问题再次检出 → `REOPENED`。
+- `FALSE_POSITIVE` 按"资产 + 指纹"静默;规则级别的屏蔽另行配置。
+- `ACCEPTED_RISK` 到期后自动回到 `OPEN` 并通知复审。
+
+---
+
+## 8. 调度与时间窗
+
+1. **准入**:任务创建时校验授权范围、目标在授权清单内、端口已登记,不在允许时间窗则置 `WAITING_WINDOW`。
+2. **分块**:任务按目标拆成多个块,Worker 每次领取一个块。**块与块之间检查时间窗**,到点自然暂停(`PAUSED_WINDOW`),次日继续,不依赖中途强杀进程。
+3. **硬截止**:每个任务块下发 `hard_deadline`(时间窗结束与最大运行时长取较早者),由 Worker **本地**强制结束,不依赖 Server 心跳,Server 不可达时同样生效。
+4. **时区**:时间窗必须带时区,并明确跨午夜(如 23:00–05:00)的语义。
+5. **定时**:Server 内置 cron 调度,到点生成任务,遵守上述准入规则。
+
+---
+
+## 9. 便携离线版
+
+**形态**:单个 Go 主程序,内嵌静态 Web UI,内部以进程内方式串联 Server、Updater、Worker,存储使用 SQLite,仅监听 `127.0.0.1`。
+
+```text
+sec-portable/
+├── sec-platform(.exe)
+├── bin/            # 随包附带的 nuclei、trivy(对应平台)
+├── vuln-data/      # 与集群版相同的目录结构
+│   ├── CURRENT
+│   └── releases/
+└── runtime/
+    ├── local_data.db
+    └── trivy-cache/
+```
+
+**要求与风险**
+- 范围围栏在应用层强制执行(见 6.1)。
+- 离线规则包导入:内置验签、防回滚、原子切换 `CURRENT`。
+- **杀毒软件与企业 EDR** 常会误判扫描器二进制和 POC 模板,必须在目标环境尽早测试。
+- Windows 与 macOS 需要代码签名与公证,否则分发时会被系统拦截。
+- Windows 上 rename 覆盖正在被读取的文件可能失败,需要重试。
+
+---
+
+## 10. 部署骨架(Docker Compose,需按环境补全)
+
+> 这是骨架,不是可直接上线的最终文件。多主机部署需补充 TLS 证书、secrets、节点副本生成脚本。
+
+```yaml
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: secadmin
+      POSTGRES_DB: sec_platform
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets: [db_password]
+    volumes: [pg_data:/var/lib/postgresql/data]
+    networks: [control_net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U secadmin -d sec_platform"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  sec-server:
+    build: { context: ., dockerfile: deploy/Dockerfile.server }
+    restart: always
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      UI_LISTEN_ADDR: ":8080"
+      INTERNAL_NODE_LISTEN_ADDR: ":8443"      # 仅内部网络,不发布
+      TLS_CERT_FILE: /run/secrets/server_cert
+      TLS_KEY_FILE: /run/secrets/server_key
+    secrets: [db_password, server_cert, server_key]
+    ports:
+      - "127.0.0.1:8080:8080"                 # 由宿主机前置反向代理提供 HTTPS
+    networks: [control_net, worker_net]
+
+  sec-updater:
+    build: { context: ., dockerfile: deploy/Dockerfile.updater }
+    restart: always
+    user: "10001:10001"                       # 宿主机目录需预先 chown
+    depends_on: [sec-server]
+    environment:
+      SERVER_INTERNAL_URL: https://sec-server:8443
+      NODE_ID: updater-primary
+      NODE_TOKEN_FILE: /run/secrets/updater_token
+      ARTIFACT_REGISTRY_URL: ${ARTIFACT_REGISTRY_URL:?required}
+      BUNDLE_VERIFY_PUBKEY_FILE: /run/secrets/bundle_pubkey
+      GC_GRACE_PERIOD: "2h"
+    secrets: [updater_token, bundle_pubkey]
+    volumes:
+      - /var/lib/sec-agent/vuln-data:/vuln-data:rw
+    networks: [worker_net]
+
+  sec-worker-1:
+    build: { context: ., dockerfile: deploy/Dockerfile.worker }
+    restart: always
+    depends_on: [sec-server]
+    cap_add: [NET_ADMIN, SETUID, SETGID]       # 仅 supervisor 使用,拉起引擎前全部丢弃
+    environment:
+      SERVER_INTERNAL_URL: https://sec-server:8443
+      NODE_ID: worker-node-1
+      NODE_TOKEN_FILE: /run/secrets/worker1_token
+      SCANNER_UID: "10001"
+      MAX_CONCURRENT_TASKS: "1"
+      # 精确到 IP:端口,不要写整个网段
+      INFRA_ALLOWLIST: "${SERVER_IP}:8443,${DNS_IP}:53,${HARBOR_IP}:443,${ARTIFACT_IP}:443"
+      HOME: /runtime/home
+    secrets: [worker1_token]
+    volumes:
+      - /var/lib/sec-agent/vuln-data:/vuln-data:ro
+      - /var/lib/sec-agent/runtime/worker-1:/runtime:rw   # 每个 Worker 独立私有
+    networks: [worker_net]
+
+networks:
+  control_net: {}
+  worker_net: {}
+
+volumes:
+  pg_data: {}
+
+secrets:
+  db_password: { file: ./secrets/db_password }
+  server_cert: { file: ./secrets/server.crt }
+  server_key: { file: ./secrets/server.key }
+  updater_token: { file: ./secrets/updater.token }
+  worker1_token: { file: ./secrets/worker1.token }
+  bundle_pubkey: { file: ./secrets/bundle_ed25519.pub }
+```
+
+> 二期的 ZAP sidecar 通过独立 profile 启用,且必须强制设置 API Key。
+
+---
+
+## 11. 安全、合规与 AI
+
+- **授权与审计**:每个授权范围需要审批人与工单号,带到期时间;所有任务创建、审批、令牌签发与吊销、AI 调用均写入审计日志。
+- **RBAC**:至少区分管理员、安全工程师、运维审批人、只读用户。
+- **高风险能力默认关闭**:利用、写入、暴力破解类能力不提供,或需要单独审批并留痕。
+- **AI(Phase 3)**:
+  - 用于误报研判、漏洞解读与修复建议、辅助生成模板,不做自主攻击。
+  - 先建立评测集,量化对误报率的实际改善。
+  - 明确哪些数据允许发送到云端模型,敏感场景强制使用本地模型;脱敏规则需先审批再实现。
+- **规则与模板供应链**:上游更新经 Staging → Canary → Stable,人工审核差异后才晋级。
+
+---
+
+## 12. 立项前 PoC(约 2 周)
+
+| # | 验证内容 | 验收标准 |
+|---|---|---|
+| 1 | **围栏与并发隔离**:supervisor 以 root 设置出站默认 DROP,仅放行精确 IP:端口,再降权为 `uid=10001` 拉起引擎 | 引擎无法访问范围外地址;无法修改防火墙规则;DROP 计数能触发告警 |
+| 2 | **租约与 GC 压测**:长任务期间连续发布多个新版本并触发回收 | 被租约引用的版本不被回收;Worker 与 Server 失联后自终止;Windows 与 Linux 下 `CURRENT` 切换零报错 |
+| 3 | **Trivy 只读库 + 私有可写缓存** | 无只读文件系统报错;无任何联网请求;第二个共享基础层的镜像命中缓存且耗时明显缩短;验证 Java 库占位行为 |
+| 4 | **Nuclei 零外联**:全量模板 + 同主机重定向限制 + OAST 处理方案,抓包 | 抓包无任何公网 DNS 或 TCP 连接;内网靶机漏洞正常检出;引擎在只读规则目录下运行无写入失败 |
+| 5 | **指纹稳定性与 FIXED 判定**:对同一靶机重复扫描,并制造中断和熔断 | 不重复入库;中断、熔断、超时不会误标 `FIXED` |
+| 6 | **时间窗中止与恢复**:分块执行,到点本地强制停止并次日续跑 | 到点后 Worker 本地停止;恢复后结果完整,无重复或丢失 |
+
+另有一项与 PoC 并行的准备工作:**取一天的 Harbor 镜像样本做耗时与吞吐实测**(见 6.3)。
+
+---
+
+## 13. 待决策与待核对清单
+
+### 需要拍板
+
+1. **ScopeSentry 去留**:法务确认授权条款前不部署、不依赖。
+2. **Harbor 模式**:模式 A(复用 Harbor 内置 Trivy)或模式 B(自建 Worker 扫描),依据样本实测与统一规则的需求决定。
+3. **OAST 策略**:关闭(`-ni`)或自建 interactsh。
+4. **团队规模与工期**:确认人数后重新评估 Phase 1 周期。
+5. **私钥保管与轮换方案**。
+
+### 编码前必须核对
+
+| 项目 | 状态 |
+|---|---|
+| Nuclei:`-code`(默认关闭)、`-ept`、`-etags`、`-validate`、`-fhr`、`-ni`、`-iserver`、`-mhe`(默认 30) | 已在官方 README 中确认 |
+| Nuclei:`-lna`(会阻止私网连接,**不要使用**) | 已确认 |
+| ZAP:`-silent` | 已在官方文档中确认 |
+| Nuclei:`-rl`、`-c`、`-duc`;`-etags` 中的 `brute-force` 等标签名是否存在于所用模板库 | 待核对 |
+| Trivy:`--skip-db-update`、`--skip-java-db-update` | 参数存在已有间接依据,仍需在锁定版本上跑 `--help` 确认 |
+| Trivy:`--skip-check-update`、`--offline-scan`、`--scanners` | 待核对(CI 中自动校验) |
+| Trivy 离线时对 Java 库的依赖行为(旧 issue 显示跳过更新而本地无库会报错) | 待实测 |
+| Harbor Webhook 事件名、API 路径、SBOM 能力 | 待核对所用 Harbor 版本 |
+| Nuclei 按技术指纹自动选模板的参数 | 待核对 |
+| 各开源组件许可证(Semgrep 规则库除外) | 待法务核对 |
