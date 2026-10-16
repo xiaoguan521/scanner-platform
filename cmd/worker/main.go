@@ -7,5 +7,5 @@ import (
 )
 
 func main() {
-	os.Exit(bootstrap.Run(bootstrap.Worker, os.Args[1:], os.Stdout, os.Stderr))
+	os.Exit(bootstrap.RunWorker(os.Args[1:], os.Stdout, os.Stderr))
 }

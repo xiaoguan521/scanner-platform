@@ -75,8 +75,8 @@ export const FindingsPage: React.FC = () => {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       <CollectionNotice loading={loading} error={error} />
       <Alert
-        message="稳定指纹与严苛 FIXED 判定规则 (架构硬规则 §7.1)"
-        description="漏洞指纹仅由稳定字段（资产、端口、引擎、模板 ID、规范路径）哈希生成，不随扫描时间戳变化。只有在扫描完整完成且规则模板依旧存在的前提下未再检出，才允许转为 FIXED，防止误报闭环。"
+        message={isDemoMode ? '演示发现项' : '当前展示模拟 Worker 回报的结果'}
+        description={isDemoMode ? '本页为演示数据。' : '标题带有“模拟发现项”的记录用于确认任务链路和 SQLite 持久化，不代表目标存在真实漏洞。'}
         type="warning"
         showIcon
         icon={<SafetyCertificateOutlined />}
@@ -131,6 +131,7 @@ export const FindingsPage: React.FC = () => {
               render: (_, record) => (
                 <Space direction="vertical" size={2}>
                   <Text strong>{record.title}</Text>
+                  {record.synthetic && <Tag color="blue">模拟结果</Tag>}
                   <Space size={8}>
                     <Tag color={record.engine === 'nuclei' ? 'purple' : 'cyan'}>
                       {record.engine.toUpperCase()}

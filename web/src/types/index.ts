@@ -109,7 +109,7 @@ export interface ScanTask {
   id: string;
   scopeId: string;
   scopeName: string;
-  engines: ('nuclei' | 'trivy')[];
+  engines: ('nuclei' | 'trivy' | 'synthetic')[];
   status: TaskStatus;
   hardDeadline: string;
   totalChunks: number;
@@ -117,6 +117,7 @@ export interface ScanTask {
   targetCount: number;
   createdAt: string;
   chunks: TaskChunk[];
+  synthetic?: boolean;
 }
 
 export type FindingSeverity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO';
@@ -134,7 +135,7 @@ export interface Finding {
   fingerprint: string;
   severity: FindingSeverity;
   title: string;
-  engine: 'nuclei' | 'trivy';
+  engine: 'nuclei' | 'trivy' | 'synthetic';
   templateOrCve: string;
   target: string;
   port?: number;
@@ -145,6 +146,7 @@ export interface Finding {
   businessGroup: string;
   owner: string;
   verifiedInRun: boolean;
+  synthetic?: boolean;
 }
 
 export interface NodeInfo {

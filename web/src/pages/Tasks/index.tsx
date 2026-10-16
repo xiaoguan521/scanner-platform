@@ -26,6 +26,7 @@ import { ScanTask, TaskChunk } from '../../types';
 import { isDemoMode } from '../../api/client';
 import { useCollection } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
+import { createSyntheticTask } from '../../api/runtime';
 
 const { Text } = Typography;
 
@@ -33,10 +34,22 @@ export const TasksPage: React.FC = () => {
   const { data: tasks, setData: setTasks, loading, error } = useCollection('tasks', mockTasks);
   const { data: scopes } = useCollection('scopes', mockScopes);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
   const [form] = Form.useForm();
 
-  const handleCreateTask = (values: any) => {
-    if (!isDemoMode) return message.warning('真实任务创建和派发尚未开放');
+  const handleCreateTask = async (values: any) => {
+    if (!isDemoMode) {
+      setCreating(true);
+      try {
+        const task = await createSyntheticTask();
+        setTasks((previous) => [task, ...previous.filter((item) => item.id !== task.id)]);
+        setIsModalOpen(false);
+        message.success('模拟任务已入队，等待 Worker 领取');
+      } catch (cause) {
+        message.error(cause instanceof Error ? cause.message : '创建任务失败');
+      } finally { setCreating(false); }
+      return;
+    }
     const scope = scopes.find((s) => s.id === values.scopeId && s.isActive);
     if (!scope) return message.warning('没有有效的演示授权范围');
     const newTask: ScanTask = {
@@ -127,8 +140,8 @@ export const TasksPage: React.FC = () => {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       <CollectionNotice loading={loading} error={error} />
       <Alert
-        message="调度策略：按目标分块与时间窗保护"
-        description="扫描任务由控制面按目标拆分为若干块下发。Worker 单次只领一个块，每个块绑定本地硬截止时间（Hard Deadline）与租约。若失联超过租约，Worker 立即自终止。"
+        message={isDemoMode ? '调度策略：按目标分块与时间窗保护' : 'SQLite → Worker → 结果入库'}
+        description={isDemoMode ? '演示模式仅显示样例调度数据。' : '当前使用模拟 Worker，不连接目标、不调用真实扫描引擎。任务与模拟发现项来自 SQLite，并每秒自动刷新。'}
         type="info"
         showIcon
         icon={<RadarChartOutlined />}
@@ -138,9 +151,9 @@ export const TasksPage: React.FC = () => {
         title="扫描任务队列与调度监控"
         bordered={false}
         extra={
-          <Button type="primary" icon={<PlusOutlined />} disabled={!isDemoMode}
+          <Button type="primary" icon={<PlusOutlined />}
           onClick={() => setIsModalOpen(true)}>
-            新建扫描任务
+            {isDemoMode ? '新建扫描任务' : '创建模拟任务'}
           </Button>
         }
       >
@@ -189,6 +202,7 @@ export const TasksPage: React.FC = () => {
                   RUNNING: { color: 'processing', label: '执行中' },
                   WAITING_WINDOW: { color: 'warning', label: '等待时间窗' },
                   COMPLETED: { color: 'success', label: '已完成' },
+                  PENDING: { color: 'default', label: '待领取' },
                   PAUSED_WINDOW: { color: 'default', label: '窗口期暂停' },
                   CANCELED: { color: 'error', label: '已终止' },
                 };
@@ -202,7 +216,7 @@ export const TasksPage: React.FC = () => {
               render: (d: string) => (
                 <Space size={4}>
                   <FieldTimeOutlined style={{ color: '#fa8c16' }} />
-                  <span style={{ fontSize: 12 }}>{d}</span>
+                  <span style={{ fontSize: 12 }}>{d || '—'}</span>
                 </Space>
               ),
             },
@@ -216,6 +230,7 @@ export const TasksPage: React.FC = () => {
                     danger
                     size="small"
                     icon={<StopOutlined />}
+                    disabled={!isDemoMode}
                     onClick={() => handleStopTask(record.id)}
                   >
                     停止
@@ -229,14 +244,15 @@ export const TasksPage: React.FC = () => {
       </Card>
 
       <Modal
-        title="演示：创建待处理任务草稿"
+        title={isDemoMode ? '演示：创建待处理任务草稿' : '创建模拟任务'}
         open={isModalOpen}
         onCancel={() => setIsModalOpen(false)}
         onOk={() => form.submit()}
-        okButtonProps={{ disabled: !isDemoMode }}
+        confirmLoading={creating}
       >
         <Form form={form} layout="vertical" onFinish={handleCreateTask}>
-          <Form.Item
+          {!isDemoMode && <Alert type="info" showIcon message="将创建一个固定模拟任务，Worker 完成后生成一条明确标注的模拟发现项。不会连接任何扫描目标。" />}
+          {isDemoMode && <><Form.Item
             name="scopeId"
             label="选择已审批范围"
             rules={[{ required: true, message: '必须选择经审批的范围' }]}
@@ -259,7 +275,7 @@ export const TasksPage: React.FC = () => {
               <Select.Option value="nuclei">Nuclei (Web/服务漏洞 POC)</Select.Option>
               <Select.Option value="trivy">Trivy (镜像系统与依赖漏洞)</Select.Option>
             </Select>
-          </Form.Item>
+          </Form.Item></>}
         </Form>
       </Modal>
     </div>

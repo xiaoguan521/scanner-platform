@@ -11,17 +11,31 @@ export function useCollection<K extends keyof Resources>(name: K, demoFixtures: 
     if (isDemoMode) return;
     const controller = new AbortController();
     setLoading(true);
-    apiClient.collection(name, controller.signal).then((response) => {
-      if (!controller.signal.aborted) setData(response.items);
+    let inFlight = false;
+    const load = () => {
+      if (inFlight) return;
+      inFlight = true;
+      apiClient.collection(name, controller.signal).then((response) => {
+      if (!controller.signal.aborted) {
+        setData(response.items);
+        setError(null);
+      }
     }).catch((cause: unknown) => {
       if (!controller.signal.aborted) {
         setData([]);
         setError(cause instanceof Error ? cause.message : 'API unavailable');
       }
     }).finally(() => {
+      inFlight = false;
       if (!controller.signal.aborted) setLoading(false);
     });
-    return () => controller.abort();
+    };
+    load();
+    const timer = name === 'tasks' || name === 'findings' ? window.setInterval(load, 1000) : undefined;
+    return () => {
+      controller.abort();
+      if (timer !== undefined) window.clearInterval(timer);
+    };
   }, [name]);
   return { data, setData, loading, error };
 }

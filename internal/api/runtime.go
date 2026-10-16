@@ -1,0 +1,153 @@
+package api
+
+import (
+	"encoding/json"
+	"errors"
+	"io"
+	"log/slog"
+	"net/http"
+	"regexp"
+
+	"scanner-platform/internal/repo"
+	"scanner-platform/internal/taskflow"
+)
+
+var runtimeWorkerID = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$`)
+
+// NewRuntimeHandler serves the early local task flow and existing API routes.
+// Synthetic tasks never start a scan or connect to their displayed targets.
+func NewRuntimeHandler(store repo.RuntimeRepository, fallback http.Handler, uiDir string) http.Handler {
+	mux := http.NewServeMux()
+	if fallback == nil {
+		fallback = NewScaffoldHandler("sec-server")
+	}
+	mux.Handle("/api/", fallback)
+	if uiDir != "" {
+		files := http.FileServer(http.Dir(uiDir))
+		mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet && r.Method != http.MethodHead {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			files.ServeHTTP(w, r)
+		}))
+	}
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		runtimeJSON(w, http.StatusOK, map[string]string{"state": "alive", "role": "sec-server"})
+	})
+	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
+		runtimeJSON(w, http.StatusOK, map[string]string{"state": "ready", "mode": "synthetic"})
+	})
+	capabilities := []string{"database", "task-dispatch", "synthetic-worker", "web-ui"}
+	unavailable := []string{"real-scanning", "rule-activation", "harbor"}
+	mux.HandleFunc("GET /api/v1/system/status", func(w http.ResponseWriter, r *http.Request) {
+		runtimeJSON(w, http.StatusOK, Status{
+			Role: "sec-server", Phase: "早期开发", State: "RUNNING", Ready: true,
+			Enabled: capabilities, Unavailable: unavailable,
+		})
+	})
+	mux.HandleFunc("GET /api/v1/system/capabilities", func(w http.ResponseWriter, r *http.Request) {
+		runtimeJSON(w, http.StatusOK, map[string]any{"enabled": capabilities, "unavailable": unavailable})
+	})
+	mux.HandleFunc("GET /api/v1/tasks", func(w http.ResponseWriter, r *http.Request) {
+		items, err := store.ListRuntimeTasks(r.Context())
+		if !runtimeStoreError(w, err) {
+			runtimeJSON(w, http.StatusOK, ListResponse[taskflow.Task]{Items: items, Total: len(items)})
+		}
+	})
+	mux.HandleFunc("POST /api/v1/tasks", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Synthetic bool `json:"synthetic"`
+		}
+		if !runtimeDecode(w, r, &body) {
+			return
+		}
+		if !body.Synthetic {
+			runtimeJSON(w, http.StatusBadRequest, APIError{Error: "synthetic_only", Message: "当前仅支持模拟任务，未接入真实扫描引擎"})
+			return
+		}
+		task, err := store.CreateSyntheticTask(r.Context())
+		if !runtimeStoreError(w, err) {
+			runtimeJSON(w, http.StatusCreated, task)
+		}
+	})
+	mux.HandleFunc("GET /api/v1/findings", func(w http.ResponseWriter, r *http.Request) {
+		items, err := store.ListRuntimeFindings(r.Context())
+		if !runtimeStoreError(w, err) {
+			runtimeJSON(w, http.StatusOK, ListResponse[taskflow.Finding]{Items: items, Total: len(items)})
+		}
+	})
+	mux.HandleFunc("GET /api/v1/assets", func(w http.ResponseWriter, r *http.Request) {
+		runtimeJSON(w, http.StatusOK, ListResponse[AssetDTO]{Items: []AssetDTO{}, Total: 0})
+	})
+	mux.HandleFunc("POST /api/v1/worker/claim", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			WorkerID string `json:"workerId"`
+		}
+		if !runtimeDecode(w, r, &body) {
+			return
+		}
+		if !runtimeWorkerID.MatchString(body.WorkerID) {
+			runtimeJSON(w, http.StatusBadRequest, APIError{Error: "invalid_worker", Message: "Worker ID 格式无效"})
+			return
+		}
+		task, err := store.ClaimRuntimeTask(r.Context(), body.WorkerID)
+		if runtimeStoreError(w, err) {
+			return
+		}
+		if task == nil {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		runtimeJSON(w, http.StatusOK, task)
+	})
+	mux.HandleFunc("POST /api/v1/worker/report", func(w http.ResponseWriter, r *http.Request) {
+		var report taskflow.Report
+		if !runtimeDecode(w, r, &report) {
+			return
+		}
+		if !runtimeStoreError(w, store.CompleteRuntimeTask(r.Context(), report)) {
+			runtimeJSON(w, http.StatusOK, map[string]string{"state": "completed"})
+		}
+	})
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		mux.ServeHTTP(w, r)
+	})
+}
+
+func runtimeJSON(w http.ResponseWriter, code int, value any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(value)
+}
+
+func runtimeDecode(w http.ResponseWriter, r *http.Request, value any) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(value); err != nil {
+		runtimeJSON(w, http.StatusBadRequest, APIError{Error: "invalid_json", Message: "请求格式无效"})
+		return false
+	}
+	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
+		runtimeJSON(w, http.StatusBadRequest, APIError{Error: "invalid_json", Message: "请求只能包含一个 JSON 对象"})
+		return false
+	}
+	return true
+}
+
+func runtimeStoreError(w http.ResponseWriter, err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, repo.ErrTaskConflict) {
+		runtimeJSON(w, http.StatusConflict, APIError{Error: "task_conflict", Message: "任务或结果与领取记录不一致"})
+		return true
+	}
+	slog.Error("task database operation failed", "error", err)
+	runtimeJSON(w, http.StatusInternalServerError, APIError{Error: "database_error", Message: "数据库操作失败"})
+	return true
+}

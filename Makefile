@@ -6,7 +6,10 @@ ifeq ($(GOOS),windows)
 EXE_EXT := .exe
 endif
 
-.PHONY: build test lint verify-flags test-lab web-install web-dev web-build
+.PHONY: build test lint verify-flags test-lab web-install web-dev web-build dev
+
+dev:
+	bash scripts/dev.sh
 
 build:
 	mkdir -p dist
@@ -16,7 +19,7 @@ build:
 	$(GO) build -o dist/sec-portable$(EXE_EXT) ./cmd/portable
 
 web-install:
-	cd web && npm install
+	cd web && npm ci --ignore-scripts
 
 web-dev:
 	cd web && npm run dev
