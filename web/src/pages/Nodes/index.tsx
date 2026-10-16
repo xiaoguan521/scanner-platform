@@ -1,183 +1,51 @@
-import React from 'react';
-import {
-  Card,
-  Table,
-  Tag,
-  Button,
-  Space,
-  Badge,
-  Typography,
-  Alert,
-  Tooltip,
-  message,
-} from 'antd';
-import {
-  ClusterOutlined,
-  SafetyCertificateOutlined,
-  RollbackOutlined,
-  CheckCircleOutlined,
-  WarningOutlined,
-} from '@ant-design/icons';
-import { mockNodes, mockRuleBundles } from '../../mock/data';
-import { NodeInfo, RuleBundle } from '../../types';
+import React, { useState } from 'react';
+import { Alert, Button, Card, Form, Input, message, Modal, Space, Table, Tag, Typography } from 'antd';
 import { useCollection } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
+import { useAuth } from '../../auth/AuthProvider';
+import { isDemoMode } from '../../api/client';
+import { activateRules, fetchRules, importRules } from '../../api/runtime';
+import { mockNodes, mockRuleBundles } from '../../mock/data';
+import type { NodeInfo, RuleBundle, RuleJob } from '../../types';
 
-const { Text } = Typography;
-
-export const NodesPage: React.FC = () => {
-  const { data: nodes, loading: nodesLoading, error: nodesError } = useCollection('nodes', mockNodes);
-  const { data: ruleBundles, loading: rulesLoading, error: rulesError } = useCollection('rules', mockRuleBundles);
-
-  const handleRollback = (_targetVersion: string) => {
-    message.warning('规则回滚已禁用：必须由 Server/Updater 验签、防回滚、人工审批并审计');
-  };
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-      <CollectionNotice loading={nodesLoading || rulesLoading} error={nodesError || rulesError} />
-      <Alert
-        message="三权分立设计约束（真实节点安全状态尚未验证）"
-        description="所有 Worker 节点均无数据库凭据，仅通过 TLS 节点 API 交互；Worker 拥有私有运行时与独立的 nftables 网络围栏；Updater 为规则目录唯一写入者；CURRENT 为纯文本指针，采用临时文件 fsync + rename 原子切换。"
-        type="info"
-        showIcon
-        icon={<SafetyCertificateOutlined />}
-      />
-
-      {/* 节点状态列表 */}
-      <Card title="分布式节点拓扑与网络围栏监控" bordered={false}>
-        <Table
-          dataSource={nodes}
-          rowKey="id"
-          pagination={false}
-          columns={[
-            {
-              title: '节点标识',
-              dataIndex: 'id',
-              width: 170,
-              render: (id: string, record: NodeInfo) => (
-                <Space>
-                  <ClusterOutlined />
-                  <Text strong>{id}</Text>
-                  {record.kind === 'worker' ? (
-                    <Tag color="cyan">Worker</Tag>
-                  ) : (
-                    <Tag color="geekblue">Updater</Tag>
-                  )}
-                </Space>
-              ),
-            },
-            { title: '内网通信 IP', dataIndex: 'ip', width: 140 },
-            {
-              title: '节点运行状态',
-              dataIndex: 'status',
-              width: 120,
-              render: (s: string) => {
-                if (s === 'BUSY') return <Badge status="processing" text="执行任务中" />;
-                if (s === 'ONLINE') return <Badge status="success" text="待命空闲" />;
-                return <Badge status="default" text="离线" />;
-              },
-            },
-            {
-              title: 'nftables 出站围栏',
-              dataIndex: 'fenceStatus',
-              width: 170,
-              render: (status: string, record: NodeInfo) => (
-                <Space>
-                  <Tag color={status === 'ACTIVE' ? 'success' : 'default'}>
-                    {status === 'ACTIVE' ? '围栏已上报生效' : status === 'NOT_SUPPORTED' ? '不适用' : '未验证'}
-                  </Tag>
-                  {record.dropCount > 0 && <Tag color="error">DROP: {record.dropCount}</Tag>}
-                </Space>
-              ),
-            },
-            {
-              title: '绑定规则库版本',
-              dataIndex: 'boundRuleVersion',
-              width: 160,
-              render: (v: string) => <Tag color="blue">{v}</Tag>,
-            },
-            {
-              title: '凭据与权限隔离',
-              render: () => (
-                <Tooltip title="设计要求为 Worker 无 DB 凭据及降权运行；当前数据未经过真实设备校验">
-                  <Tag>设计要求 · 未验证</Tag>
-                </Tooltip>
-              ),
-            },
-            { title: '最近心跳', dataIndex: 'lastHeartbeat', width: 140 },
-          ]}
-        />
-      </Card>
-
-      {/* 规则包版本与 CURRENT 指针管理 */}
-      <Card title="规则库版本管理 (CURRENT 指针与验签审计)" bordered={false}>
-        <Table
-          dataSource={ruleBundles}
-          rowKey="version"
-          pagination={false}
-          columns={[
-            {
-              title: '规则包版本',
-              dataIndex: 'version',
-              width: 180,
-              render: (v: string, r: RuleBundle) => (
-                <Space>
-                  <Text strong>{v}</Text>
-                  {r.isCurrent && (
-                    <Tag color="success" icon={<CheckCircleOutlined />}>
-                      CURRENT 当前生效
-                    </Tag>
-                  )}
-                  {r.isBackup && <Tag color="orange">备用版本</Tag>}
-                </Space>
-              ),
-            },
-            {
-              title: '发布通道',
-              dataIndex: 'channel',
-              width: 100,
-              render: (c: string) => <Tag>{c.toUpperCase()}</Tag>,
-            },
-            {
-              title: 'Manifest 验签哈希 (SHA256)',
-              dataIndex: 'manifestSha256',
-              render: (h: string) => <Text code>{h}</Text>,
-            },
-            {
-              title: '任务占用',
-              dataIndex: 'inUseByTasks',
-              width: 120,
-              render: (count: number) =>
-                count > 0 ? (
-                  <Tag color="processing">{count} 个任务运行中</Tag>
-                ) : (
-                  <Text type="secondary">0 个引用（仍须 GC 安全检查）</Text>
-                ),
-            },
-            { title: '发布发布时间', dataIndex: 'publishedAt', width: 180 },
-            {
-              title: '操作',
-              width: 120,
-              render: (_, record: RuleBundle) =>
-                !record.isCurrent ? (
-                  <Button
-                    type="link"
-                    icon={<RollbackOutlined />}
-                    danger
-                    size="small"
-                    disabled
-                    onClick={() => handleRollback(record.version)}
-                  >
-                    回滚至此版本
-                  </Button>
-                ) : (
-                  <Text type="secondary">当前运行中</Text>
-                ),
-            },
-          ]}
-        />
-      </Card>
-    </div>
-  );
+export const NodesPage:React.FC=()=>{
+  const {user}=useAuth();const canWrite=!isDemoMode&&(user?.role==='admin'||user?.role==='security_engineer');
+  const {data:nodes,loading,error}=useCollection('nodes',mockNodes);
+  const {data:bundles,error:bundleError}=useCollection('rules',mockRuleBundles);
+  const {data:jobs,error:jobError}=useCollection('rule-jobs',[]);
+  const [file,setFile]=useState<File|null>(null);const [busy,setBusy]=useState(false);const [fetchOpen,setFetchOpen]=useState(false);const [form]=Form.useForm();
+  const run=async(action:()=>Promise<unknown>)=>{setBusy(true);try{await action();message.success('操作已排队，等待本地 Updater 处理；请查看操作记录');return true;}catch(e){message.error(e instanceof Error?e.message:String(e));return false;}finally{setBusy(false);}};
+  return <div style={{display:'flex',flexDirection:'column',gap:16}}>
+    <CollectionNotice loading={loading} error={error||bundleError||jobError}/>
+    <Alert type="info" showIcon message="本地节点与规则包" description="Worker 和 Updater 通过本机 API 工作，只有 Updater 写入规则目录。导入检查 ZIP 路径、manifest 和文件 SHA-256；当前未验签、未验证扫描引擎兼容性，不会启动真实扫描。"/>
+    <Card title="节点心跳"><Table<NodeInfo> dataSource={nodes} rowKey="id" pagination={false} scroll={{x:850}} columns={[
+      {title:'节点',dataIndex:'id'},{title:'类型',dataIndex:'kind'},
+      {title:'状态',dataIndex:'status',render:(v:string)=><Tag color={v==='OFFLINE'?'default':'green'}>{v==='BUSY'?'处理中':v==='ONLINE'?'在线':'离线'}</Tag>},
+      {title:'当前任务',dataIndex:'currentTask',ellipsis:true},
+      {title:'最近心跳',dataIndex:'lastHeartbeat',render:(v:string)=>new Date(v).toLocaleString()},
+      {title:'运行模式',render:()=> <Tag>本机开发 · 未启用网络围栏</Tag>},
+    ]}/></Card>
+    <Card title="规则包版本" extra={<Space wrap><input aria-label="选择离线规则包" type="file" accept=".zip" disabled={!canWrite} onChange={e=>setFile(e.target.files?.[0]??null)}/><Button disabled={!canWrite||!file} loading={busy} onClick={()=>void run(()=>importRules(file!))}>离线导入 ZIP</Button><Button disabled={!canWrite} onClick={()=>setFetchOpen(true)}>从规则源下载</Button></Space>}>
+      <Typography.Paragraph type="secondary">ZIP 须包含 manifest.json 和 nuclei/、trivy/ 下声明的规则文件。下载后或离线导入后，点击“激活”切换当前版本。</Typography.Paragraph>
+      <Table<RuleBundle> dataSource={bundles} rowKey="version" scroll={{x:1000}} columns={[
+        {title:'版本',dataIndex:'version',render:(v:string,b)=><Space><Typography.Text strong>{v}</Typography.Text>{b.isCurrent&&<Tag color="success">CURRENT</Tag>}</Space>},
+        {title:'引擎数据',render:(_,b)=>b.engines?.join('、')||'—'},
+        {title:'完整性 / 引擎验证',render:(_,b)=><Space direction="vertical"><Tag>{b.integrityVerified?'文件哈希已验证':'未验证'}</Tag><Typography.Text type="secondary">未验签 · 引擎兼容性未验证</Typography.Text></Space>},
+        {title:'Manifest SHA-256',dataIndex:'manifestSha256',ellipsis:true},
+        {title:'导入时间',dataIndex:'publishedAt',render:(v:string)=>new Date(v).toLocaleString()},
+        {title:'操作',render:(_,b)=><Space><Button disabled={!canWrite||b.isCurrent} loading={busy} onClick={()=>void run(()=>activateRules(b.version,false))}>激活</Button><Button danger disabled={!canWrite||b.isCurrent} onClick={()=>Modal.confirm({title:'显式回滚到 '+b.version+'？',content:'将切换本地规则指针并记录审计。当前不会启动扫描。',onOk:()=>run(()=>activateRules(b.version,true))})}>显式回滚</Button></Space>},
+      ]}/>
+    </Card>
+    <Card title="规则操作记录"><Table<RuleJob> dataSource={jobs} rowKey="id" scroll={{x:950}} columns={[
+      {title:'操作',dataIndex:'kind',render:(v:string)=>({IMPORT:'离线导入',FETCH:'下载导入',ACTIVATE:'版本切换'}[v]??v)},
+      {title:'版本',dataIndex:'version'},{title:'状态',dataIndex:'status',render:(v:string)=><Tag color={v==='FAILED'?'error':v==='COMPLETED'?'success':'processing'}>{v}</Tag>},
+      {title:'说明',dataIndex:'message'},{title:'提交时间',dataIndex:'createdAt',render:(v:string)=>new Date(v).toLocaleString()},
+    ]}/></Card>
+    <Modal title="从指定规则源下载 ZIP" open={fetchOpen} onCancel={()=>setFetchOpen(false)} onOk={()=>form.submit()} confirmLoading={busy}>
+      <Form form={form} layout="vertical" onFinish={async(v:{url:string;expectedSha256:string})=>{if(await run(()=>fetchRules(v.url,v.expectedSha256))) setFetchOpen(false);}}>
+        <Form.Item name="url" label="HTTPS ZIP 地址" rules={[{required:true,type:'url'}]} extra="不允许 URL 内携带账号、密码、查询参数；不自动发现规则源。"><Input placeholder="https://rules.example.com/bundle.zip"/></Form.Item>
+        <Form.Item name="expectedSha256" label="ZIP 的 SHA-256" rules={[{required:true,pattern:/^[a-fA-F0-9]{64}$/,message:'请输入 64 位十六进制 SHA-256'}]}><Input maxLength={64}/></Form.Item>
+      </Form>
+    </Modal>
+  </div>;
 };
