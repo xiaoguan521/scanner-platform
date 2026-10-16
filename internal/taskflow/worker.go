@@ -14,11 +14,13 @@ import (
 )
 
 type Worker struct {
-	ServerURL string
-	ID        string
-	Client    *http.Client
-	Delay     time.Duration
-	Interval  time.Duration
+	ServerURL    string
+	ID           string
+	Client       *http.Client
+	Delay        time.Duration
+	Interval     time.Duration
+	Execute      func(context.Context, Task) ([]Detection, error)
+	EngineStatus func() []EngineStatus
 }
 
 func (w *Worker) Run(ctx context.Context, once bool) error {
@@ -47,6 +49,9 @@ func (w *Worker) Run(ctx context.Context, once bool) error {
 }
 
 func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
+	if w.EngineStatus != nil {
+		_, _ = w.post(ctx, "/api/v1/nodes/heartbeat", map[string]any{"id": w.ID, "kind": "worker", "engines": w.EngineStatus()}, nil)
+	}
 	var task Task
 	code, err := w.post(ctx, "/api/v1/worker/claim", map[string]string{"workerId": w.ID}, &task)
 	if err != nil {
@@ -55,24 +60,11 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 	if code == http.StatusNoContent {
 		return false, nil
 	}
-	if !task.Synthetic || len(task.Chunks) != 1 || len(task.Chunks[0].Targets) == 0 {
-		return false, fmt.Errorf("worker only accepts synthetic tasks with explicit targets")
+	if len(task.Chunks) != 1 || len(task.Chunks[0].Targets) == 0 {
+		return false, fmt.Errorf("worker requires one chunk with explicit targets")
 	}
-	slog.Info("synthetic task claimed", "task_id", task.ID, "worker_id", w.ID)
-	heartbeatCtx, stopHeartbeat := context.WithCancel(ctx)
-	defer stopHeartbeat()
-	go func() {
-		ticker := time.NewTicker(3 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-heartbeatCtx.Done():
-				return
-			case <-ticker.C:
-				_, _ = w.post(heartbeatCtx, "/api/v1/nodes/heartbeat", map[string]string{"id": w.ID, "kind": "worker", "currentTask": task.ID}, nil)
-			}
-		}
-	}()
+	slog.Info("task claimed", "task_id", task.ID, "worker_id", w.ID)
+
 	workCtx := ctx
 	cancel := func() {}
 	if task.HardDeadline != "" {
@@ -82,19 +74,68 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 		}
 		workCtx, cancel = context.WithDeadline(ctx, deadline)
 	}
-	err = waitFor(workCtx, w.Delay)
-	cancel()
+	workCtx, stopWork := context.WithCancel(workCtx)
+	heartbeatCtx, stopHeartbeat := context.WithCancel(ctx)
+	defer stopHeartbeat()
+	defer stopWork()
+	defer cancel()
+	go func() {
+		ticker := time.NewTicker(3 * time.Second)
+		defer ticker.Stop()
+		failed := 0
+		for {
+			select {
+			case <-heartbeatCtx.Done():
+				return
+			case <-ticker.C:
+				var state struct {
+					TaskStatus string `json:"taskStatus"`
+				}
+				_, e := w.post(heartbeatCtx, "/api/v1/nodes/heartbeat", map[string]any{"id": w.ID, "kind": "worker", "currentTask": task.ID}, &state)
+				if e != nil {
+					failed++
+				} else {
+					failed = 0
+				}
+				if failed >= 3 || state.TaskStatus != "" && state.TaskStatus != "RUNNING" {
+					stopWork()
+					return
+				}
+			}
+		}
+	}()
+	var detections []Detection
+	if task.Synthetic {
+		err = waitFor(workCtx, w.Delay)
+	} else if w.Execute == nil {
+		err = fmt.Errorf("scanning engines are not configured")
+	} else {
+		detections, err = w.Execute(workCtx, task)
+	}
+
+	report := Report{TaskID: task.ID, WorkerID: w.ID, Target: task.Chunks[0].Targets[0], Title: SyntheticTitle}
+	if !task.Synthetic {
+		report = Report{TaskID: task.ID, WorkerID: w.ID, Status: "COMPLETED", Findings: detections}
+	}
 	if err != nil {
 		if ctx.Err() != nil {
+			if !task.Synthetic {
+				reportCtx, reportCancel := context.WithTimeout(context.Background(), 3*time.Second)
+				_, _ = w.post(reportCtx, "/api/v1/worker/report", Report{TaskID: task.ID, WorkerID: w.ID, Status: "FAILED", Error: "Worker 已停止，扫描未完成"}, nil)
+				reportCancel()
+			}
 			return false, ctx.Err()
 		}
 		if errors.Is(err, context.DeadlineExceeded) {
-			_, err = w.post(ctx, "/api/v1/worker/report", Report{TaskID: task.ID, WorkerID: w.ID, Status: "PAUSED_WINDOW"}, nil)
+			report = Report{TaskID: task.ID, WorkerID: w.ID, Status: "PAUSED_WINDOW"}
+		} else if task.Synthetic {
 			return true, err
+		} else {
+			report = Report{TaskID: task.ID, WorkerID: w.ID, Status: "FAILED", Error: "引擎执行失败，请检查节点状态、规则库、输入和 Worker 日志"}
+			slog.Warn("engine execution failed", "task_id", task.ID, "error", err)
 		}
-		return false, err
 	}
-	report := Report{TaskID: task.ID, WorkerID: w.ID, Target: task.Chunks[0].Targets[0], Title: SyntheticTitle}
+
 	for {
 		if code, err := w.post(ctx, "/api/v1/worker/report", report, nil); err == nil {
 			break
@@ -109,7 +150,11 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 			return false, err
 		}
 	}
-	slog.Info("synthetic task completed", "task_id", task.ID)
+	status := report.Status
+	if status == "" {
+		status = "COMPLETED"
+	}
+	slog.Info("task report accepted", "task_id", task.ID, "status", status)
 	return true, nil
 }
 

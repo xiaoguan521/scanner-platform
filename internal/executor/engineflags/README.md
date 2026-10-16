@@ -1,3 +1,9 @@
-# Engine flag verification
+# 固定版本与参数白名单
 
-Keep engine flag definitions and verification here. Do not add a flag based on memory. The repository does not yet select exact Nuclei or Trivy versions, so `make verify-flags` intentionally fails closed until those versions and the version-specific help checks are approved and recorded in `docs/verification-log.md`.
+引擎版本固定在 `config/engines.lock.json`，下载 SHA-256 来自相应官方 GitHub release。`args.go` 是运行参数白名单；不接受用户自定义参数。`make engines` 安装、准备规则，`make verify-flags` 对实际程序版本和帮助输出逐项核对。
+
+Nuclei 3.11.1 使用 `-dr` 禁止重定向；不能与 `-fhr` 同时使用（引擎会拒绝启动）。禁止 `-lna`、`-code`，仅 HTTP 根路径 GET 的受限 JSON 模板，排除 code/headless 等协议、禁用 OAST、更新和非 URL 探测。限速与超时来自 Worker 配置，并发固定为 1。
+
+Trivy 0.76.0 使用离线本地目录或 `image --input`，扫描过程禁用更新和遥测。ZAP 2.17.0 只导入已经记录的 HAR 响应并运行被动扫描，`-silent -notel`，不创建爬虫或主动扫描任务。
+
+详见 `docs/engines.md` 与 `docs/verification-log.md`。本地参数与夹具验证不等同于真实服务器覆盖验证。

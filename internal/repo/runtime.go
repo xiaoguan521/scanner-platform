@@ -80,6 +80,9 @@ func NewRuntime(db *sql.DB) (*RuntimeStore, error) {
 		}
 	}
 	store := &RuntimeStore{db: db}
+	if err := store.migrateFindings(ctx); err != nil {
+		return nil, err
+	}
 	if err := store.initLocal(ctx); err != nil {
 		return nil, fmt.Errorf("initialize local task features: %w", err)
 	}
@@ -164,6 +167,13 @@ func readRuntimeTask(row rowScanner) (taskflow.Task, error) {
 		task.TimeWindows = []scheduler.Window{}
 	}
 	task.RuleVersion = detail.RuleVersion
+	task.Error = detail.Error
+	task.InputPath, task.InputKind, task.Scheme = detail.Input.InputPath, detail.Input.InputKind, detail.Input.Scheme
+	if detail.Input.Engine != "" && detail.Input.Engine != "synthetic" {
+		task.Synthetic = false
+		task.Engines = []string{detail.Input.Engine}
+		task.ScopeName = "显式目标扫描"
+	}
 	if task.SkippedTargets == nil {
 		task.SkippedTargets = []string{}
 	}
@@ -225,7 +235,7 @@ func (s *RuntimeStore) claimRuntimeTask(ctx context.Context, worker string) (*ta
 		if err := json.Unmarshal([]byte(data), &detail); err != nil {
 			return nil, err
 		}
-		if len(detail.Input.Targets) > 0 {
+		if len(detail.Input.Targets) > 0 || detail.Input.Engine == "trivy" {
 			targets, fresh, err := resolveTargets(ctx, tx, detail.Input)
 			if errors.Is(err, ErrInvalidTask) {
 				if _, err := tx.ExecContext(ctx, "UPDATE scan_tasks SET status='CANCELED' WHERE id=?", id); err != nil {
@@ -279,6 +289,9 @@ func (s *RuntimeStore) claimRuntimeTask(ctx context.Context, worker string) (*ta
 }
 
 func (s *RuntimeStore) CompleteRuntimeTask(ctx context.Context, report taskflow.Report) error {
+	if report.Status == "FAILED" || report.Status == "COMPLETED" {
+		return s.completeEngineTask(ctx, report)
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin task completion: %w", err)

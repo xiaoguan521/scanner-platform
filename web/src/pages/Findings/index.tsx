@@ -79,8 +79,8 @@ export const FindingsPage: React.FC = () => {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       <CollectionNotice loading={loading} error={error} />
       <Alert
-        message={isDemoMode ? '演示发现项' : '当前展示模拟 Worker 回报的结果'}
-        description={isDemoMode ? '本页为演示数据。' : '标题带有“模拟发现项”的记录用于确认任务链路和 SQLite 持久化，不代表目标存在真实漏洞。'}
+        message={isDemoMode ? '演示发现项' : '扫描引擎与模拟任务的发现项'}
+        description={isDemoMode ? '本页为演示数据。' : '模拟记录会单独标记。Nuclei 基线和 ZAP 被动发现需结合服务用途判断；Trivy 展示漏洞编号、受影响组件和修复版本。未检出不自动标记已修复。'}
         type="warning"
         showIcon
         icon={<SafetyCertificateOutlined />}
@@ -125,6 +125,7 @@ export const FindingsPage: React.FC = () => {
           dataSource={filteredFindings}
           rowKey="id"
           scroll={{x:1300}}
+          expandable={{expandedRowRender:r=><Space direction="vertical"><Text>{r.description||'暂无补充描述'}</Text><Text>匹配路径：{r.matchedPath||'—'}</Text>{r.package&&<Text>组件：{r.package}；安装版本：{r.installedVersion||'—'}；修复版本：{r.fixedVersion||'暂无'}</Text>}</Space>}}
           columns={[
             {
               title: '等级',

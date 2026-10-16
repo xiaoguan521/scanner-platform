@@ -17,7 +17,7 @@ export const NodesPage:React.FC=()=>{
   const run=async(action:()=>Promise<unknown>)=>{setBusy(true);try{await action();message.success('操作已排队，等待本地 Updater 处理；请查看操作记录');return true;}catch(e){message.error(e instanceof Error?e.message:String(e));return false;}finally{setBusy(false);}};
   return <div style={{display:'flex',flexDirection:'column',gap:16}}>
     <CollectionNotice loading={loading} error={error||bundleError||jobError}/>
-    <Alert type="info" showIcon message="本地节点与规则包" description="Worker 和 Updater 通过本机 API 工作，只有 Updater 写入规则目录。导入检查 ZIP 路径、manifest 和文件 SHA-256；当前未验签、未验证扫描引擎兼容性，不会启动真实扫描。"/>
+    <Alert type="info" showIcon message="本地节点与规则包" description="Worker 和 Updater 通过本机 API 工作，只有 Updater 写入规则目录。导入检查 ZIP 路径、manifest 和文件 SHA-256；当前未验签；真实任务在执行前校验固定规则版本。引擎程序由 make engines 安装，只有明确创建的真实任务才会连接目标。"/>
     <Card title="节点心跳"><Table<NodeInfo> dataSource={nodes} rowKey="id" pagination={false} scroll={{x:850}} columns={[
       {title:'节点',dataIndex:'id'},{title:'类型',dataIndex:'kind'},
       {title:'状态',dataIndex:'status',render:(v:string)=><Tag color={v==='OFFLINE'?'default':'green'}>{v==='BUSY'?'处理中':v==='ONLINE'?'在线':'离线'}</Tag>},
@@ -25,6 +25,7 @@ export const NodesPage:React.FC=()=>{
       {title:'最近心跳',dataIndex:'lastHeartbeat',render:(v:string)=>new Date(v).toLocaleString()},
       {title:'运行模式',render:()=> <Tag>本机开发 · 未启用网络围栏</Tag>},
     ]}/></Card>
+    <Card title="扫描引擎"><Table dataSource={nodes.flatMap(n=>(n.engines??[]).map(e=>({...e,nodeId:n.id,online:n.status!=='OFFLINE'})))} rowKey={e=>e.nodeId+'-'+e.name} pagination={false} columns={[{title:'引擎',dataIndex:'name',render:(v:string)=>v.toUpperCase()},{title:'固定版本',dataIndex:'version'},{title:'节点',dataIndex:'nodeId'},{title:'状态',render:(_,e)=><Tag color={e.online&&e.ready?'green':'default'}>{!e.online?'节点离线':e.ready?'本地就绪':e.installed?'缺少数据 / 运行环境':'未安装'}</Tag>},{title:'说明',dataIndex:'message'}]}/></Card>
     <Card title="规则包版本" extra={<Space wrap><input aria-label="选择离线规则包" type="file" accept=".zip" disabled={!canWrite} onChange={e=>setFile(e.target.files?.[0]??null)}/><Button disabled={!canWrite||!file} loading={busy} onClick={()=>void run(()=>importRules(file!))}>离线导入 ZIP</Button><Button disabled={!canWrite} onClick={()=>setFetchOpen(true)}>从规则源下载</Button></Space>}>
       <Typography.Paragraph type="secondary">ZIP 须包含 manifest.json 和 nuclei/、trivy/ 下声明的规则文件。下载后或离线导入后，点击“激活”切换当前版本。</Typography.Paragraph>
       <Table<RuleBundle> dataSource={bundles} rowKey="version" scroll={{x:1000}} columns={[

@@ -22,7 +22,7 @@ PASSWORD = 'Local-Only-Test-Password-2026'  # Disposable test fixture, never a r
 class API:
     def __init__(self, base):
         self.base = base
-        self.opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+        self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
     def call(self, method, path, body=None, expect=200, data=None, content_type=None):
         headers = {'X-Requested-With': 'XMLHttpRequest'}
         if body is not None:
@@ -82,6 +82,7 @@ def main():
         else:
             args+=['--server',base]
             if name=='updater':args+=['--rules-dir',str(directory/'rules')]
+            if name=='worker':args+=['--rules-dir',str(directory/'rules'),'--runtime-dir',str(directory/'worker'),'--inputs-dir',str(directory/'inputs')]
         processes[name]=subprocess.Popen(args,cwd=ROOT,stdout=log,stderr=log)
     def ready():
         try:

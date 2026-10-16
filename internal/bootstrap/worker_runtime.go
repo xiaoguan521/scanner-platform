@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -10,6 +11,8 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"scanner-platform/internal/executor"
 	"syscall"
 	"time"
 
@@ -24,6 +27,12 @@ func RunWorker(args []string, stdout, stderr io.Writer) int {
 	once := flags.Bool("once", false, "Process at most one queued task and exit")
 	interval := flags.Duration("interval", time.Second, "Queue polling interval")
 	delay := flags.Duration("synthetic-delay", 2*time.Second, "Synthetic task duration")
+	binDir := flags.String("bin-dir", "bin", "Pinned engine binaries")
+	rulesDir := flags.String("rules-dir", "vuln-data", "Read-only rule directory")
+	runtimeDir := flags.String("runtime-dir", "runtime/worker", "Private engine runtime and cache")
+	inputsDir := flags.String("inputs-dir", "runtime/inputs", "Local Trivy input root")
+	rate := flags.Int("rate", 5, "Nuclei requests per second (1-100)")
+	timeout := flags.Int("request-timeout", 10, "HTTP request timeout in seconds (1-60)")
 	status := flags.Bool("status", false, "Print worker mode and exit")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -31,10 +40,17 @@ func RunWorker(args []string, stdout, stderr io.Writer) int {
 		}
 		return 2
 	}
+	absolute := func(path string) string { p, _ := filepath.Abs(path); return p }
+	runner := &executor.Runner{BinDir: absolute(*binDir), RulesDir: absolute(*rulesDir), RuntimeDir: absolute(*runtimeDir), InputsDir: absolute(*inputsDir), Rate: *rate, Timeout: *timeout}
 	if *status {
-		fmt.Fprintln(stdout, `{"role":"sec-worker","mode":"synthetic","scanning":false}`)
+		_ = json.NewEncoder(stdout).Encode(map[string]any{"role": "sec-worker", "engines": runner.Status()})
 		return 0
 	}
+	if *rate < 1 || *rate > 100 || *timeout < 1 || *timeout > 60 {
+		fmt.Fprintln(stderr, "rate or timeout outside supported range")
+		return 2
+	}
+
 	endpoint, err := url.Parse(*server)
 	if err != nil || endpoint.Scheme != "http" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" || (endpoint.Path != "" && endpoint.Path != "/") || !isNumericLoopback(endpoint.Host) || *id == "" || *interval <= 0 || *delay < 0 || flags.NArg() != 0 {
 		fmt.Fprintln(stderr, "provide a local numeric loopback http:// Server URL, worker ID and valid timing flags")
@@ -44,6 +60,7 @@ func RunWorker(args []string, stdout, stderr io.Writer) int {
 	defer stop()
 	worker := taskflow.Worker{
 		ServerURL: *server, ID: *id, Interval: *interval, Delay: *delay,
+		Execute: runner.Execute, EngineStatus: runner.Status,
 		Client: &http.Client{
 			Timeout:       5 * time.Second,
 			Transport:     &http.Transport{Proxy: nil},

@@ -1,3 +1,4 @@
-// Package executor owns safe construction and execution of scanner subprocesses.
-// Callers must never provide raw command-line arguments.
+// Package executor runs pinned scanners with fixed argument slices, explicit targets,
+// private runtime files and normalized output. Only read-only HTTP baselines, ZAP
+// passive response analysis and offline Trivy inputs are supported.
 package executor

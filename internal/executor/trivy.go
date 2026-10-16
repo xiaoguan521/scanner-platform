@@ -1,0 +1,173 @@
+package executor
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"scanner-platform/internal/executor/engineflags"
+	"scanner-platform/internal/taskflow"
+)
+
+func localInput(root, relative string, kind string) (string, error) {
+	if !filepath.IsLocal(relative) || strings.ContainsAny(relative, "\\:\x00") {
+		return "", fmt.Errorf("input must be a relative path beneath Worker inputs directory")
+	}
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(root, relative)
+	for p := path; ; p = filepath.Dir(p) {
+		info, err := os.Lstat(p)
+		if err != nil || info.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("input missing or contains a symlink")
+		}
+		if p == root {
+			break
+		}
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	if kind == "image-archive" {
+		if !info.Mode().IsRegular() {
+			return "", fmt.Errorf("image archive must be a regular file")
+		}
+	} else if kind == "filesystem" {
+		if !info.IsDir() {
+			return "", fmt.Errorf("filesystem input must be a directory")
+		}
+		count := 0
+		if err := filepath.WalkDir(path, func(_ string, entry os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			count++
+			if count > 200000 || entry.Type()&os.ModeSymlink != 0 {
+				return fmt.Errorf("filesystem input has too many entries or a symlink")
+			}
+			return nil
+		}); err != nil {
+			return "", err
+		}
+	} else {
+		return "", fmt.Errorf("invalid Trivy input kind")
+	}
+	return path, nil
+}
+
+func copyDBFile(src, dst string) error {
+	input, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer input.Close()
+	output, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	defer output.Close()
+	_, err = io.Copy(output, input)
+	return err
+}
+
+func (r *Runner) trivy(ctx context.Context, task taskflow.Task, dir string) ([]taskflow.Detection, error) {
+	input, err := localInput(r.InputsDir, task.InputPath, task.InputKind)
+	if err != nil {
+		return nil, err
+	}
+	rulesDir, err := r.ruleDirectory(ctx, task.RuleVersion, "trivy")
+	if err != nil {
+		return nil, err
+	}
+	// Private writable cache; immutable release files are never opened for writing.
+	cache := filepath.Join(r.RuntimeDir, "trivy-cache-v"+TrivyVersion+"-"+task.RuleVersion)
+	if _, err := os.Stat(filepath.Join(cache, ".ready")); os.IsNotExist(err) {
+		_ = os.RemoveAll(cache)
+		for _, sub := range []string{"db", "java-db"} {
+			source := filepath.Join(rulesDir, sub)
+			if _, err := os.Stat(source); os.IsNotExist(err) && sub == "java-db" {
+				continue
+			}
+			if err := os.MkdirAll(filepath.Join(cache, sub), 0700); err != nil {
+				return nil, err
+			}
+			entries, err := os.ReadDir(source)
+			if err != nil {
+				return nil, fmt.Errorf("Trivy rule layout requires trivy/db/{trivy.db,metadata.json}")
+			}
+			for _, entry := range entries {
+				if entry.IsDir() {
+					return nil, fmt.Errorf("unexpected DB directory")
+				}
+				if err := copyDBFile(filepath.Join(source, entry.Name()), filepath.Join(cache, sub, entry.Name())); err != nil {
+					return nil, err
+				}
+			}
+		}
+		if err := os.WriteFile(filepath.Join(cache, ".ready"), []byte(task.RuleVersion), 0600); err != nil {
+			return nil, err
+		}
+	}
+	output := filepath.Join(dir, "trivy.json")
+	if err := runProcess(ctx, r.binary("trivy"), engineflags.TrivyArgs(task.InputKind, input, cache, output), dir, io.Discard); err != nil {
+		return nil, err
+	}
+	info, err := os.Stat(output)
+	if err != nil || info.Size() > 32<<20 {
+		return nil, fmt.Errorf("missing or oversized Trivy report")
+	}
+	data, err := os.ReadFile(output)
+	if err != nil {
+		return nil, err
+	}
+	return ParseTrivy(data, task.InputPath)
+}
+
+func ParseTrivy(data []byte, target string) ([]taskflow.Detection, error) {
+	var report struct {
+		Metadata struct {
+			ImageID string `json:"ImageID"`
+		} `json:"Metadata"`
+		Results []struct {
+			Target          string `json:"Target"`
+			Vulnerabilities []struct {
+				ID        string `json:"VulnerabilityID"`
+				Name      string `json:"PkgName"`
+				Installed string `json:"InstalledVersion"`
+				Fixed     string `json:"FixedVersion"`
+				Title     string `json:"Title"`
+				Severity  string `json:"Severity"`
+			} `json:"Vulnerabilities"`
+		} `json:"Results"`
+	}
+	if err := json.Unmarshal(data, &report); err != nil {
+		return nil, fmt.Errorf("invalid Trivy JSON report")
+	}
+	if len(report.Results) == 0 {
+		return nil, fmt.Errorf("Trivy found no supported package manifests or OS packages in the input")
+	}
+	out := []taskflow.Detection{}
+	for _, result := range report.Results {
+		for _, v := range result.Vulnerabilities {
+			if v.ID == "" || v.Name == "" {
+				return nil, fmt.Errorf("incomplete Trivy vulnerability")
+			}
+			title := v.Title
+			if title == "" {
+				title = v.ID + " in " + v.Name
+			}
+			out = append(out, taskflow.Detection{Engine: "trivy", TemplateID: safeText(v.ID, 200), Target: target, Title: safeText(title, 500), Severity: severity(v.Severity), MatchedPath: safeText(filepath.ToSlash(result.Target), 1000), Package: safeText(v.Name, 300), InstalledVersion: safeText(v.Installed, 200), FixedVersion: safeText(v.Fixed, 1000), ArtifactID: report.Metadata.ImageID})
+			if len(out) > 2000 {
+				return nil, fmt.Errorf("too many findings; split the input")
+			}
+		}
+	}
+	return out, nil
+}

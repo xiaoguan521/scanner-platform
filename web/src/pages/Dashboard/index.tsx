@@ -39,8 +39,8 @@ export const DashboardPage: React.FC = () => {
       {/* 顶部安全合规与运行提示 */}
       <CollectionNotice loading={assetsLoading || findingsLoading || tasksLoading || rulesLoading} error={assetsError || findingsError || tasksError || rulesError} />
       <Alert
-        message={isDemoMode ? '仅演示：安全规则的设计目标' : '本地业务运行中 · 真实扫描留待验证'}
-        description="本地业务数据来自 SQLite。当前任务为模拟执行，不会连接目标；真实扫描结果与修复验证另行接入。"
+        message={isDemoMode ? '仅演示：安全规则的设计目标' : '本地业务与扫描任务'}
+        description="业务数据来自 SQLite。支持 Nuclei 只读基线、ZAP 被动响应检查和 Trivy 离线输入；模拟记录单独标注，未检出不会自动标记已修复。"
         type="info"
         showIcon
         icon={<SafetyOutlined />}
@@ -96,6 +96,7 @@ export const DashboardPage: React.FC = () => {
             <Statistic
               title="规则库版本 (CURRENT)"
               value={currentRule?.version || (isDemoMode?'演示暂无':'尚未导入')}
+              formatter={()=>currentRule?.version || (isDemoMode?'演示暂无':'尚未导入')}
               prefix={<CheckCircleOutlined style={{ color: '#13c2c2' }} />}
               valueStyle={{ fontSize: 18 }}
             />

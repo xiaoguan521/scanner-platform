@@ -26,6 +26,8 @@ import (
 )
 
 const MaxArchive = 256 << 20
+const MaxRuleFile = 4 << 30
+const MaxExpanded = 8 << 30
 
 var versionPattern = regexp.MustCompile(`^[0-9]{8}\.[0-9]{2,8}$`)
 
@@ -214,11 +216,11 @@ func (m *Manager) Import(ctx context.Context, data []byte) (Bundle, error) {
 			return Bundle{}, err
 		}
 		f := entries[name]
-		if f == nil || f.UncompressedSize64 > 1<<30 {
+		if f == nil || f.UncompressedSize64 > MaxRuleFile {
 			return Bundle{}, fmt.Errorf("规则文件缺失或过大")
 		}
 		total += f.UncompressedSize64
-		if total > 2<<30 {
+		if total > MaxExpanded {
 			return Bundle{}, fmt.Errorf("规则包解压大小超限")
 		}
 		r, err := f.Open()
@@ -236,7 +238,7 @@ func (m *Manager) Import(ctx context.Context, data []byte) (Bundle, error) {
 			return Bundle{}, err
 		}
 		digest := sha256.New()
-		count, copyErr := io.Copy(io.MultiWriter(output, digest), io.LimitReader(r, (1<<30)+1))
+		count, copyErr := io.Copy(io.MultiWriter(output, digest), io.LimitReader(r, MaxRuleFile+1))
 		r.Close()
 		syncErr := output.Sync()
 		closeErr := output.Close()
@@ -249,7 +251,7 @@ func (m *Manager) Import(ctx context.Context, data []byte) (Bundle, error) {
 		if closeErr != nil {
 			return Bundle{}, closeErr
 		}
-		if count > 1<<30 || !strings.EqualFold(hex.EncodeToString(digest.Sum(nil)), manifest.Files[name]) {
+		if count > MaxRuleFile || !strings.EqualFold(hex.EncodeToString(digest.Sum(nil)), manifest.Files[name]) {
 			return Bundle{}, fmt.Errorf("规则文件 SHA-256 校验失败或大小超限")
 		}
 
@@ -309,7 +311,7 @@ func (m *Manager) inspect(ctx context.Context, version string) (Bundle, error) {
 			}
 		}
 		info, err := os.Stat(dest)
-		if err != nil || !info.Mode().IsRegular() || info.Size() > 1<<30 {
+		if err != nil || !info.Mode().IsRegular() || info.Size() > MaxRuleFile {
 			return Bundle{}, fmt.Errorf("规则文件无效")
 		}
 		input, err := os.Open(dest)
@@ -317,7 +319,7 @@ func (m *Manager) inspect(ctx context.Context, version string) (Bundle, error) {
 			return Bundle{}, err
 		}
 		digest := sha256.New()
-		_, copyErr := io.Copy(digest, io.LimitReader(input, (1<<30)+1))
+		_, copyErr := io.Copy(digest, io.LimitReader(input, MaxRuleFile+1))
 		input.Close()
 		if copyErr != nil || !strings.EqualFold(hex.EncodeToString(digest.Sum(nil)), expected) {
 			return Bundle{}, fmt.Errorf("已存规则文件 SHA-256 校验失败")
@@ -325,6 +327,12 @@ func (m *Manager) inspect(ctx context.Context, version string) (Bundle, error) {
 
 	}
 	return Bundle{Version: version, Engines: manifest.Engines, Channel: "local", ManifestSHA256: hashBytes(data), PublishedAt: info.ModTime().UTC().Format(time.RFC3339Nano), IntegrityVerified: true}, nil
+}
+
+// Inspect verifies an already installed version without creating any directory.
+// This is the read-only entrypoint used by Worker.
+func (m *Manager) Inspect(ctx context.Context, version string) (Bundle, error) {
+	return m.inspect(ctx, version)
 }
 func older(a, b string) bool {
 	ap := strings.Split(a, ".")

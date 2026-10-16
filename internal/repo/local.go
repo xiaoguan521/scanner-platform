@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -31,6 +32,7 @@ type taskDetails struct {
 	Owners      map[string]targetOwner `json:"owners"`
 	Deadline    string                 `json:"deadline"`
 	RuleVersion string                 `json:"ruleVersion"`
+	Error       string                 `json:"error,omitempty"`
 }
 
 func (s *RuntimeStore) initLocal(ctx context.Context) error {
@@ -94,7 +96,22 @@ func resolveTargets(ctx context.Context, tx *sql.Tx, in taskflow.TaskInput) ([]s
 		in.TimeWindows = []scheduler.Window{}
 	}
 	detail := taskDetails{Input: in, Skipped: []string{}, Owners: map[string]targetOwner{}}
-	if !in.Synthetic || len(in.Targets) == 0 || len(in.Targets) > 100 || scheduler.ValidateWindows(in.TimeWindows) != nil {
+	if scheduler.ValidateWindows(in.TimeWindows) != nil {
+		return nil, detail, ErrInvalidTask
+	}
+	if in.Synthetic {
+		if in.Engine != "" && in.Engine != "synthetic" || in.InputPath != "" || in.InputKind != "" || in.Scheme != "" {
+			return nil, detail, ErrInvalidTask
+		}
+	} else if in.Engine == "trivy" {
+		if len(in.Targets) != 0 || in.Scheme != "" || !filepath.IsLocal(in.InputPath) || strings.ContainsAny(in.InputPath, "\\:\x00") || len(in.InputPath) > 240 || (in.InputKind != "filesystem" && in.InputKind != "image-archive") {
+			return nil, detail, fmt.Errorf("%w: Trivy requires a relative Worker input path and filesystem/image-archive kind", ErrInvalidTask)
+		}
+		return []string{in.InputPath}, detail, nil
+	} else if (in.Engine != "nuclei" && in.Engine != "zap") || (in.Scheme != "http" && in.Scheme != "https") || in.InputPath != "" || in.InputKind != "" {
+		return nil, detail, ErrInvalidTask
+	}
+	if len(in.Targets) == 0 || len(in.Targets) > 100 {
 		return nil, detail, ErrInvalidTask
 	}
 	targets := []string{}
@@ -171,6 +188,32 @@ func createLocalTask(ctx context.Context, tx *sql.Tx, in taskflow.TaskInput, act
 		return taskflow.Task{}, err
 	}
 	detail.RuleVersion = current
+	if in.Engine == "zap" {
+		detail.RuleVersion = ""
+	} // ZAP passive rules ship with the pinned binary.
+	if !in.Synthetic && in.Engine != "zap" {
+		if current == "" {
+			return taskflow.Task{}, fmt.Errorf("%w: 请先导入并激活包含所选引擎的规则包", ErrInvalidTask)
+		}
+		var catalog string
+		if err := tx.QueryRowContext(ctx, "SELECT data FROM local_rule_bundles WHERE version=?", current).Scan(&catalog); err != nil {
+			return taskflow.Task{}, err
+		}
+		var bundle struct {
+			Engines   []string `json:"engines"`
+			Integrity bool     `json:"integrityVerified"`
+		}
+		if json.Unmarshal([]byte(catalog), &bundle) != nil || !bundle.Integrity {
+			return taskflow.Task{}, ErrInvalidTask
+		}
+		supported := false
+		for _, engine := range bundle.Engines {
+			supported = supported || engine == in.Engine
+		}
+		if !supported {
+			return taskflow.Task{}, fmt.Errorf("%w: 当前规则包不包含所选引擎", ErrInvalidTask)
+		}
+	}
 	data, _ := json.Marshal(detail)
 	encoded, _ := json.Marshal(targets)
 	_, err = tx.ExecContext(ctx, `INSERT INTO scan_tasks(id,status,created_at,targets,details) VALUES(?,?,?,?,?)`, id, status, now.UTC().Format(time.RFC3339Nano), string(encoded), string(data))
@@ -428,16 +471,17 @@ func (s *RuntimeStore) Tick(ctx context.Context, now time.Time) error {
 }
 
 type LocalNode struct {
-	ID               string    `json:"id"`
-	Kind             string    `json:"kind"`
-	HostID           string    `json:"hostId"`
-	IP               string    `json:"ip"`
-	Status           string    `json:"status"`
-	CurrentTask      string    `json:"currentTask"`
-	BoundRuleVersion string    `json:"boundRuleVersion"`
-	LastHeartbeat    time.Time `json:"lastHeartbeat"`
-	FenceStatus      string    `json:"fenceStatus"`
-	DropCount        int       `json:"dropCount"`
+	ID               string                  `json:"id"`
+	Kind             string                  `json:"kind"`
+	HostID           string                  `json:"hostId"`
+	IP               string                  `json:"ip"`
+	Status           string                  `json:"status"`
+	CurrentTask      string                  `json:"currentTask"`
+	BoundRuleVersion string                  `json:"boundRuleVersion"`
+	LastHeartbeat    time.Time               `json:"lastHeartbeat"`
+	FenceStatus      string                  `json:"fenceStatus"`
+	DropCount        int                     `json:"dropCount"`
+	Engines          []taskflow.EngineStatus `json:"engines,omitempty"`
 }
 
 func (s *RuntimeStore) ListQuarantines(ctx context.Context) ([]map[string]any, error) {
@@ -458,14 +502,17 @@ func (s *RuntimeStore) ListQuarantines(ctx context.Context) ([]map[string]any, e
 	return items, rows.Err()
 }
 
-func (s *RuntimeStore) TouchNode(ctx context.Context, id, kind, task string) error {
+func (s *RuntimeStore) TouchNode(ctx context.Context, id, kind, task string, engineStatus ...[]taskflow.EngineStatus) error {
 	status := "ONLINE"
 	if task != "" {
 		status = "BUSY"
 	}
 	node := LocalNode{ID: id, Kind: kind, HostID: "local", IP: "127.0.0.1", Status: status, CurrentTask: task, LastHeartbeat: time.Now().UTC(), FenceStatus: "NOT_SUPPORTED"}
+	if len(engineStatus) > 0 {
+		node.Engines = engineStatus[0]
+	}
 	data, _ := json.Marshal(node)
-	_, err := s.db.ExecContext(ctx, `INSERT INTO local_nodes(id,data) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data`, id, string(data))
+	_, err := s.db.ExecContext(ctx, `INSERT INTO local_nodes(id,data) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET data=CASE WHEN json_extract(excluded.data,'$.engines') IS NULL THEN json_set(excluded.data,'$.engines',json_extract(local_nodes.data,'$.engines')) ELSE excluded.data END`, id, string(data))
 	return err
 }
 
@@ -491,4 +538,12 @@ func (s *RuntimeStore) ListNodes(ctx context.Context) ([]LocalNode, error) {
 		out = append(out, node)
 	}
 	return out, rows.Err()
+}
+
+func (s *RuntimeStore) TaskStateForWorker(ctx context.Context, id, worker string) string {
+	var state string
+	if err := s.db.QueryRowContext(ctx, "SELECT status FROM scan_tasks WHERE id=? AND worker_id=?", id, worker).Scan(&state); err != nil {
+		return "UNKNOWN"
+	}
+	return state
 }

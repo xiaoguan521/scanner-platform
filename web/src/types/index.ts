@@ -110,7 +110,7 @@ export interface ScanTask {
   id: string;
   scopeId: string;
   scopeName: string;
-  engines: ('nuclei' | 'trivy' | 'synthetic')[];
+  engines: ('nuclei' | 'trivy' | 'zap' | 'synthetic')[];
   status: TaskStatus;
   hardDeadline: string;
   totalChunks: number;
@@ -122,6 +122,7 @@ export interface ScanTask {
   skippedTargets?: string[];
   timeWindows?: TimeWindow[];
   ruleVersion?: string;
+  scheme?: string; inputPath?: string; inputKind?: string; error?: string;
 }
 
 export type FindingSeverity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO';
@@ -139,7 +140,7 @@ export interface Finding {
   fingerprint: string;
   severity: FindingSeverity;
   title: string;
-  engine: 'nuclei' | 'trivy' | 'synthetic';
+  engine: 'nuclei' | 'trivy' | 'zap' | 'synthetic';
   templateOrCve: string;
   target: string;
   port?: number;
@@ -151,6 +152,7 @@ export interface Finding {
   owner: string;
   verifiedInRun: boolean;
   synthetic?: boolean;
+  artifactId?: string; matchedPath?: string; package?: string; installedVersion?: string; fixedVersion?: string; description?: string;
 }
 
 export interface NodeInfo {
@@ -164,6 +166,7 @@ export interface NodeInfo {
   lastHeartbeat: string;
   fenceStatus: 'ACTIVE' | 'NOT_SUPPORTED' | 'NOT_VERIFIED';
   dropCount: number;
+  engines?: EngineStatus[];
 }
 
 export interface RuleBundle {
@@ -180,7 +183,8 @@ export interface RuleBundle {
   inUseByTasks: number;
 }
 
-export interface TaskInput { synthetic: boolean; targets: string[]; timeWindows: TimeWindow[] }
+export interface EngineStatus { name: string; version: string; installed: boolean; ready: boolean; message: string }
+export interface TaskInput { synthetic: boolean; engine?: 'nuclei'|'trivy'|'zap'|'synthetic'; scheme?: 'http'|'https'; inputPath?: string; inputKind?: 'filesystem'|'image-archive'; targets: string[]; timeWindows: TimeWindow[] }
 export interface Schedule extends TaskInput {
   id: string; name: string; nextRun: string; intervalMinutes: number; enabled: boolean;
   lastTaskId: string; lastError: string; createdBy: string;

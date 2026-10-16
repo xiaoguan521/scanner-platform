@@ -1,7 +1,7 @@
 import { requestJSON } from './client';
 import type { ScanTask, TaskInput, Schedule, Finding, RuleJob } from '../types';
 
-export const createSyntheticTask = (input:TaskInput) => requestJSON<ScanTask>('/api/v1/tasks','POST',input);
+export const createTask = (input:TaskInput) => requestJSON<ScanTask>('/api/v1/tasks','POST',input);
 export const cancelTask = (id:string) => requestJSON('/api/v1/tasks/'+encodeURIComponent(id)+'/cancel','POST');
 export const saveSchedule = (input: Omit<Schedule,'id'|'enabled'|'lastTaskId'|'lastError'|'createdBy'>) => requestJSON<Schedule>('/api/v1/schedules','POST',input);
 export const toggleSchedule = (id:string,enabled:boolean) => requestJSON('/api/v1/schedules/'+encodeURIComponent(id),'PATCH',{enabled});

@@ -2,7 +2,7 @@
 openapi: 3.0.3
 info:
   title: Scanner Platform local business API
-  version: 0.5.0
+  version: 0.6.0
   description: 'Same-origin local development API. UI mutations require X-Requested-With:
     XMLHttpRequest and admin/security_engineer unless stated otherwise. Accounts use
     HttpOnly session cookies. Worker/Updater endpoints are loopback-only local development
@@ -534,7 +534,7 @@ paths:
       security:
       - sessionCookie: []
     post:
-      summary: Queue an explicit-target synthetic task
+      summary: Queue a synthetic or explicitly selected real engine task
       responses:
         '201':
           description: Local operation result
@@ -957,21 +957,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                taskId:
-                  type: string
-                workerId:
-                  type: string
-                target:
-                  type: string
-                title:
-                  type: string
-                status:
-                  type: string
-                  enum:
-                  - PAUSED_WINDOW
-              required: []
+              "$ref": "#/components/schemas/WorkerReport"
   "/api/v1/updater/claim":
     post:
       summary: Local-only updater/claim
@@ -1048,7 +1034,8 @@ paths:
       summary: Local-only nodes/heartbeat
       responses:
         '200':
-          description: Local operation result
+          description: Heartbeat acknowledged; taskStatus is returned for the owned
+            current task, enabling local cancellation.
       requestBody:
         required: true
         content:
@@ -1065,6 +1052,11 @@ paths:
                   - updater
                 currentTask:
                   type: string
+                engines:
+                  type: array
+                  maxItems: 3
+                  items:
+                    "$ref": "#/components/schemas/EngineStatus"
               required: []
 components:
   securitySchemes:
@@ -1650,6 +1642,7 @@ components:
             - nuclei
             - trivy
             - synthetic
+            - zap
         status:
           type: string
           enum:
@@ -1691,6 +1684,14 @@ components:
             "$ref": "#/components/schemas/TimeWindow"
         ruleVersion:
           type: string
+        scheme:
+          type: string
+        inputPath:
+          type: string
+        inputKind:
+          type: string
+        error:
+          type: string
     Finding:
       type: object
       required:
@@ -1713,7 +1714,7 @@ components:
           type: string
         fingerprint:
           type: string
-        severity:
+        severity: &1
           type: string
           enum:
           - CRITICAL
@@ -1729,6 +1730,7 @@ components:
           - nuclei
           - trivy
           - synthetic
+          - zap
         templateOrCve:
           type: string
         target:
@@ -1765,6 +1767,20 @@ components:
           type: boolean
         taskId:
           type: string
+        matchedPath:
+          type: string
+        package:
+          type: string
+        installedVersion:
+          type: string
+        fixedVersion:
+          type: string
+        description:
+          type: string
+        artifactId:
+          type: string
+          description: Immutable Trivy image identity; used instead of archive filename
+            for deduplication.
     NodeInfo:
       type: object
       required:
@@ -1811,6 +1827,10 @@ components:
         dropCount:
           type: integer
           minimum: 0
+        engines:
+          type: array
+          items:
+            "$ref": "#/components/schemas/EngineStatus"
     RuleBundle:
       type: object
       required:
@@ -1862,13 +1882,11 @@ components:
       properties:
         synthetic:
           type: boolean
-          enum:
-          - true
         targets:
           type: array
           items:
             type: string
-          minItems: 1
+          minItems: 0
           maxItems: 100
           uniqueItems: true
         timeWindows:
@@ -1876,9 +1894,33 @@ components:
           items:
             "$ref": "#/components/schemas/TimeWindow"
           maxItems: 8
+        engine:
+          type: string
+          enum:
+          - synthetic
+          - nuclei
+          - trivy
+          - zap
+        scheme:
+          type: string
+          enum:
+          - http
+          - https
+        inputPath:
+          type: string
+          maxLength: 240
+          description: Relative path beneath Worker inputs root; no symlinks.
+        inputKind:
+          type: string
+          enum:
+          - filesystem
+          - image-archive
       required:
       - synthetic
       - targets
+      description: Choose synthetic=true, a root HTTP baseline engine (nuclei/zap
+        with scheme and registered targets), or trivy with a local Worker input path/kind.
+        No discovery, remote image pull, SSH or active ZAP scans.
     Schedule:
       allOf:
       - "$ref": "#/components/schemas/TaskInput"
@@ -1945,3 +1987,92 @@ components:
         nodeId:
           type: string
       required: []
+    EngineStatus:
+      type: object
+      required:
+      - name
+      - version
+      - installed
+      - ready
+      - message
+      properties:
+        name:
+          type: string
+        version:
+          type: string
+        installed:
+          type: boolean
+        ready:
+          type: boolean
+        message:
+          type: string
+    Detection:
+      type: object
+      required:
+      - engine
+      - templateId
+      - target
+      - title
+      - severity
+      properties:
+        engine:
+          type: string
+          maxLength: 32
+        templateId:
+          type: string
+          maxLength: 200
+        target:
+          type: string
+          maxLength: 240
+        title:
+          type: string
+          maxLength: 500
+        matchedPath:
+          type: string
+          maxLength: 1000
+        package:
+          type: string
+          maxLength: 300
+        installedVersion:
+          type: string
+          maxLength: 200
+        fixedVersion:
+          type: string
+          maxLength: 1000
+        description:
+          type: string
+          maxLength: 4000
+        severity: *1
+        artifactId:
+          type: string
+          description: Immutable Trivy image identity; used instead of archive filename
+            for deduplication.
+    WorkerReport:
+      type: object
+      required:
+      - taskId
+      - workerId
+      properties:
+        taskId:
+          type: string
+        workerId:
+          type: string
+        target:
+          type: string
+        title:
+          type: string
+        status:
+          type: string
+          enum:
+          - ''
+          - PAUSED_WINDOW
+          - COMPLETED
+          - FAILED
+        error:
+          type: string
+          maxLength: 500
+        findings:
+          type: array
+          maxItems: 2000
+          items:
+            "$ref": "#/components/schemas/Detection"

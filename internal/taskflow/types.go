@@ -8,6 +8,10 @@ import (
 
 type TaskInput struct {
 	Synthetic   bool               `json:"synthetic"`
+	Engine      string             `json:"engine,omitempty"`
+	Scheme      string             `json:"scheme,omitempty"`
+	InputPath   string             `json:"inputPath,omitempty"`
+	InputKind   string             `json:"inputKind,omitempty"`
 	Targets     []string           `json:"targets"`
 	TimeWindows []scheduler.Window `json:"timeWindows"`
 }
@@ -53,6 +57,10 @@ type Task struct {
 	SkippedTargets  []string           `json:"skippedTargets"`
 	TimeWindows     []scheduler.Window `json:"timeWindows"`
 	RuleVersion     string             `json:"ruleVersion"`
+	InputPath       string             `json:"inputPath,omitempty"`
+	InputKind       string             `json:"inputKind,omitempty"`
+	Scheme          string             `json:"scheme,omitempty"`
+	Error           string             `json:"error,omitempty"`
 }
 
 type Finding struct {
@@ -72,12 +80,45 @@ type Finding struct {
 	Owner             string    `json:"owner"`
 	VerifiedInRun     bool      `json:"verifiedInRun"`
 	Synthetic         bool      `json:"synthetic"`
+	MatchedPath       string    `json:"matchedPath,omitempty"`
+	Package           string    `json:"package,omitempty"`
+	InstalledVersion  string    `json:"installedVersion,omitempty"`
+	FixedVersion      string    `json:"fixedVersion,omitempty"`
+	ArtifactID        string    `json:"artifactId,omitempty"`
+	Description       string    `json:"description,omitempty"`
+}
+
+// Detection is normalized engine output. Raw requests, responses and credentials
+// are intentionally absent from the persisted result protocol.
+type Detection struct {
+	Engine           string `json:"engine"`
+	TemplateID       string `json:"templateId"`
+	Target           string `json:"target"`
+	Title            string `json:"title"`
+	Severity         string `json:"severity"`
+	MatchedPath      string `json:"matchedPath,omitempty"`
+	Package          string `json:"package,omitempty"`
+	InstalledVersion string `json:"installedVersion,omitempty"`
+	FixedVersion     string `json:"fixedVersion,omitempty"`
+	ArtifactID       string `json:"artifactId,omitempty"`
+	Description      string `json:"description,omitempty"`
 }
 
 type Report struct {
-	TaskID   string `json:"taskId"`
-	WorkerID string `json:"workerId"`
-	Target   string `json:"target"`
-	Title    string `json:"title"`
-	Status   string `json:"status,omitempty"`
+	TaskID   string      `json:"taskId"`
+	WorkerID string      `json:"workerId"`
+	Target   string      `json:"target"`
+	Title    string      `json:"title"`
+	Status   string      `json:"status,omitempty"`
+	Error    string      `json:"error,omitempty"`
+	Findings []Detection `json:"findings,omitempty"`
+}
+
+// EngineStatus is based on local binary and data checks, not a successful scan.
+type EngineStatus struct {
+	Name      string `json:"name"`
+	Version   string `json:"version"`
+	Installed bool   `json:"installed"`
+	Ready     bool   `json:"ready"`
+	Message   string `json:"message"`
 }

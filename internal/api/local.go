@@ -9,9 +9,10 @@ import (
 func registerLocalHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui func(bool, http.HandlerFunc) http.HandlerFunc, actor func(*http.Request) string) {
 	mux.HandleFunc("POST /api/v1/nodes/heartbeat", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			ID          string `json:"id"`
-			Kind        string `json:"kind"`
-			CurrentTask string `json:"currentTask"`
+			ID          string                  `json:"id"`
+			Kind        string                  `json:"kind"`
+			CurrentTask string                  `json:"currentTask"`
+			Engines     []taskflow.EngineStatus `json:"engines"`
 		}
 		if !runtimeDecode(w, r, &body) {
 			return
@@ -20,8 +21,12 @@ func registerLocalHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui func
 			bad(w, 400, "invalid_node")
 			return
 		}
-		if !runtimeStoreError(w, store.TouchNode(r.Context(), body.ID, body.Kind, body.CurrentTask)) {
-			runtimeJSON(w, 200, map[string]string{"state": "alive"})
+		if !runtimeStoreError(w, store.TouchNode(r.Context(), body.ID, body.Kind, body.CurrentTask, body.Engines)) {
+			state := ""
+			if body.CurrentTask != "" && body.Kind == "worker" {
+				state = store.TaskStateForWorker(r.Context(), body.CurrentTask, body.ID)
+			}
+			runtimeJSON(w, 200, map[string]string{"state": "alive", "taskStatus": state})
 		}
 	})
 	mux.HandleFunc("GET /api/v1/port-quarantines", ui(false, func(w http.ResponseWriter, r *http.Request) {

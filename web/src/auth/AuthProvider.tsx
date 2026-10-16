@@ -33,7 +33,7 @@ export const AuthProvider: React.FC<{children:React.ReactNode}> = ({children}) =
   if(!user) return (
     <div style={{minHeight:'100vh',display:'grid',placeItems:'center',background:'#f1f5f9',padding:20}}>
       <Card title={setupRequired ? "首次使用 · 创建管理员" : "安全扫描平台 · 登录"} style={{width:'100%',maxWidth:430}}>
-        <Typography.Paragraph type="secondary">本地开发版：账号来自 SQLite，扫描服务仍未启用。</Typography.Paragraph>
+        <Typography.Paragraph type="secondary">本地开发版：账号来自 SQLite；扫描仅在你明确创建真实引擎任务后执行。</Typography.Paragraph>
         {error && <Alert showIcon type="warning" message={error} style={{marginBottom:16}}/>}
         <Form layout="vertical" autoComplete="off" onFinish={async(values:{username:string,password:string})=>{
           setSubmitting(true);setError('');

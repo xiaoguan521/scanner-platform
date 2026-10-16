@@ -37,10 +37,10 @@ func NewRuntimeHandler(store *repo.RuntimeStore, fallback http.Handler, uiDir st
 		runtimeJSON(w, http.StatusOK, map[string]string{"state": "alive", "role": "sec-server"})
 	})
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
-		runtimeJSON(w, http.StatusOK, map[string]string{"state": "ready", "mode": "synthetic"})
+		runtimeJSON(w, http.StatusOK, map[string]string{"state": "ready", "mode": "local"})
 	})
-	capabilities := []string{"database", "task-dispatch", "synthetic-worker", "web-ui", "authentication", "user-management", "asset-registry", "approval-reviews", "schedules", "rule-import", "rule-activation"}
-	unavailable := []string{"real-scanning", "engine-validation", "rule-signatures", "harbor"}
+	capabilities := []string{"database", "task-dispatch", "synthetic-worker", "web-ui", "authentication", "user-management", "asset-registry", "approval-reviews", "schedules", "rule-import", "rule-activation", "nuclei-http-baseline", "trivy-offline", "zap-passive"}
+	unavailable := []string{"engine-validation", "rule-signatures", "harbor"}
 	mux.HandleFunc("GET /api/v1/system/status", func(w http.ResponseWriter, r *http.Request) {
 		runtimeJSON(w, http.StatusOK, Status{
 			Role: "sec-server", Phase: "早期开发", State: "RUNNING", Ready: true,
@@ -85,13 +85,9 @@ func NewRuntimeHandler(store *repo.RuntimeStore, fallback http.Handler, uiDir st
 		if !runtimeDecode(w, r, &body) {
 			return
 		}
-		if !body.Synthetic {
-			runtimeJSON(w, http.StatusBadRequest, APIError{Error: "synthetic_only", Message: "当前仅支持模拟任务，未接入真实扫描引擎"})
-			return
-		}
 		var task taskflow.Task
 		var err error
-		if len(body.Targets) == 0 && len(accounts) == 0 {
+		if body.Synthetic && body.Engine == "" && body.Scheme == "" && body.InputPath == "" && body.InputKind == "" && len(body.TimeWindows) == 0 && len(body.Targets) == 0 && len(accounts) == 0 {
 			task, err = store.CreateSyntheticTask(r.Context())
 		} else {
 			task, err = store.CreateLocalTask(r.Context(), body, actor(r))
@@ -135,7 +131,7 @@ func NewRuntimeHandler(store *repo.RuntimeStore, fallback http.Handler, uiDir st
 	})
 	mux.HandleFunc("POST /api/v1/worker/report", func(w http.ResponseWriter, r *http.Request) {
 		var report taskflow.Report
-		if !runtimeDecode(w, r, &report) {
+		if !runtimeDecodeLimit(w, r, &report, 4<<20) {
 			return
 		}
 		if !runtimeStoreError(w, store.CompleteRuntimeTask(r.Context(), report)) {

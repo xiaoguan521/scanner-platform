@@ -5,6 +5,9 @@ SCANNER_PORT=${SCANNER_PORT:-8080}
 SCANNER_DB=${SCANNER_DB:-runtime/platform.db}
 SCANNER_RULES=${SCANNER_RULES:-vuln-data}
 SCANNER_LOG_DIR=${SCANNER_LOG_DIR:-runtime}
+SCANNER_BIN=${SCANNER_BIN:-bin}
+SCANNER_INPUTS=${SCANNER_INPUTS:-runtime/inputs}
+mkdir -p "$SCANNER_INPUTS"
 mkdir -p "$SCANNER_LOG_DIR" dist
 if [ "${SCANNER_SKIP_BUILD:-0}" != 1 ]; then
   npm --prefix web ci --ignore-scripts
@@ -40,11 +43,11 @@ until curl --fail --silent "http://127.0.0.1:$SCANNER_PORT/readyz" >/dev/null; d
   sleep 0.1
 done
 if ! kill -0 "$server_pid" 2>/dev/null; then cat "$SCANNER_LOG_DIR/server.log"; exit 1; fi
-./dist/sec-worker --server "http://127.0.0.1:$SCANNER_PORT" >"$SCANNER_LOG_DIR/worker.log" 2>&1 &
+./dist/sec-worker --server "http://127.0.0.1:$SCANNER_PORT" --bin-dir "$SCANNER_BIN" --rules-dir "$SCANNER_RULES" --inputs-dir "$SCANNER_INPUTS" --runtime-dir "$SCANNER_LOG_DIR/worker" >"$SCANNER_LOG_DIR/worker.log" 2>&1 &
 worker_pid=$!
 ./dist/sec-updater --server "http://127.0.0.1:$SCANNER_PORT" --rules-dir "$SCANNER_RULES" >"$SCANNER_LOG_DIR/updater.log" 2>&1 &
 updater_pid=$!
-printf '\n打开：http://127.0.0.1:%s\n首次使用在网页设置管理员；已有账号直接登录。\n任务、定时和规则管理均为本地功能；不连接扫描目标。\n按 Ctrl+C 停止，SQLite 保留在 %s\n' "$SCANNER_PORT" "$SCANNER_DB"
+printf '\n打开：http://127.0.0.1:%s\n首次使用在网页设置管理员；已有账号直接登录。\n模拟任务不连接目标；真实扫描只在网页明确选择引擎并创建任务后执行。\n按 Ctrl+C 停止，SQLite 保留在 %s\n' "$SCANNER_PORT" "$SCANNER_DB"
 while :; do
   for process in "$server_pid" "$worker_pid" "$updater_pid"; do
     if ! kill -0 "$process" 2>/dev/null; then printf '本地服务退出，请查看 %s 下的日志。\n' "$SCANNER_LOG_DIR" >&2; exit 1; fi

@@ -56,7 +56,7 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if *status {
-		fmt.Fprintln(stdout, `{"role":"sec-server","mode":"local","scanning":false}`)
+		fmt.Fprintln(stdout, `{"role":"sec-server","mode":"local","engines":["synthetic","nuclei","trivy","zap"]}`)
 		return 0
 	}
 	if flags.NArg() != 0 || !isNumericLoopback(*addr) {
@@ -97,7 +97,11 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	// Synthetic tasks have no external side effects and may safely restart after a local restart.
-	if _, err := accounts.SQLDB().ExecContext(ctx, `UPDATE scan_tasks SET status='PENDING',worker_id='' WHERE status='RUNNING'`); err != nil {
+	if _, err := accounts.SQLDB().ExecContext(ctx, `UPDATE scan_tasks SET status='PENDING',worker_id='' WHERE status='RUNNING' AND COALESCE(json_extract(details,'$.input.engine'),'') IN ('','synthetic')`); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	if _, err := accounts.SQLDB().ExecContext(ctx, `UPDATE scan_tasks SET status='FAILED',details=json_set(details,'$.error','Server restarted during real scan; create a new task') WHERE status='RUNNING'`); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
@@ -134,7 +138,7 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 		_ = server.Shutdown(shutdown)
 	}()
 	fmt.Fprintf(stdout, "Web UI: http://%s/#/tasks\n", *addr)
-	slog.Info("local framework started", "address", *addr, "mode", "synthetic")
+	slog.Info("local framework started", "address", *addr, "mode", "local")
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		fmt.Fprintf(stderr, "serve framework: %v\n", err)
 		return 1

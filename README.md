@@ -8,7 +8,7 @@
 
 已连通 SQLite 账号/用户管理、资产与显式端口、四层转发端口跳过标记、范围/端口审批记录、任务创建/取消、模拟 Worker 与发现项状态管理、定时任务/跨午夜时间窗、节点心跳、规则包在线/离线导入与激活/显式回滚。Server 提供网页和统一 API，Updater 是规则目录的唯一写入进程。
 
-**任务执行当前仍为模拟，不连接目标、不调用 Nuclei/Trivy。规则导入验证文件哈希，不代表已验签或引擎兼容性通过。真实扫描与服务器探测另行验证。** Harbor、AI、便携版仍后置。
+已接入固定版本 Nuclei、Trivy、ZAP：先运行 `make engines` 准备程序与规则，再 `make dev`。任务页可选只读 HTTP 基线、ZAP 被动分析、Trivy 离线依赖/镜像归档，或原有模拟模式。操作与当前覆盖见 [引擎接入指南](docs/engines.md)。仅完成本地夹具联调，真实服务器另行验证；规则尚未验签，Harbor、AI、便携版仍后置。
 
 ## 检查
 
@@ -19,7 +19,7 @@ make test
 make test-local
 ```
 
-`make test-local` 使用临时数据库、规则目录与本机端口，结束时停止测试进程。API 契约见 [OpenAPI](docs/api/openapi.yaml)，验证证据见 [验证记录](docs/verification-log.md)。`make verify-flags` 和隔离实验测试仍不代表真实引擎已接通。
+`make test-local` 使用临时数据库、规则目录与本机端口，结束时停止测试进程。API 契约见 [OpenAPI](docs/api/openapi.yaml)，验证证据见 [验证记录](docs/verification-log.md)。`make verify-flags` 核对固定引擎版本和参数，`make test-engines-local` 验证真实引擎的本地夹具链路。
 
 ## 数据与发布边界
 

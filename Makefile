@@ -6,7 +6,7 @@ ifeq ($(GOOS),windows)
 EXE_EXT := .exe
 endif
 
-.PHONY: build test lint verify-flags test-lab web-install web-dev web-build dev test-local
+.PHONY: build test lint verify-flags test-lab web-install web-dev web-build dev test-local engines test-engines-local
 
 dev:
 	bash scripts/dev.sh
@@ -40,10 +40,15 @@ lint:
 	fi
 	$(GO) vet ./...
 
+engines:
+	mkdir -p dist
+	python3 scripts/install_engines.py
+	$(GO) build -o dist/sec-updater$(EXE_EXT) ./cmd/updater
+	./dist/sec-updater$(EXE_EXT) --prepare-engines
+	$(MAKE) verify-flags
+
 verify-flags:
-	@printf '%s\n' 'Blocked: pin the Nuclei and Trivy versions and implement their help-output checks before enabling engine flags.' >&2
-	@printf '%s\n' 'Record the decision and verification evidence in docs/verification-log.md.' >&2
-	@exit 2
+	python3 scripts/verify_engine_flags.py
 
 test-lab:
 	@if [ "$${LAB_ENV:-}" != "isolated" ]; then \
@@ -54,3 +59,6 @@ test-lab:
 
 test-local: build web-build
 	python3 scripts/test_local.py
+
+test-engines-local: build web-build
+	LAB_ENV=isolated python3 scripts/test_engines_local.py
