@@ -1,0 +1,67 @@
+{
+  "nuclei": {
+    "version": "3.11.1",
+    "repository": "projectdiscovery/nuclei",
+    "license": "MIT",
+    "assets": {
+      "darwin-arm64": {
+        "url": "https://github.com/projectdiscovery/nuclei/releases/download/v3.11.1/nuclei_3.11.1_macOS_arm64.zip",
+        "sha256": "7d7e291addd1fc29a9bf8d089afe878a9799b20229cbea2fb1693fc40fd4c5f0"
+      },
+      "darwin-amd64": {
+        "url": "https://github.com/projectdiscovery/nuclei/releases/download/v3.11.1/nuclei_3.11.1_macOS_amd64.zip",
+        "sha256": "75c47ce11e9dbd4288a1c895ed85e3c4df9f4acb8237d6d178da6dccd1628f2a"
+      },
+      "linux-arm64": {
+        "url": "https://github.com/projectdiscovery/nuclei/releases/download/v3.11.1/nuclei_3.11.1_linux_arm64.zip",
+        "sha256": "8044e3d9768ba0a744b2872c1a87e813006f013da97ca9f50f7661a4203bec07"
+      },
+      "linux-amd64": {
+        "url": "https://github.com/projectdiscovery/nuclei/releases/download/v3.11.1/nuclei_3.11.1_linux_amd64.zip",
+        "sha256": "ea63d4ae232808cd7c6bc00d0142428e231fab59dae01042246097d195835ab6"
+      },
+      "windows-amd64": {
+        "url": "https://github.com/projectdiscovery/nuclei/releases/download/v3.11.1/nuclei_3.11.1_windows_amd64.zip",
+        "sha256": "bb6cb9ff8939b753f6fcab06fd30a15f5bc61d8382a597871334c007a85ff9d2"
+      }
+    }
+  },
+  "trivy": {
+    "version": "0.76.0",
+    "repository": "aquasecurity/trivy",
+    "license": "Apache-2.0",
+    "assets": {
+      "darwin-arm64": {
+        "url": "https://github.com/aquasecurity/trivy/releases/download/v0.76.0/trivy_0.76.0_macOS-ARM64.tar.gz",
+        "sha256": "e7ec0d21fe842553f59af99aba2efbcc822369fbaed27019c575408b6d135fce"
+      },
+      "darwin-amd64": {
+        "url": "https://github.com/aquasecurity/trivy/releases/download/v0.76.0/trivy_0.76.0_macOS-64bit.tar.gz",
+        "sha256": "89563d4d495cf4ef06a0d1950f8710b124e9f7bd2615ec6c47b03673f4ad45a2"
+      },
+      "linux-arm64": {
+        "url": "https://github.com/aquasecurity/trivy/releases/download/v0.76.0/trivy_0.76.0_Linux-ARM64.tar.gz",
+        "sha256": "aab21e677a7b7071fc79f1711480840754c18a1b9d9cefa7ccd06af63a0e8f4c"
+      },
+      "linux-amd64": {
+        "url": "https://github.com/aquasecurity/trivy/releases/download/v0.76.0/trivy_0.76.0_Linux-64bit.tar.gz",
+        "sha256": "e24b1c51293c1b15e4ba8d45bbc7891ba053f90278ec2698f3562c993e145fe7"
+      },
+      "windows-amd64": {
+        "url": "https://github.com/aquasecurity/trivy/releases/download/v0.76.0/trivy_0.76.0_windows-64bit.zip",
+        "sha256": "7b4762a5a5326cb4b83dfd2bb5d9aaf15a1ed867c75cad7dd8b38840a28e7be6"
+      }
+    }
+  },
+  "zap": {
+    "version": "2.17.0",
+    "repository": "zaproxy/zaproxy",
+    "license": "Apache-2.0",
+    "assets": {
+      "all": {
+        "url": "https://github.com/zaproxy/zaproxy/releases/download/v2.17.0/ZAP_2.17.0_Crossplatform.zip",
+        "sha256": "94c8f767b1c2e94f0db66b3ae56514d5e3f5a728ee1b6c798e0c8fe2d61fbff0"
+      }
+    }
+  }
+}
