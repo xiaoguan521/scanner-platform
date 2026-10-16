@@ -14,6 +14,10 @@
 
 管理员初始化、登录与用户管理的本地操作见 [`docs/quickstart.md`](docs/quickstart.md)。
 
+## PostgreSQL 初始化脚本（待验证）
+
+已按 V3.2 数据模型补齐 17 张业务表和迁移版本表，分别位于 `internal/repo/migrations/postgres/0001_core.sql`、`0002_scanning.sql`、`0003_rules_sbom.sql`。初始化与只读结构核对脚本为 `scripts/init-postgres.sh` 和 `scripts/check-postgres-schema.sh`。**目前仅写入代码，尚未在 PostgreSQL 中执行；Go Server 仍使用 SQLite。** 详细说明见 [`internal/repo/migrations/README.md`](internal/repo/migrations/README.md)。
+
 ## 本地命令
 
 需要使用 `go.mod` 指定的 Go 版本和 GNU Make。
