@@ -7,10 +7,23 @@
 *.so
 *.dylib
 
-# 测试与覆盖率
+# 前端开发、构建与包管理缓存
+node_modules/
+/web/node_modules/
+/web/dist/
+/web/.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# 测试、覆盖率与性能剖析
 /coverage.out
 /coverage.html
 *.test
+*.prof
+pprof/
+__debug_bin*
 
 # 运行期私有目录与数据 (三权分立与版本回收规范)
 /runtime/
@@ -18,6 +31,14 @@
 /secrets/
 /.trash/
 *.log
+
+# 凭据、私钥与证书保护 (安全硬规则：严禁提交私钥/证书)
+*.pem
+*.key
+*.crt
+*.pfx
+*.cer
+*.csr
 
 # 数据库文件 (便携版/本地 SQLite)
 *.db
@@ -29,13 +50,19 @@
 .env.*
 !.env.example
 
-# 系统与编辑器配置
+# 系统、编辑器与草稿文件
 .DS_Store
 .AppleDouble
 .LSOverride
 ._*
+.Spotlight-V100
+.Trashes
 .idea/
 .vscode/
 *.swp
 *~
+*.bak
+*.orig
+*.patch
+
 
