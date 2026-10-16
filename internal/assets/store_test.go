@@ -19,6 +19,10 @@ func TestSQLiteAssetRegistry(t *testing.T) {
 	if err := accounts.InitAdmin(ctx, "testadmin", "Strong-Sample-Password-28"); err != nil {
 		t.Fatal(err)
 	}
+	admin, _, err := accounts.Authenticate(ctx, "testadmin", "Strong-Sample-Password-28")
+	if err != nil {
+		t.Fatal(err)
+	}
 	store, err := New(accounts.SQLDB())
 	if err != nil {
 		t.Fatal(err)
@@ -31,25 +35,25 @@ func TestSQLiteAssetRegistry(t *testing.T) {
 		{Kind: "image_repo", Address: "https://example.com/x", BusinessGroup: "QA", Owner: "Owner"},
 		{Kind: "host", Address: "192.0.2.4", BusinessGroup: "", Owner: "Owner"},
 	} {
-		if _, err := store.Create(ctx, "testadmin", input); !errors.Is(err, ErrInvalid) {
+		if _, err := store.Create(ctx, admin.ID, input); !errors.Is(err, ErrInvalid) {
 			t.Fatalf("unsafe asset was accepted: %+v / %v", input, err)
 		}
 	}
 	input := Input{Kind: "host", Address: "192.0.2.4", BusinessGroup: "QA", Owner: "Owner", RequestedPorts: []int{443, 80}}
-	asset, err := store.Create(ctx, "testadmin", input)
+	asset, err := store.Create(ctx, admin.ID, input)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(asset.Ports) != 0 || len(asset.RequestedPorts) != 2 || asset.RequestedPorts[0] != 80 {
 		t.Fatalf("port request incorrectly granted: %+v", asset)
 	}
-	if _, err := store.Create(ctx, "testadmin", input); !errors.Is(err, ErrDuplicate) {
+	if _, err := store.Create(ctx, admin.ID, input); !errors.Is(err, ErrDuplicate) {
 		t.Fatalf("duplicate accepted: %v", err)
 	}
-	if _, err := store.Update(ctx, "testadmin", "missing", Edit{BusinessGroup: "A", Owner: "Owner"}); !errors.Is(err, ErrNotFound) {
+	if _, err := store.Update(ctx, admin.ID, "missing", Edit{BusinessGroup: "A", Owner: "Owner"}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown asset update: %v", err)
 	}
-	updated, err := store.Update(ctx, "testadmin", asset.ID, Edit{BusinessGroup: "New Group", Owner: "New Owner", RequestedPorts: []int{8080}})
+	updated, err := store.Update(ctx, admin.ID, asset.ID, Edit{BusinessGroup: "New Group", Owner: "New Owner", RequestedPorts: []int{8080}})
 	if err != nil {
 		t.Fatal(err)
 	}
