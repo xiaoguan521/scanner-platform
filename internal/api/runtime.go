@@ -131,7 +131,7 @@ func NewRuntimeHandler(store *repo.RuntimeStore, fallback http.Handler, uiDir st
 	})
 	mux.HandleFunc("POST /api/v1/worker/report", func(w http.ResponseWriter, r *http.Request) {
 		var report taskflow.Report
-		if !runtimeDecodeLimit(w, r, &report, 4<<20) {
+		if !runtimeDecodeLimit(w, r, &report, taskflow.MaxReportBytes) {
 			return
 		}
 		if !runtimeStoreError(w, store.CompleteRuntimeTask(r.Context(), report)) {

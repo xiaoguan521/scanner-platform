@@ -30,6 +30,8 @@ type Schedule struct {
 
 const SyntheticTitle = "模拟发现项：任务链路已完成（未执行真实扫描）"
 
+const MaxReportBytes = 4 << 20
+
 type Chunk struct {
 	ID             string     `json:"id"`
 	TaskID         string     `json:"taskId"`

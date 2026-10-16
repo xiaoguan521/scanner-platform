@@ -136,6 +136,13 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 		}
 	}
 
+	encoded, err := json.Marshal(report)
+	if err != nil {
+		return false, fmt.Errorf("encode result report: %w", err)
+	}
+	if len(encoded) > MaxReportBytes {
+		report = Report{TaskID: task.ID, WorkerID: w.ID, Status: "FAILED", Error: "结果超过单次回报大小限制，请拆分目标或输入后重试"}
+	}
 	for {
 		if code, err := w.post(ctx, "/api/v1/worker/report", report, nil); err == nil {
 			break
