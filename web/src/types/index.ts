@@ -1,4 +1,13 @@
-// 数据模型定义，严格对齐 docs/architecture-v3.2.md 第 7 章
+// UI response types mirror docs/api/openapi.yaml (HTTP DTOs, not repo schemas).
+// API date-time fields are RFC 3339 with timezone offsets.
+export type UserRole = 'admin' | 'security_engineer' | 'ops_approver' | 'viewer';
+
+export interface User {
+  id: string;
+  username: string;
+  role: UserRole;
+  isActive: boolean;
+}
 
 export type PortKind = 'WEB' | 'NON_WEB' | 'EXCLUDED_PROXY';
 
@@ -61,7 +70,10 @@ export type TaskStatus =
 export interface TaskChunk {
   id: string;
   taskId: string;
-  workerId?: string;
+  workerNodeId?: string;
+  pinnedRuleVersion?: string;
+  leaseExpiresAt?: string;
+  completedFully?: boolean;
   targets: string[];
   status: TaskStatus;
   startedAt?: string;
@@ -86,6 +98,7 @@ export type FindingSeverity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO';
 
 export type FindingStatus =
   | 'OPEN'
+  | 'REOPENED'
   | 'IN_PROGRESS'
   | 'FIXED'
   | 'FALSE_POSITIVE'
@@ -114,11 +127,11 @@ export interface NodeInfo {
   kind: 'worker' | 'updater';
   hostId: string;
   ip: string;
-  status: 'ONLINE' | 'OFFLINE' | 'BUSY';
+  status: 'ONLINE' | 'OFFLINE' | 'BUSY' | 'UNKNOWN';
   currentTask?: string;
   boundRuleVersion?: string;
   lastHeartbeat: string;
-  fenceStatus: 'ACTIVE' | 'NOT_SUPPORTED';
+  fenceStatus: 'ACTIVE' | 'NOT_SUPPORTED' | 'NOT_VERIFIED';
   dropCount: number;
 }
 

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   Card,
   Table,
@@ -9,7 +9,6 @@ import {
   Typography,
   Alert,
   Tooltip,
-  Modal,
   message,
 } from 'antd';
 import {
@@ -21,38 +20,24 @@ import {
 } from '@ant-design/icons';
 import { mockNodes, mockRuleBundles } from '../../mock/data';
 import { NodeInfo, RuleBundle } from '../../types';
+import { useCollection } from '../../api/hooks';
+import { CollectionNotice } from '../../api/CollectionNotice';
 
 const { Text } = Typography;
 
 export const NodesPage: React.FC = () => {
-  const [nodes] = useState<NodeInfo[]>(mockNodes);
-  const [ruleBundles, setRuleBundles] = useState<RuleBundle[]>(mockRuleBundles);
+  const { data: nodes, loading: nodesLoading, error: nodesError } = useCollection('nodes', mockNodes);
+  const { data: ruleBundles, loading: rulesLoading, error: rulesError } = useCollection('rules', mockRuleBundles);
 
-  const handleRollback = (targetVersion: string) => {
-    Modal.confirm({
-      title: `安全回滚确认：回退至版本 [${targetVersion}]？`,
-      content:
-        '严格依据架构硬规则 §5 与 §4.4：版本回滚属于高危敏感操作，必须留存审计日志，并在 Worker 确认当前无任务引用该版本后执行 CURRENT 指针原子重定向。',
-      okText: '已获审批，确认回滚',
-      okType: 'danger',
-      cancelText: '取消',
-      onOk: () => {
-        setRuleBundles((prev) =>
-          prev.map((r) => ({
-            ...r,
-            isCurrent: r.version === targetVersion,
-            isBackup: r.isCurrent,
-          }))
-        );
-        message.warning(`规则包指针 CURRENT 已原子切换至 ${targetVersion}，审计日志已记录`);
-      },
-    });
+  const handleRollback = (_targetVersion: string) => {
+    message.warning('规则回滚已禁用：必须由 Server/Updater 验签、防回滚、人工审批并审计');
   };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <CollectionNotice loading={nodesLoading || rulesLoading} error={nodesError || rulesError} />
       <Alert
-        message="三权分立与节点安全控制 (架构硬规则 §4)"
+        message="三权分立设计约束（真实节点安全状态尚未验证）"
         description="所有 Worker 节点均无数据库凭据，仅通过 TLS 节点 API 交互；Worker 拥有私有运行时与独立的 nftables 网络围栏；Updater 为规则目录唯一写入者；CURRENT 为纯文本指针，采用临时文件 fsync + rename 原子切换。"
         type="info"
         showIcon
@@ -100,7 +85,7 @@ export const NodesPage: React.FC = () => {
               render: (status: string, record: NodeInfo) => (
                 <Space>
                   <Tag color={status === 'ACTIVE' ? 'success' : 'default'}>
-                    {status === 'ACTIVE' ? '围栏防御生效' : '控制节点免围栏'}
+                    {status === 'ACTIVE' ? '围栏已上报生效' : status === 'NOT_SUPPORTED' ? '不适用' : '未验证'}
                   </Tag>
                   {record.dropCount > 0 && <Tag color="error">DROP: {record.dropCount}</Tag>}
                 </Space>
@@ -115,8 +100,8 @@ export const NodesPage: React.FC = () => {
             {
               title: '凭据与权限隔离',
               render: () => (
-                <Tooltip title="Worker 进程运行身份为 uid 10001, 无任何 capabilities, 零数据库凭据">
-                  <Tag color="green">无 DB 凭据 · 降权运行</Tag>
+                <Tooltip title="设计要求为 Worker 无 DB 凭据及降权运行；当前数据未经过真实设备校验">
+                  <Tag>设计要求 · 未验证</Tag>
                 </Tooltip>
               ),
             },
@@ -167,7 +152,7 @@ export const NodesPage: React.FC = () => {
                 count > 0 ? (
                   <Tag color="processing">{count} 个任务运行中</Tag>
                 ) : (
-                  <Text type="secondary">无引用 (可回收)</Text>
+                  <Text type="secondary">0 个引用（仍须 GC 安全检查）</Text>
                 ),
             },
             { title: '发布发布时间', dataIndex: 'publishedAt', width: 180 },
@@ -181,6 +166,7 @@ export const NodesPage: React.FC = () => {
                     icon={<RollbackOutlined />}
                     danger
                     size="small"
+                    disabled
                     onClick={() => handleRollback(record.version)}
                   >
                     回滚至此版本

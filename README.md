@@ -26,10 +26,12 @@ make test-lab
 
 ## GitHub Actions：跨平台构建与发布
 
-- `.github/workflows/ci.yml`：`main` Push / PR 执行格式检查、`-race` 单测，并在 Linux、macOS、Windows 的 amd64/arm64 托管 Runner 上分别运行 `go build ./...`。也提供 `workflow_call` 供发布流水线复用。Windows 构建不依赖 GNU Make。
-- `.github/workflows/build-artifacts.yml`：手动运行 `workflow_dispatch` 或 Push `v*` 标签时，先**完整通过上述 CI**，再由 Ubuntu Runner 交叉编译六种平台打包为 `.zip` / `.tar.gz`，每个平台生成 SHA-256 校验文件。
+- `.github/workflows/ci.yml`：`main` Push / PR 执行 Go 格式检查、`-race` 单测、前端 `npm ci` + TypeScript/Vite 的演示/Server 双模式构建，并在 Linux、macOS、Windows 的 amd64/arm64 托管 Runner 上分别运行 `go build ./...`。也提供 `workflow_call` 供发布流水线复用。Windows 构建不依赖 GNU Make。
+- `.github/workflows/build-artifacts.yml`：手动运行 `workflow_dispatch` 或 Push `v*` 标签时，先**完整通过上述 CI**，再由 Ubuntu Runner 构建一次 Server 模式前端静态文件、交叉编译六种平台，将静态文件附在每个平台包的 `web/` 目录后打包为 `.zip` / `.tar.gz`，并生成 SHA-256 校验文件。当前 Go 程序尚未提供静态页面服务。
 - **手动触发只上传 Actions Artifacts，不创建 GitHub Release**；标签触发会在汇总前逐一验证校验文件，随后仅创建 **Draft + Pre-release**，需要人工审查后才能公开发布。
 - 当前归档中的 `sec-server`、`sec-updater`、`sec-worker` 都还是安全拒绝启动的 Phase 0 骨架；`sec-portable` 现已加入构建矩阵，但目前仅有状态输出与显式开启的只读本地调试接口。构建通过不代表客户端已经可用。
 - `go.mod` 目前没有外部依赖或 `go.sum`，Actions 暂时禁用 Go 缓存。未来应独立评审发布产物的 Windows 签名、macOS 签名/公证及 Artifact Attestation，不能把普通 SHA-256 文件当作软件签名。
+
+前端现有菜单已增加用户/角色管理的演示页与 `/api/v1/users` 的 GET 占位契约；**尚未实现登录认证、RBAC、用户增删改或角色权限变更**。接口契约参见 [`docs/api/README.md`](docs/api/README.md)。
 
 相关本地与云端验证记录见 `docs/verification-log.md`。

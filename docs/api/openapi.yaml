@@ -1,0 +1,436 @@
+openapi: 3.0.3
+info:
+  title: Scanner Platform UI API (Phase 0 contract)
+  version: 0.1.0
+  description: |
+    Canonical contract for the control-plane UI. This is a scaffold, not an
+    authorization to scan. At Phase 0 only system status and capabilities are
+    implemented. Collection GETs respond 501; mutations are not exposed.
+    All date-time strings are RFC 3339 with explicit offsets.
+servers:
+  - url: /
+    description: Same-origin UI API (dev proxy for localhost)
+tags:
+  - name: system
+  - name: future
+paths:
+  /healthz:
+    get:
+      tags: [system]
+      summary: Liveness only; not readiness
+      responses:
+        '200':
+          description: Scaffold process is alive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+  /readyz:
+    get:
+      tags: [system]
+      summary: Not ready until security gates, storage and node auth are integrated
+      responses:
+        '503':
+          description: Phase 0 is intentionally not ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotReady'
+  /api/v1/system/status:
+    get:
+      tags: [system]
+      summary: Read-only status (does not imply engine health)
+      responses:
+        '200':
+          description: Status of local control-plane scaffold
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemStatus'
+  /api/v1/system/capabilities:
+    get:
+      tags: [system]
+      summary: Explicitly enabled and unavailable capabilities
+      responses:
+        '200':
+          description: Capability availability
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Capabilities'
+  /api/v1/users:
+    get:
+      tags: [future]
+      summary: Future role-scoped user list (not implemented)
+      description: Requires authenticated admin access and auditing before being enabled.
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+        '200':
+          description: Future authorized user list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Pagination'
+                  - type: object
+                    required: [items]
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/User'
+  /api/v1/assets:
+    get:
+      tags: [future]
+      summary: Future authorized asset list (not implemented)
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+        '200':
+          description: Future asset list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Pagination'
+                  - type: object
+                    required: [items]
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Asset'
+  /api/v1/port-quarantines:
+    get:
+      tags: [future]
+      summary: Future quarantined port list (not implemented)
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+        '200':
+          description: Future quarantined ports
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Pagination'
+                  - type: object
+                    required: [items]
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/PortQuarantine'
+  /api/v1/scopes:
+    get:
+      tags: [future]
+      summary: Future authorized scopes list (not implemented)
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+        '200':
+          description: Future scope list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Pagination'
+                  - type: object
+                    required: [items]
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/AuthorizedScope'
+  /api/v1/tasks:
+    get:
+      tags: [future]
+      summary: Future task and chunk list (not implemented)
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+        '200':
+          description: Future task list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Pagination'
+                  - type: object
+                    required: [items]
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/ScanTask'
+  /api/v1/findings:
+    get:
+      tags: [future]
+      summary: Future findings list (not implemented)
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+        '200':
+          description: Future findings list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Pagination'
+                  - type: object
+                    required: [items]
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Finding'
+  /api/v1/nodes:
+    get:
+      tags: [future]
+      summary: Future authenticated node telemetry list (not implemented)
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+        '200':
+          description: Future node list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Pagination'
+                  - type: object
+                    required: [items]
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/NodeInfo'
+  /api/v1/rules:
+    get:
+      tags: [future]
+      summary: Future verified rule bundle list (not implemented)
+      responses:
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+        '200':
+          description: Future rule bundle list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Pagination'
+                  - type: object
+                    required: [items]
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/RuleBundle'
+components:
+  responses:
+    NotImplemented:
+      description: Phase 0 does not expose this operation
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/APIError'
+  schemas:
+    APIError:
+      type: object
+      required: [error, message]
+      properties:
+        error: {type: string, example: not_implemented}
+        message: {type: string}
+    Health:
+      type: object
+      required: [state, role]
+      properties:
+        state: {type: string, enum: [alive]}
+        role: {type: string}
+    NotReady:
+      type: object
+      required: [state, reason]
+      properties:
+        state: {type: string, enum: [not_ready]}
+        reason: {type: string}
+    SystemStatus:
+      type: object
+      required: [role, phase, state, ready, enabled, unavailable]
+      properties:
+        role: {type: string, enum: [sec-server, sec-portable]}
+        phase: {type: string}
+        state: {type: string, enum: [SCAFFOLD]}
+        ready: {type: boolean}
+        enabled:
+          type: array
+          items: {type: string}
+        unavailable:
+          type: array
+          items: {type: string}
+    Capabilities:
+      type: object
+      required: [enabled, unavailable]
+      properties:
+        enabled:
+          type: array
+          items: {type: string}
+        unavailable:
+          type: array
+          items: {type: string}
+    Pagination:
+      type: object
+      required: [total]
+      properties:
+        total: {type: integer, minimum: 0}
+    User:
+      type: object
+      required: [id, username, role, isActive]
+      description: Read-only management DTO. Never includes password hashes, tokens, or credentials.
+      properties:
+        id: {type: string}
+        username: {type: string}
+        role: {type: string, enum: [admin, security_engineer, ops_approver, viewer]}
+        isActive: {type: boolean}
+    TimeWindow:
+      type: object
+      required: [weekdays, start, end, timeZone]
+      properties:
+        weekdays:
+          type: array
+          items: {type: integer, minimum: 0, maximum: 6}
+        start: {type: string, pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'}
+        end: {type: string, pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'}
+        timeZone: {type: string, example: Asia/Shanghai}
+    AssetPort:
+      type: object
+      required: [port, kind, source]
+      properties:
+        port: {type: integer, minimum: 1, maximum: 65535}
+        kind: {type: string, enum: [WEB, NON_WEB, EXCLUDED_PROXY]}
+        source: {type: string}
+    PortQuarantine:
+      type: object
+      required: [assetId, address, port, reason, detectedAt, status]
+      properties:
+        assetId: {type: string}
+        address: {type: string}
+        port: {type: integer, minimum: 1, maximum: 65535}
+        reason: {type: string}
+        detectedAt: {type: string, format: date-time}
+        status: {type: string, enum: [ACTIVE, RELEASED]}
+        reviewedBy: {type: string}
+        reviewedAt: {type: string, format: date-time}
+    Asset:
+      type: object
+      required: [id, kind, address, businessGroup, owner, createdAt, ports]
+      properties:
+        id: {type: string}
+        kind: {type: string, enum: [host, image_repo]}
+        address: {type: string}
+        resolvedIp: {type: string}
+        businessGroup: {type: string}
+        owner: {type: string}
+        createdAt: {type: string, format: date-time}
+        ports:
+          type: array
+          items:
+            $ref: '#/components/schemas/AssetPort'
+        quarantinedPorts:
+          type: array
+          items: {type: integer, minimum: 1, maximum: 65535}
+    AuthorizedScope:
+      type: object
+      required: [id, cidrOrHost, maxTargets, timeWindows, approvedBy, approvalTicket, expiresAt, isActive]
+      properties:
+        id: {type: string}
+        cidrOrHost: {type: string}
+        maxTargets: {type: integer, minimum: 1}
+        timeWindows:
+          type: array
+          items:
+            $ref: '#/components/schemas/TimeWindow'
+        approvedBy: {type: string}
+        approvalTicket: {type: string}
+        expiresAt: {type: string, format: date-time}
+        isActive: {type: boolean}
+    TaskChunk:
+      type: object
+      required: [id, taskId, targets, status]
+      properties:
+        id: {type: string}
+        taskId: {type: string}
+        workerNodeId: {type: string}
+        pinnedRuleVersion: {type: string, example: '20261016.01'}
+        leaseExpiresAt: {type: string, format: date-time}
+        targets:
+          type: array
+          items: {type: string, description: 'Preapproved numeric IP:port only'}
+        status: {type: string, enum: [PENDING, WAITING_WINDOW, RUNNING, PAUSED_WINDOW, COMPLETED, FAILED, CANCELED]}
+        completedFully: {type: boolean}
+        startedAt: {type: string, format: date-time}
+        finishedAt: {type: string, format: date-time}
+    ScanTask:
+      type: object
+      required: [id, scopeId, scopeName, engines, status, hardDeadline, totalChunks, completedChunks, targetCount, createdAt, chunks]
+      properties:
+        id: {type: string}
+        scopeId: {type: string}
+        scopeName: {type: string}
+        engines:
+          type: array
+          items: {type: string, enum: [nuclei, trivy]}
+        status: {type: string, enum: [PENDING, WAITING_WINDOW, RUNNING, PAUSED_WINDOW, COMPLETED, FAILED, CANCELED]}
+        hardDeadline: {type: string, format: date-time}
+        totalChunks: {type: integer, minimum: 0}
+        completedChunks: {type: integer, minimum: 0}
+        targetCount: {type: integer, minimum: 0}
+        createdAt: {type: string, format: date-time}
+        chunks:
+          type: array
+          items:
+            $ref: '#/components/schemas/TaskChunk'
+    Finding:
+      type: object
+      required: [id, fingerprint, severity, title, engine, templateOrCve, target, status, firstSeen, lastSeen, consecutiveMisses, businessGroup, owner, verifiedInRun]
+      properties:
+        id: {type: string}
+        fingerprint: {type: string}
+        severity: {type: string, enum: [CRITICAL, HIGH, MEDIUM, LOW, INFO]}
+        title: {type: string}
+        engine: {type: string, enum: [nuclei, trivy]}
+        templateOrCve: {type: string}
+        target: {type: string}
+        port: {type: integer, minimum: 1, maximum: 65535}
+        status: {type: string, enum: [OPEN, REOPENED, IN_PROGRESS, FIXED, FALSE_POSITIVE, ACCEPTED_RISK]}
+        firstSeen: {type: string, format: date-time}
+        lastSeen: {type: string, format: date-time}
+        consecutiveMisses: {type: integer, minimum: 0}
+        businessGroup: {type: string}
+        owner: {type: string}
+        verifiedInRun: {type: boolean}
+    NodeInfo:
+      type: object
+      required: [id, kind, hostId, ip, status, lastHeartbeat, fenceStatus, dropCount]
+      properties:
+        id: {type: string}
+        kind: {type: string, enum: [worker, updater]}
+        hostId: {type: string}
+        ip: {type: string}
+        status: {type: string, enum: [ONLINE, OFFLINE, BUSY, UNKNOWN]}
+        currentTask: {type: string}
+        boundRuleVersion: {type: string}
+        lastHeartbeat: {type: string, format: date-time}
+        fenceStatus: {type: string, enum: [ACTIVE, NOT_SUPPORTED, NOT_VERIFIED]}
+        dropCount: {type: integer, minimum: 0}
+    RuleBundle:
+      type: object
+      required: [version, channel, manifestSha256, publishedAt, isCurrent, isBackup, inUseByTasks]
+      properties:
+        version: {type: string, pattern: '^[0-9]{8}\.[0-9]{2,8}$', example: '20261016.01'}
+        channel: {type: string, enum: [stable, beta]}
+        manifestSha256: {type: string}
+        publishedAt: {type: string, format: date-time}
+        isCurrent: {type: boolean}
+        isBackup: {type: boolean}
+        inUseByTasks: {type: integer, minimum: 0}

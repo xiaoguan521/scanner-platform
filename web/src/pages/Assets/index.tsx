@@ -23,17 +23,21 @@ import {
   CheckCircleOutlined,
 } from '@ant-design/icons';
 import { mockAssets, mockPortQuarantines } from '../../mock/data';
-import { Asset, AssetPort, PortKind } from '../../types';
+import { Asset, AssetPort } from '../../types';
+import { isDemoMode } from '../../api/client';
+import { useCollection } from '../../api/hooks';
+import { CollectionNotice } from '../../api/CollectionNotice';
 
 const { Text } = Typography;
 
 export const AssetsPage: React.FC = () => {
-  const [assets, setAssets] = useState<Asset[]>(mockAssets);
-  const [quarantines, setQuarantines] = useState(mockPortQuarantines);
+  const { data: assets, setData: setAssets, loading: assetsLoading, error: assetsError } = useCollection('assets', mockAssets);
+  const { data: quarantines, setData: setQuarantines, loading: quarantinesLoading, error: quarantinesError } = useCollection('port-quarantines', mockPortQuarantines);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [form] = Form.useForm();
 
   const handleAddAsset = (values: any) => {
+    if (!isDemoMode) return message.warning('Server 尚未开放资产登记 API');
     const newAsset: Asset = {
       id: `asset-${Date.now().toString().slice(-4)}`,
       kind: values.kind,
@@ -41,26 +45,22 @@ export const AssetsPage: React.FC = () => {
       resolvedIp: values.kind === 'host' ? values.address : undefined,
       businessGroup: values.businessGroup,
       owner: values.owner,
-      createdAt: new Date().toLocaleString(),
-      ports: values.ports
-        ? values.ports.split(',').map((p: string) => ({
-            port: parseInt(p.trim(), 10),
-            kind: 'WEB' as PortKind,
-            source: '人工登记',
-          }))
-        : [],
+      createdAt: new Date().toISOString(),
+      // A typed-in port is never an authorized port grant.
+      ports: [],
       quarantinedPorts: [],
     };
-    setAssets([newAsset, ...assets]);
-    message.success('新资产登记成功');
+    setAssets((prev) => [newAsset, ...prev]);
+    message.info('仅演示：新增资产草稿；端口未获授权，Server 未发生变更');
     setIsModalOpen(false);
     form.resetFields();
   };
 
   const handleReleaseQuarantine = (assetId: string, port: number) => {
+    if (!isDemoMode) return message.warning('实际解除隔离必须由 Server 审批');
     Modal.confirm({
       title: `确认解除端口隔离 [${port}]？`,
-      content: '解除前请确保已与网络运维确认该端口非 Nginx Stream 四层代理转发。解除后下次扫描将恢复探测。',
+      content: '仅更改演示页面，不解除 Server 隔离、不恢复扫描。',
       okText: '确认解除',
       okType: 'danger',
       cancelText: '取消',
@@ -73,13 +73,14 @@ export const AssetsPage: React.FC = () => {
               : a
           )
         );
-        message.success(`端口 ${port} 已解除隔离`);
+        message.info(`仅演示：端口 ${port} 本地状态已改变，Server 未发生变更`);
       },
     });
   };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <CollectionNotice loading={assetsLoading || quarantinesLoading} error={assetsError || quarantinesError} />
       {/* 运维硬性规范提示 */}
       <Alert
         message="端口授权硬规则：未登记端口一律不扫"
@@ -125,6 +126,7 @@ export const AssetsPage: React.FC = () => {
                   <Button
                     type="link"
                     size="small"
+                    disabled={!isDemoMode}
                     onClick={() => handleReleaseQuarantine(r.assetId, r.port)}
                   >
                     复核并解除
@@ -141,7 +143,8 @@ export const AssetsPage: React.FC = () => {
         title="资产与端口授权台账"
         bordered={false}
         extra={
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setIsModalOpen(true)}>
+          <Button type="primary" icon={<PlusOutlined />} disabled={!isDemoMode}
+          onClick={() => setIsModalOpen(true)}>
             登记新资产
           </Button>
         }
@@ -230,6 +233,7 @@ export const AssetsPage: React.FC = () => {
         open={isModalOpen}
         onCancel={() => setIsModalOpen(false)}
         onOk={() => form.submit()}
+        okButtonProps={{ disabled: !isDemoMode }}
       >
         <Form form={form} layout="vertical" onFinish={handleAddAsset}>
           <Form.Item name="kind" label="资产形态" initialValue="host" rules={[{ required: true }]}>
@@ -254,7 +258,7 @@ export const AssetsPage: React.FC = () => {
           </Form.Item>
           <Form.Item
             name="ports"
-            label="初始授权端口 (以英文逗号分隔)"
+            label="拟申请端口 (不会自动授权)"
             extra="未填写的端口将被扫描器默认关闭拒绝"
           >
             <Input placeholder="例如: 80, 443, 8080" />

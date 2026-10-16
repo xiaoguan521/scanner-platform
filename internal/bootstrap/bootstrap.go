@@ -69,7 +69,7 @@ func Run(role Role, args []string, stdout, stderr io.Writer) int {
 		_ = json.NewEncoder(stdout).Encode(api.Status{
 			Role: string(role), Phase: "Phase 0 / PoC", State: "SCAFFOLD",
 			Ready: false, Enabled: []string{"local-status"},
-			Unavailable: []string{"node-api", "database", "task-dispatch", "rule-activation", "scanning"},
+			Unavailable: []string{"node-api", "database", "task-dispatch", "rule-activation", "scanning", "authentication", "user-management", "rbac"},
 		})
 		return 0
 	}

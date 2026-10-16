@@ -11,7 +11,13 @@ export default defineConfig({
     chunkSizeWarningLimit: 1500,
   },
   server: {
+    host: '127.0.0.1',
     port: 3000,
     open: false,
+    proxy: {
+      '/api': { target: 'http://127.0.0.1:8080', changeOrigin: false },
+      '/healthz': { target: 'http://127.0.0.1:8080', changeOrigin: false },
+      '/readyz': { target: 'http://127.0.0.1:8080', changeOrigin: false },
+    },
   },
 });

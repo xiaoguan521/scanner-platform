@@ -23,55 +23,53 @@ import {
 } from '@ant-design/icons';
 import { mockTasks, mockScopes } from '../../mock/data';
 import { ScanTask, TaskChunk } from '../../types';
+import { isDemoMode } from '../../api/client';
+import { useCollection } from '../../api/hooks';
+import { CollectionNotice } from '../../api/CollectionNotice';
 
 const { Text } = Typography;
 
 export const TasksPage: React.FC = () => {
-  const [tasks, setTasks] = useState<ScanTask[]>(mockTasks);
+  const { data: tasks, setData: setTasks, loading, error } = useCollection('tasks', mockTasks);
+  const { data: scopes } = useCollection('scopes', mockScopes);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [form] = Form.useForm();
 
   const handleCreateTask = (values: any) => {
-    const scope = mockScopes.find((s) => s.id === values.scopeId);
+    if (!isDemoMode) return message.warning('真实任务创建和派发尚未开放');
+    const scope = scopes.find((s) => s.id === values.scopeId && s.isActive);
+    if (!scope) return message.warning('没有有效的演示授权范围');
     const newTask: ScanTask = {
       id: `task-${Date.now().toString().slice(-4)}`,
       scopeId: values.scopeId,
       scopeName: scope ? `${scope.cidrOrHost}` : '自定义目标段',
       engines: values.engines || ['nuclei'],
-      status: 'RUNNING',
-      hardDeadline: '2026-10-16 05:00:00',
-      totalChunks: 4,
+      status: 'PENDING',
+      hardDeadline: new Date(Date.now() + 3600000).toISOString(),
+      totalChunks: 0,
       completedChunks: 0,
-      targetCount: 32,
-      createdAt: new Date().toLocaleString(),
-      chunks: [
-        {
-          id: 'chunk-1',
-          taskId: `task-${Date.now().toString().slice(-4)}`,
-          workerId: 'worker-node-01',
-          targets: ['192.0.2.10:80', '192.0.2.10:443'],
-          status: 'RUNNING',
-          startedAt: new Date().toLocaleTimeString(),
-        },
-      ],
+      targetCount: 0,
+      createdAt: new Date().toISOString(),
+      chunks: [],
     };
-    setTasks([newTask, ...tasks]);
-    message.success('扫描任务已创建并分块下发');
+    setTasks((prev) => [newTask, ...prev]);
+    message.info('仅演示：添加待处理任务草稿，未分块下发或启动 Worker');
     setIsModalOpen(false);
     form.resetFields();
   };
 
   const handleStopTask = (taskId: string) => {
+    if (!isDemoMode) return message.warning('停止任务必须由 Server 处理');
     Modal.confirm({
       title: '确认手动停止该扫描任务？',
-      content: '停止后将撤销正在执行的分块租约，Worker 将安全丢弃未完成任务并自终止。',
+      content: '仅改变演示页面；不会撤销实际租约或停止真实 Worker。',
       okText: '终止任务',
       okType: 'danger',
       onOk: () => {
         setTasks((prev) =>
           prev.map((t) => (t.id === taskId ? { ...t, status: 'CANCELED' } : t))
         );
-        message.info(`任务 ${taskId} 已标记终止`);
+        message.info(`仅演示：任务 ${taskId} 本地状态已变化，Server 未发生变更`);
       },
     });
   };
@@ -82,7 +80,7 @@ export const TasksPage: React.FC = () => {
       { title: '分块 ID', dataIndex: 'id', width: 120 },
       {
         title: '分派 Worker',
-        dataIndex: 'workerId',
+        dataIndex: 'workerNodeId',
         render: (w?: string) => (w ? <Tag color="geekblue">{w}</Tag> : <Text type="secondary">待领取</Text>),
       },
       {
@@ -127,6 +125,7 @@ export const TasksPage: React.FC = () => {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <CollectionNotice loading={loading} error={error} />
       <Alert
         message="调度策略：按目标分块与时间窗保护"
         description="扫描任务由控制面按目标拆分为若干块下发。Worker 单次只领一个块，每个块绑定本地硬截止时间（Hard Deadline）与租约。若失联超过租约，Worker 立即自终止。"
@@ -139,7 +138,8 @@ export const TasksPage: React.FC = () => {
         title="扫描任务队列与调度监控"
         bordered={false}
         extra={
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setIsModalOpen(true)}>
+          <Button type="primary" icon={<PlusOutlined />} disabled={!isDemoMode}
+          onClick={() => setIsModalOpen(true)}>
             新建扫描任务
           </Button>
         }
@@ -170,7 +170,7 @@ export const TasksPage: React.FC = () => {
               render: (_, record) => (
                 <div style={{ width: 160 }}>
                   <Progress
-                    percent={Math.round((record.completedChunks / record.totalChunks) * 100)}
+                    percent={record.totalChunks ? Math.round((record.completedChunks / record.totalChunks) * 100) : 0}
                     size="small"
                     status={record.status === 'COMPLETED' ? 'success' : 'active'}
                   />
@@ -229,10 +229,11 @@ export const TasksPage: React.FC = () => {
       </Card>
 
       <Modal
-        title="创建并分块下发扫描任务"
+        title="演示：创建待处理任务草稿"
         open={isModalOpen}
         onCancel={() => setIsModalOpen(false)}
         onOk={() => form.submit()}
+        okButtonProps={{ disabled: !isDemoMode }}
       >
         <Form form={form} layout="vertical" onFinish={handleCreateTask}>
           <Form.Item
@@ -241,8 +242,8 @@ export const TasksPage: React.FC = () => {
             rules={[{ required: true, message: '必须选择经审批的范围' }]}
           >
             <Select placeholder="请选择授权范围">
-              {mockScopes.map((s) => (
-                <Select.Option key={s.id} value={s.id}>
+              {scopes.map((s) => (
+                <Select.Option key={s.id} value={s.id} disabled={!s.isActive}>
                   {s.cidrOrHost} (审批单: {s.approvalTicket})
                 </Select.Option>
               ))}

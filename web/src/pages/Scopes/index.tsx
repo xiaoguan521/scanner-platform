@@ -23,15 +23,19 @@ import {
 } from '@ant-design/icons';
 import { mockScopes } from '../../mock/data';
 import { AuthorizedScope } from '../../types';
+import { isDemoMode } from '../../api/client';
+import { useCollection } from '../../api/hooks';
+import { CollectionNotice } from '../../api/CollectionNotice';
 
 const { Text } = Typography;
 
 export const ScopesPage: React.FC = () => {
-  const [scopes, setScopes] = useState<AuthorizedScope[]>(mockScopes);
+  const { data: scopes, setData: setScopes, loading, error } = useCollection('scopes', mockScopes);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [form] = Form.useForm();
 
   const handleAddScope = (values: any) => {
+    if (!isDemoMode) return message.warning('正式授权必须经 Server 审批');
     const newScope: AuthorizedScope = {
       id: `scope-${Date.now().toString().slice(-4)}`,
       cidrOrHost: values.cidrOrHost,
@@ -46,11 +50,11 @@ export const ScopesPage: React.FC = () => {
       ],
       approvedBy: values.approvedBy,
       approvalTicket: values.approvalTicket,
-      expiresAt: values.expiresAt || '2026-12-31 23:59:59',
-      isActive: true,
+      expiresAt: values.expiresAt || new Date(Date.now() + 30 * 86400000).toISOString(),
+      isActive: false, // Frontend form input is not an actual approval.
     };
-    setScopes([newScope, ...scopes]);
-    message.success('授权范围及时间窗审批已登记');
+    setScopes((prev) => [newScope, ...prev]);
+    message.info('仅演示：新增未审批的范围草稿；Server 未发生变更');
     setIsModalOpen(false);
     form.resetFields();
   };
@@ -62,6 +66,7 @@ export const ScopesPage: React.FC = () => {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <CollectionNotice loading={loading} error={error} />
       {/* 调度安全与时间窗合规说明 */}
       <Alert
         message="授权范围与时间窗硬约束"
@@ -75,7 +80,8 @@ export const ScopesPage: React.FC = () => {
         title="扫描授权范围与执行时间窗"
         bordered={false}
         extra={
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setIsModalOpen(true)}>
+          <Button type="primary" icon={<PlusOutlined />} disabled={!isDemoMode}
+          onClick={() => setIsModalOpen(true)}>
             新建范围授权与时间窗
           </Button>
         }
@@ -147,10 +153,11 @@ export const ScopesPage: React.FC = () => {
       </Card>
 
       <Modal
-        title="新建扫描授权与时间窗"
+        title="演示：创建未审批范围草稿"
         open={isModalOpen}
         onCancel={() => setIsModalOpen(false)}
         onOk={() => form.submit()}
+        okButtonProps={{ disabled: !isDemoMode }}
       >
         <Form form={form} layout="vertical" onFinish={handleAddScope}>
           <Form.Item

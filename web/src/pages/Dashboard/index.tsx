@@ -9,27 +9,35 @@ import {
   FieldTimeOutlined,
 } from '@ant-design/icons';
 import { mockAssets, mockFindings, mockTasks, mockRuleBundles } from '../../mock/data';
+import { isDemoMode } from '../../api/client';
+import { useCollection } from '../../api/hooks';
+import { CollectionNotice } from '../../api/CollectionNotice';
 
 const { Text } = Typography;
 
 export const DashboardPage: React.FC = () => {
-  const currentRule = mockRuleBundles.find((r) => r.isCurrent);
-  const criticalCount = mockFindings.filter((f) => f.severity === 'CRITICAL' && f.status === 'OPEN').length;
-  const highCount = mockFindings.filter((f) => f.severity === 'HIGH' && f.status === 'OPEN').length;
-  const totalFindings = mockFindings.length;
+  const { data: assets, loading: assetsLoading, error: assetsError } = useCollection('assets', mockAssets);
+  const { data: findings, loading: findingsLoading, error: findingsError } = useCollection('findings', mockFindings);
+  const { data: tasks, loading: tasksLoading, error: tasksError } = useCollection('tasks', mockTasks);
+  const { data: ruleBundles, loading: rulesLoading, error: rulesError } = useCollection('rules', mockRuleBundles);
+  const currentRule = ruleBundles.find((r) => r.isCurrent);
+  const criticalCount = findings.filter((f) => f.severity === 'CRITICAL' && f.status === 'OPEN').length;
+  const highCount = findings.filter((f) => f.severity === 'HIGH' && f.status === 'OPEN').length;
+  const totalFindings = findings.length;
 
-  const topRiskGroups = [
+  const topRiskGroups = isDemoMode ? [
     { key: '1', group: '金融支付核心', riskScore: 92, openVulns: 2, owner: '张三' },
     { key: '2', group: '用户与鉴权中台', riskScore: 68, openVulns: 1, owner: '李四' },
     { key: '3', group: '大数据分析平台', riskScore: 35, openVulns: 0, owner: '赵六' },
-  ];
+  ] : [];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       {/* 顶部安全合规与运行提示 */}
+      <CollectionNotice loading={assetsLoading || findingsLoading || tasksLoading || rulesLoading} error={assetsError || findingsError || tasksError || rulesError} />
       <Alert
-        message="默认安全运行模式已激活 (Fail-Closed)"
-        description="所有 Worker 均受 Linux nftables 出站网络围栏防护，仅放行经 Server 校验的纯数字 IP:端口白名单。引擎以无能力非 root (uid 10001) 运行。"
+        message={isDemoMode ? '仅演示：安全规则的设计目标' : 'Phase 0：真实扫描服务未启用'}
+        description="出站围栏、显式 IP:端口授权和非 root 引擎执行是架构要求，尚未完成实际节点验收；此页面不能证明这些防护已经生效。"
         type="info"
         showIcon
         icon={<SafetyOutlined />}
@@ -41,13 +49,13 @@ export const DashboardPage: React.FC = () => {
           <Card bordered={false}>
             <Statistic
               title="受控资产总数"
-              value={mockAssets.length}
+              value={assets.length}
               suffix="个"
               prefix={<DatabaseOutlined style={{ color: '#1677ff' }} />}
             />
             <div style={{ marginTop: 8, fontSize: 12, color: '#64748b' }}>
-              主机: {mockAssets.filter((a) => a.kind === 'host').length} | 镜像仓:{' '}
-              {mockAssets.filter((a) => a.kind === 'image_repo').length}
+              主机: {assets.filter((a) => a.kind === 'host').length} | 镜像仓:{' '}
+              {assets.filter((a) => a.kind === 'image_repo').length}
             </div>
           </Card>
         </Col>
@@ -70,12 +78,12 @@ export const DashboardPage: React.FC = () => {
           <Card bordered={false}>
             <Statistic
               title="活跃扫描任务 / 分块"
-              value={mockTasks.filter((t) => t.status === 'RUNNING').length}
-              suffix={`/ ${mockTasks.length}`}
+              value={tasks.filter((t) => t.status === 'RUNNING').length}
+              suffix={`/ ${tasks.length}`}
               prefix={<ClockCircleOutlined style={{ color: '#fa8c16' }} />}
             />
             <div style={{ marginTop: 8, fontSize: 12, color: '#64748b' }}>
-              遵守夜间扫描时间窗，到点自动暂停
+              时间窗调度是设计目标，尚未启用
             </div>
           </Card>
         </Col>
@@ -84,12 +92,12 @@ export const DashboardPage: React.FC = () => {
           <Card bordered={false}>
             <Statistic
               title="规则库版本 (CURRENT)"
-              value={currentRule?.version || 'N/A'}
+              value={isDemoMode ? currentRule?.version || '演示暂无' : '未验证'}
               prefix={<CheckCircleOutlined style={{ color: '#13c2c2' }} />}
               valueStyle={{ fontSize: 18 }}
             />
             <div style={{ marginTop: 8, fontSize: 12, color: '#64748b' }}>
-              Manifest SHA256 签名已通过校验
+              仅展示演示版本；签名状态尚未验证
             </div>
           </Card>
         </Col>
@@ -139,9 +147,9 @@ export const DashboardPage: React.FC = () => {
                   <Text type="danger" strong>
                     严重 (Critical)
                   </Text>
-                  <span>{mockFindings.filter((f) => f.severity === 'CRITICAL').length} / {totalFindings}</span>
+                  <span>{findings.filter((f) => f.severity === 'CRITICAL').length} / {totalFindings}</span>
                 </div>
-                <Progress percent={25} strokeColor="#ff4d4f" showInfo={false} />
+                <Progress percent={totalFindings ? Math.round(findings.filter((f) => f.severity === 'CRITICAL').length / totalFindings * 100) : 0} strokeColor="#ff4d4f" showInfo={false} />
               </div>
 
               <div>
@@ -149,9 +157,9 @@ export const DashboardPage: React.FC = () => {
                   <Text style={{ color: '#fa8c16' }} strong>
                     高危 (High)
                   </Text>
-                  <span>{mockFindings.filter((f) => f.severity === 'HIGH').length} / {totalFindings}</span>
+                  <span>{findings.filter((f) => f.severity === 'HIGH').length} / {totalFindings}</span>
                 </div>
-                <Progress percent={25} strokeColor="#fa8c16" showInfo={false} />
+                <Progress percent={totalFindings ? Math.round(findings.filter((f) => f.severity === 'HIGH').length / totalFindings * 100) : 0} strokeColor="#fa8c16" showInfo={false} />
               </div>
 
               <div>
@@ -159,9 +167,9 @@ export const DashboardPage: React.FC = () => {
                   <Text style={{ color: '#faad14' }} strong>
                     中危 (Medium)
                   </Text>
-                  <span>{mockFindings.filter((f) => f.severity === 'MEDIUM').length} / {totalFindings}</span>
+                  <span>{findings.filter((f) => f.severity === 'MEDIUM').length} / {totalFindings}</span>
                 </div>
-                <Progress percent={25} strokeColor="#faad14" showInfo={false} />
+                <Progress percent={totalFindings ? Math.round(findings.filter((f) => f.severity === 'MEDIUM').length / totalFindings * 100) : 0} strokeColor="#faad14" showInfo={false} />
               </div>
 
               <div>
@@ -169,9 +177,9 @@ export const DashboardPage: React.FC = () => {
                   <Text style={{ color: '#1677ff' }} strong>
                     低危 (Low)
                   </Text>
-                  <span>{mockFindings.filter((f) => f.severity === 'LOW').length} / {totalFindings}</span>
+                  <span>{findings.filter((f) => f.severity === 'LOW').length} / {totalFindings}</span>
                 </div>
-                <Progress percent={25} strokeColor="#1677ff" showInfo={false} />
+                <Progress percent={totalFindings ? Math.round(findings.filter((f) => f.severity === 'LOW').length / totalFindings * 100) : 0} strokeColor="#1677ff" showInfo={false} />
               </div>
             </div>
           </Card>
@@ -181,7 +189,7 @@ export const DashboardPage: React.FC = () => {
       {/* 近期扫描任务执行流 */}
       <Card title="正在执行与近期任务" bordered={false}>
         <Table
-          dataSource={mockTasks}
+          dataSource={tasks}
           rowKey="id"
           pagination={false}
           size="middle"
@@ -206,7 +214,7 @@ export const DashboardPage: React.FC = () => {
               render: (_, record) => (
                 <div style={{ width: 140 }}>
                   <Progress
-                    percent={Math.round((record.completedChunks / record.totalChunks) * 100)}
+                    percent={record.totalChunks ? Math.round((record.completedChunks / record.totalChunks) * 100) : 0}
                     size="small"
                   />
                   <span style={{ fontSize: 11, color: '#64748b' }}>

@@ -8,6 +8,7 @@ import { ScopesPage } from './pages/Scopes';
 import { TasksPage } from './pages/Tasks';
 import { FindingsPage } from './pages/Findings';
 import { NodesPage } from './pages/Nodes';
+import { UsersPage } from './pages/Users';
 
 export const App: React.FC = () => {
   return (
@@ -21,6 +22,7 @@ export const App: React.FC = () => {
             <Route path="/tasks" element={<TasksPage />} />
             <Route path="/findings" element={<FindingsPage />} />
             <Route path="/nodes" element={<NodesPage />} />
+            <Route path="/users" element={<UsersPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </AppLayout>

@@ -25,7 +25,7 @@ func NewScaffoldHandler(role string) http.Handler {
 	status := Status{
 		Role: role, Phase: "Phase 0 / PoC", State: "SCAFFOLD",
 		Ready: false, Enabled: []string{"local-status"},
-		Unavailable: []string{"node-api", "database", "task-dispatch", "rule-activation", "scanning"},
+		Unavailable: []string{"node-api", "database", "task-dispatch", "rule-activation", "scanning", "authentication", "user-management", "rbac"},
 	}
 	encode := func(w http.ResponseWriter, code int, v any) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -51,10 +51,10 @@ func NewScaffoldHandler(role string) http.Handler {
 		})
 	})
 	for _, route := range []string{
-		"/api/v1/assets", "/api/v1/scopes", "/api/v1/tasks",
+		"/api/v1/users", "/api/v1/assets", "/api/v1/port-quarantines", "/api/v1/scopes", "/api/v1/tasks",
 		"/api/v1/findings", "/api/v1/nodes", "/api/v1/rules",
 	} {
-		mux.HandleFunc(route, func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("GET "+route, func(w http.ResponseWriter, r *http.Request) {
 			encode(w, http.StatusNotImplemented, map[string]string{
 				"error":   "not_implemented",
 				"message": "Phase 0 scaffold does not expose business data or operations",

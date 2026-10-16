@@ -9,24 +9,22 @@ import {
   Typography,
   Alert,
   Tooltip,
-  Modal,
   message,
 } from 'antd';
 import {
-  BugOutlined,
-  CheckCircleOutlined,
-  CloseCircleOutlined,
-  WarningOutlined,
   SecurityScanOutlined,
   SafetyCertificateOutlined,
 } from '@ant-design/icons';
 import { mockFindings } from '../../mock/data';
 import { Finding, FindingSeverity, FindingStatus } from '../../types';
+import { isDemoMode } from '../../api/client';
+import { useCollection } from '../../api/hooks';
+import { CollectionNotice } from '../../api/CollectionNotice';
 
 const { Text } = Typography;
 
 export const FindingsPage: React.FC = () => {
-  const [findings, setFindings] = useState<Finding[]>(mockFindings);
+  const { data: findings, setData: setFindings, loading, error } = useCollection('findings', mockFindings);
   const [severityFilter, setSeverityFilter] = useState<string>('ALL');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
 
@@ -37,25 +35,17 @@ export const FindingsPage: React.FC = () => {
   });
 
   const handleUpdateStatus = (id: string, newStatus: FindingStatus) => {
+    // FIXED is a Server-only decision based on a complete verified scan.
     if (newStatus === 'FIXED') {
-      Modal.confirm({
-        title: '转为已修复 (FIXED) 校验确认',
-        content:
-          '严格依据架构硬规则：转为 FIXED 必须满足：1.本次扫描对该范围完整完成（无熔断/中断/超时）；2.检出模板在当前规则包仍存在并已执行；3.连续未检出。满足条件即可确认。',
-        okText: '确认转为已修复',
-        onOk: () => {
-          setFindings((prev) =>
-            prev.map((f) => (f.id === id ? { ...f, status: 'FIXED', consecutiveMisses: 1 } : f))
-          );
-          message.success('漏洞状态已流转为已修复 (FIXED)');
-        },
-      });
-    } else {
-      setFindings((prev) =>
-        prev.map((f) => (f.id === id ? { ...f, status: newStatus } : f))
-      );
-      message.info(`漏洞状态已更新为 ${newStatus}`);
+      message.warning('FIXED 必须经 Server 确认完整扫描、规则执行和未检出阈值，目前不可操作');
+      return;
     }
+    if (!isDemoMode) {
+      message.warning('真实漏洞状态变更必须由 Server 鉴权与审计');
+      return;
+    }
+    setFindings((prev) => prev.map((f) => f.id === id ? { ...f, status: newStatus } : f));
+    message.info('仅演示：本地漏洞状态已更新，Server 数据和审计日志没有变化');
   };
 
   const getSeverityTag = (sev: FindingSeverity) => {
@@ -72,6 +62,7 @@ export const FindingsPage: React.FC = () => {
   const getStatusTag = (status: FindingStatus) => {
     const map: Record<FindingStatus, { color: string; label: string }> = {
       OPEN: { color: 'error', label: '待修复 (OPEN)' },
+      REOPENED: { color: 'error', label: '重新出现 (REOPENED)' },
       IN_PROGRESS: { color: 'processing', label: '修复中 (IN_PROGRESS)' },
       FIXED: { color: 'success', label: '已修复 (FIXED)' },
       FALSE_POSITIVE: { color: 'default', label: '误报静默 (FALSE_POSITIVE)' },
@@ -82,6 +73,7 @@ export const FindingsPage: React.FC = () => {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <CollectionNotice loading={loading} error={error} />
       <Alert
         message="稳定指纹与严苛 FIXED 判定规则 (架构硬规则 §7.1)"
         description="漏洞指纹仅由稳定字段（资产、端口、引擎、模板 ID、规范路径）哈希生成，不随扫描时间戳变化。只有在扫描完整完成且规则模板依旧存在的前提下未再检出，才允许转为 FIXED，防止误报闭环。"
@@ -114,6 +106,7 @@ export const FindingsPage: React.FC = () => {
               options={[
                 { value: 'ALL', label: '全部状态' },
                 { value: 'OPEN', label: '待修复 (OPEN)' },
+                { value: 'REOPENED', label: '重新出现 (REOPENED)' },
                 { value: 'IN_PROGRESS', label: '修复中' },
                 { value: 'FIXED', label: '已修复 (FIXED)' },
                 { value: 'FALSE_POSITIVE', label: '误报' },
@@ -198,6 +191,7 @@ export const FindingsPage: React.FC = () => {
                     <Button
                       type="link"
                       size="small"
+                      disabled={!isDemoMode}
                       onClick={() => handleUpdateStatus(r.id, 'IN_PROGRESS')}
                     >
                       标记处理中
@@ -208,6 +202,7 @@ export const FindingsPage: React.FC = () => {
                       type="link"
                       size="small"
                       style={{ color: '#13c2c2' }}
+                      disabled
                       onClick={() => handleUpdateStatus(r.id, 'FIXED')}
                     >
                       标记修复
@@ -218,6 +213,7 @@ export const FindingsPage: React.FC = () => {
                       type="link"
                       size="small"
                       danger
+                      disabled={!isDemoMode}
                       onClick={() => handleUpdateStatus(r.id, 'FALSE_POSITIVE')}
                     >
                       误报

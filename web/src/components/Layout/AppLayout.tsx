@@ -8,6 +8,7 @@ import {
   Tag,
   Button,
   Tooltip,
+  Alert,
 } from 'antd';
 import {
   DashboardOutlined,
@@ -19,9 +20,12 @@ import {
   BulbOutlined,
   BulbFilled,
   SafetyCertificateOutlined,
+  TeamOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAppTheme } from '../../context/ThemeContext';
+import { isDemoMode } from '../../api/client';
+import { useSystemStatus } from '../../api/hooks';
 
 const { Header, Sider, Content } = Layout;
 
@@ -31,6 +35,7 @@ export const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children })
   const location = useLocation();
   const { isDark, toggleTheme } = useAppTheme();
   const { token } = theme.useToken();
+  const { status, error } = useSystemStatus();
 
   const menuItems = [
     {
@@ -62,6 +67,11 @@ export const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children })
       key: '/nodes',
       icon: <ClusterOutlined />,
       label: '节点与规则版本',
+    },
+    {
+      key: '/users',
+      icon: <TeamOutlined />,
+      label: '用户与权限（演示）',
     },
   ];
 
@@ -130,18 +140,16 @@ export const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children })
           </div>
 
           <Space size="large">
-            {/* 系统状态小部件 */}
-            <Tooltip title="控制面唯一连库 (PostgreSQL / SQLite)">
+            <Tooltip title={isDemoMode ? '演示数据，不代表真实运行状态' : error ?? '来自 Server 的控制面状态（不是扫描器状态）'}>
               <Space size={6}>
-                <Badge status="processing" color="#13c2c2" />
-                <span style={{ fontSize: 13, color: '#94a3b8' }}>sec-server 在线</span>
+                <Badge status={status?.ready ? 'success' : 'default'} />
+                <span style={{ fontSize: 13, color: '#94a3b8' }}>
+                  {isDemoMode ? '演示模式 · 非实时' : error ? 'Server 连接失败' : status ? `Server: ${status.state}（未就绪）` : '读取 Server 状态…'}
+                </span>
               </Space>
             </Tooltip>
-
-            <Tooltip title="当前激活的 CURRENT 规则包版本">
-              <Tag color="cyan" style={{ margin: 0 }}>
-                规则库: v2026.10.15-rel
-              </Tag>
+            <Tooltip title="实际规则激活版本需由 Server/Updater 验证并提供">
+              <Tag style={{ margin: 0 }}>规则库: 未验证</Tag>
             </Tooltip>
 
             <Tooltip title={isDark ? '切换至浅色模式' : '切换至暗色科技模式'}>
@@ -162,6 +170,13 @@ export const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children })
             overflowY: 'auto',
           }}
         >
+          <Alert
+            type={isDemoMode ? 'info' : 'warning'}
+            showIcon
+            style={{ marginBottom: 16 }}
+            message={isDemoMode ? '演示模式：所有资产、任务、漏洞及节点信息均为模拟数据' : 'Server 模式：业务接口尚未实现，不展示模拟数据'}
+            description={isDemoMode ? '演示操作仅影响当前浏览器内的页面；不会发起扫描、写数据库、解除隔离或生成审计。' : error ? `Server 状态接口不可用：${error}` : status?.ready ? 'Server 已就绪' : 'Phase 0：Server 未就绪，业务操作全部禁用。'}
+          />
           {children}
         </Content>
       </Layout>
