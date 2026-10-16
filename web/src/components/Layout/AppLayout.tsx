@@ -26,6 +26,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useAppTheme } from '../../context/ThemeContext';
 import { isDemoMode } from '../../api/client';
 import { useSystemStatus } from '../../api/hooks';
+import { useAuth } from '../../auth/AuthProvider';
 
 const { Header, Sider, Content } = Layout;
 
@@ -36,6 +37,7 @@ export const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children })
   const { isDark, toggleTheme } = useAppTheme();
   const { token } = theme.useToken();
   const { status, error } = useSystemStatus();
+  const { user, logout } = useAuth();
 
   const menuItems = [
     {
@@ -71,9 +73,9 @@ export const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children })
     {
       key: '/users',
       icon: <TeamOutlined />,
-      label: '用户与权限（演示）',
+      label: '用户与权限',
     },
-  ];
+  ].filter(item => item.key !== '/users' || isDemoMode || user?.role === 'admin');
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
@@ -135,16 +137,17 @@ export const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children })
               {menuItems.find((m) => m.key === location.pathname)?.label || '控制台'}
             </span>
             <Tag color="blue" bordered={false}>
-              Phase 0 PoC
+              {status?.enabled.includes('synthetic-worker') ? '早期开发 · 模拟任务' : 'Phase 0 PoC'}
             </Tag>
           </div>
 
           <Space size="large">
+            {!isDemoMode && user && <Space size={8}><span>{user.username} · {user.role}</span><Button size="small" onClick={() => { void logout(); }}>退出</Button></Space>}
             <Tooltip title={isDemoMode ? '演示数据，不代表真实运行状态' : error ?? '来自 Server 的控制面状态（不是扫描器状态）'}>
               <Space size={6}>
                 <Badge status={status?.ready ? 'success' : 'default'} />
                 <span style={{ fontSize: 13, color: '#94a3b8' }}>
-                  {isDemoMode ? '演示模式 · 非实时' : error ? 'Server 连接失败' : status ? `Server: ${status.state}（未就绪）` : '读取 Server 状态…'}
+                  {isDemoMode ? '演示模式 · 非实时' : error ? 'Server 连接失败' : status ? `Server: ${status.state}（${status.ready ? "就绪" : "未就绪"}）` : '读取 Server 状态…'}
                 </span>
               </Space>
             </Tooltip>
@@ -174,8 +177,8 @@ export const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children })
             type={isDemoMode ? 'info' : 'warning'}
             showIcon
             style={{ marginBottom: 16 }}
-            message={isDemoMode ? '演示模式：所有资产、任务、漏洞及节点信息均为模拟数据' : 'Server 模式：业务接口尚未实现，不展示模拟数据'}
-            description={isDemoMode ? '演示操作仅影响当前浏览器内的页面；不会发起扫描、写数据库、解除隔离或生成审计。' : error ? `Server 状态接口不可用：${error}` : status?.ready ? 'Server 已就绪' : 'Phase 0：Server 未就绪，业务操作全部禁用。'}
+            message={isDemoMode ? '演示模式：所有资产、任务、漏洞及节点信息均为模拟数据' : status?.enabled.includes('synthetic-worker') ? '本地框架运行中：任务和结果已接入 SQLite' : '账号管理已连接 Server；扫描业务仍未开放'}
+            description={status?.enabled.includes('synthetic-worker') ? '当前仅运行模拟 Worker。任务会自动领取、完成并生成明确标注的模拟结果，不连接目标或执行真实扫描。' : isDemoMode ? '演示操作仅影响当前浏览器内的页面；不会发起扫描、写数据库、解除隔离或生成审计。' : error ? `Server 状态接口不可用：${error}` : '用户和会话已接 SQLite；资产、任务、漏洞和规则业务仍保持关闭。'}
           />
           {children}
         </Content>

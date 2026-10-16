@@ -9,8 +9,11 @@ import { TasksPage } from './pages/Tasks';
 import { FindingsPage } from './pages/Findings';
 import { NodesPage } from './pages/Nodes';
 import { UsersPage } from './pages/Users';
+import { AuthProvider, useAuth } from './auth/AuthProvider';
+import { isDemoMode } from './api/client';
 
-export const App: React.FC = () => {
+const AuthenticatedRoutes: React.FC = () => {
+  const {user} = useAuth();
   return (
     <ThemeProvider>
       <HashRouter>
@@ -22,7 +25,7 @@ export const App: React.FC = () => {
             <Route path="/tasks" element={<TasksPage />} />
             <Route path="/findings" element={<FindingsPage />} />
             <Route path="/nodes" element={<NodesPage />} />
-            <Route path="/users" element={<UsersPage />} />
+            <Route path="/users" element={isDemoMode || user?.role === "admin" ? <UsersPage /> : <Navigate to="/" replace />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </AppLayout>
@@ -30,3 +33,4 @@ export const App: React.FC = () => {
     </ThemeProvider>
   );
 };
+export const App: React.FC = () => <AuthProvider><AuthenticatedRoutes /></AuthProvider>;

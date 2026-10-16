@@ -1,5 +1,5 @@
-// Package bootstrap owns the four service entrypoint shells.
-// It deliberately does not construct a scanner, node API, or database.
+// Package bootstrap owns the service entrypoints. Server's local development
+// mode runs SQLite account management; scanner and Node APIs remain disabled.
 package bootstrap
 
 import (
@@ -14,10 +14,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
+	"golang.org/x/term"
+
+	"scanner-platform/internal/account"
 	"scanner-platform/internal/api"
 )
 
@@ -49,8 +53,15 @@ func Run(role Role, args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet(string(role), flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	printStatus := flags.Bool("status", false, "Print scaffold status and exit")
-	devUI := flags.Bool("dev-ui", false, "Serve read-only status API on loopback (server and portable only)")
+	devUI := flags.Bool("dev-ui", false, "Serve local development API on loopback (server and portable only)")
 	listenAddr := flags.String("listen", "127.0.0.1:8080", "Loopback-only development API address")
+	configDir, _ := os.UserConfigDir()
+	if configDir == "" {
+		configDir = os.TempDir()
+	}
+	dbPath := flags.String("db", filepath.Join(configDir, "scanner-platform", "server.sqlite"), "Server SQLite database file")
+	initAdmin := flags.String("init-admin", "", "Initialize first admin (username)")
+	passwordFile := flags.String("password-file", "", "Read initial admin password from protected file")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -61,8 +72,8 @@ func Run(role Role, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "positional arguments are unsupported")
 		return 2
 	}
-	if *printStatus && *devUI {
-		fmt.Fprintln(stderr, "--status and --dev-ui are mutually exclusive")
+	if *printStatus && (*devUI || *initAdmin != "") {
+		fmt.Fprintln(stderr, "--status cannot be combined with --dev-ui or --init-admin")
 		return 2
 	}
 	if *printStatus {
@@ -71,6 +82,50 @@ func Run(role Role, args []string, stdout, stderr io.Writer) int {
 			Ready: false, Enabled: []string{"local-status"},
 			Unavailable: []string{"node-api", "database", "task-dispatch", "rule-activation", "scanning", "authentication", "user-management", "rbac"},
 		})
+		return 0
+	}
+	if *initAdmin != "" {
+		if role != Server || *devUI {
+			fmt.Fprintln(stderr, "--init-admin requires sec-server, without --dev-ui")
+			return 2
+		}
+		var password []byte
+		if *passwordFile != "" {
+			info, err := os.Stat(*passwordFile)
+			if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
+				fmt.Fprintln(stderr, "password file must exist and be owner-only (0600)")
+				return 2
+			}
+			password, err = os.ReadFile(*passwordFile)
+			if err != nil || len(password) > 256 {
+				fmt.Fprintln(stderr, "unable to read password file")
+				return 2
+			}
+		} else {
+			if !term.IsTerminal(int(os.Stdin.Fd())) {
+				fmt.Fprintln(stderr, "initial admin password requires an interactive terminal or --password-file")
+				return 2
+			}
+			fmt.Fprint(stderr, "Initial admin password (12–72 bytes): ")
+			var err error
+			password, err = term.ReadPassword(int(os.Stdin.Fd()))
+			fmt.Fprintln(stderr)
+			if err != nil {
+				fmt.Fprintln(stderr, "unable to read terminal password")
+				return 2
+			}
+		}
+		store, err := account.New(*dbPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "open database: %v\n", err)
+			return 1
+		}
+		defer store.Close()
+		if err := store.InitAdmin(context.Background(), *initAdmin, strings.TrimRight(string(password), "\r\n")); err != nil {
+			fmt.Fprintf(stderr, "initialize admin: %v\n", err)
+			return 1
+		}
+		fmt.Fprintln(stdout, "Administrator initialized. Server can now be started.")
 		return 0
 	}
 	if !*devUI {
@@ -87,7 +142,17 @@ func Run(role Role, args []string, stdout, stderr io.Writer) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := serveDevAPI(ctx, string(role), *listenAddr); err != nil {
+	var handler http.Handler = api.NewScaffoldHandler(string(role))
+	if role == Server {
+		store, err := account.New(*dbPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "open database: %v\n", err)
+			return 1
+		}
+		defer store.Close()
+		handler = api.NewDevelopmentHandler(store)
+	}
+	if err := serveDevAPI(ctx, string(role), *listenAddr, handler); err != nil {
 		slog.Error("development API stopped", "role", role, "error", err)
 		return 1
 	}
@@ -103,13 +168,13 @@ func isNumericLoopback(addr string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-func serveDevAPI(ctx context.Context, role, addr string) error {
+func serveDevAPI(ctx context.Context, role, addr string, handler http.Handler) error {
 	l, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("listen for local dev API: %w", err)
 	}
 	server := &http.Server{
-		Handler:           api.NewScaffoldHandler(role),
+		Handler:           handler,
 		ReadHeaderTimeout: api.DevelopmentReadHeaderTimeout,
 	}
 	stopped := make(chan struct{})
@@ -120,7 +185,7 @@ func serveDevAPI(ctx context.Context, role, addr string) error {
 		defer cancel()
 		_ = server.Shutdown(shutdown)
 	}()
-	slog.Info("Phase 0 read-only API; no scans or mutations", "role", role, "address", l.Addr().String())
+	slog.Info("Local development API; no scanner or rule mutations", "role", role, "address", l.Addr().String())
 	err = server.Serve(l)
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil

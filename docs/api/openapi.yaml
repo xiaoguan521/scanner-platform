@@ -1,11 +1,11 @@
 openapi: 3.0.3
 info:
   title: Scanner Platform UI API (Phase 0 contract)
-  version: 0.1.0
+  version: 0.2.0
   description: |
     Canonical contract for the control-plane UI. This is a scaffold, not an
-    authorization to scan. At Phase 0 only system status and capabilities are
-    implemented. Collection GETs respond 501; mutations are not exposed.
+    authorization to scan. Local development mode implements SQLite-backed
+    authentication and admin-only user management. Scanner operations remain disabled.
     All date-time strings are RFC 3339 with explicit offsets.
 servers:
   - url: /
@@ -13,6 +13,7 @@ servers:
 tags:
   - name: system
   - name: future
+  - name: accounts
 paths:
   /healthz:
     get:
@@ -58,16 +59,49 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Capabilities'
+  /api/v1/auth/login:
+    post:
+      tags: [accounts]
+      summary: Log in on local development server
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/LoginRequest'}
+      responses:
+        '200':
+          description: Session cookie issued
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/User'}
+        '401': {description: Invalid credentials}
+  /api/v1/auth/me:
+    get:
+      tags: [accounts]
+      security: [{sessionCookie: []}]
+      responses:
+        '200':
+          description: Current user
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/User'}
+        '401': {description: Missing or expired session}
+  /api/v1/auth/logout:
+    post:
+      tags: [accounts]
+      security: [{sessionCookie: []}]
+      responses:
+        '200': {description: Session revoked}
   /api/v1/users:
     get:
-      tags: [future]
-      summary: Future role-scoped user list (not implemented)
-      description: Requires authenticated admin access and auditing before being enabled.
+      tags: [accounts]
+      summary: Admin-only SQLite user list
+      security: [{sessionCookie: []}]
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        '401': {description: Unauthenticated}
+        '403': {description: Admin role required}
         '200':
-          description: Future authorized user list
+          description: User list
           content:
             application/json:
               schema:
@@ -80,6 +114,46 @@ paths:
                         type: array
                         items:
                           $ref: '#/components/schemas/User'
+    post:
+      tags: [accounts]
+      summary: Admin-only account creation
+      security: [{sessionCookie: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/NewUserRequest'}
+      responses:
+        '201':
+          description: Created user
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/User'}
+        '401': {description: Unauthenticated}
+        '403': {description: Admin role required}
+  /api/v1/users/{id}:
+    patch:
+      tags: [accounts]
+      summary: Admin-only role and active-state update
+      security: [{sessionCookie: []}]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdateUserRequest'}
+      responses:
+        '200':
+          description: Updated user
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/User'}
+        '401': {description: Unauthenticated}
+        '403': {description: Forbidden update}
   /api/v1/assets:
     get:
       tags: [future]
@@ -228,6 +302,11 @@ paths:
                         items:
                           $ref: '#/components/schemas/RuleBundle'
 components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: scanner_session
   responses:
     NotImplemented:
       description: Phase 0 does not expose this operation
@@ -283,6 +362,25 @@ components:
       required: [total]
       properties:
         total: {type: integer, minimum: 0}
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: {type: string}
+        password: {type: string, format: password}
+    NewUserRequest:
+      type: object
+      required: [username, password, role]
+      properties:
+        username: {type: string}
+        password: {type: string, format: password, minLength: 12}
+        role: {type: string, enum: [admin, security_engineer, ops_approver, viewer]}
+    UpdateUserRequest:
+      type: object
+      required: [role, isActive]
+      properties:
+        role: {type: string, enum: [admin, security_engineer, ops_approver, viewer]}
+        isActive: {type: boolean}
     User:
       type: object
       required: [id, username, role, isActive]

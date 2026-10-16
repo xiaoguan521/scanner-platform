@@ -39,3 +39,6 @@ go run ./cmd/portable --dev-ui --listen 127.0.0.1:8081
 6. Portable 后续复用 Server、Updater、Worker 的服务层，但只绑定 `127.0.0.1`，并为 SQLite/规则目录提供私有的本地运行结构。
 
 **当前任何入口都不提供业务数据库访问、网络扫描、规则升级或规则删除能力。**
+## 当前已接入的本地账号管理
+
+`sec-server --dev-ui` 现在可以使用 SQLite 登录、创建用户和修改角色/启停状态，仅在 loopback 开放。初次启动与密码安全输入方式见 [`quickstart.md`](quickstart.md)。Node API、扫描器及规则更新仍然关闭；`sec-portable` 仍只有占位功能。
