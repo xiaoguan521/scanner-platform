@@ -7,12 +7,24 @@ on:
       - 'v*'
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: build-artifacts-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
+  verify:
+    name: Required CI Checks
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
   build:
-    name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
+    name: Package (${{ matrix.goos }}/${{ matrix.goarch }})
+    needs: verify
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -31,97 +43,116 @@ jobs:
             goarch: arm64
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
-          go-version-file: 'go.mod'
-          check-latest: true
+          go-version-file: go.mod
+          cache: false
 
-      - name: Install compression tools
+      - name: Compile binaries
+        shell: bash
+        env:
+          TARGET_GOOS: ${{ matrix.goos }}
+          TARGET_GOARCH: ${{ matrix.goarch }}
         run: |
-          sudo apt-get update
-          sudo apt-get install -y zip tar
-
-      - name: Compile Binaries
-        run: |
+          set -euo pipefail
           mkdir -p build_output
-          EXT=""
-          if [ "${{ matrix.goos }}" = "windows" ]; then
-            EXT=".exe"
+          ext=""
+          if [[ "$TARGET_GOOS" == windows ]]; then
+            ext=".exe"
           fi
 
-          echo "Compiling sec-server for ${{ matrix.goos }}/${{ matrix.goarch }}..."
-          CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
-            go build -trimpath -ldflags="-s -w" -o build_output/sec-server${EXT} ./cmd/server
+          # These three binaries are Phase 0 scaffolds, not deployable clients.
+          for command in server updater worker; do
+            CGO_ENABLED=0 GOOS="$TARGET_GOOS" GOARCH="$TARGET_GOARCH" \
+              go build -trimpath -ldflags="-s -w" \
+              -o "build_output/sec-$command$ext" "./cmd/$command"
+          done
 
-          echo "Compiling sec-updater for ${{ matrix.goos }}/${{ matrix.goarch }}..."
-          CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
-            go build -trimpath -ldflags="-s -w" -o build_output/sec-updater${EXT} ./cmd/updater
-
-          echo "Compiling sec-worker for ${{ matrix.goos }}/${{ matrix.goarch }}..."
-          CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
-            go build -trimpath -ldflags="-s -w" -o build_output/sec-worker${EXT} ./cmd/worker
-
-          if [ -f "cmd/portable/main.go" ]; then
-            echo "Compiling sec-portable for ${{ matrix.goos }}/${{ matrix.goarch }}..."
-            CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
-              go build -trimpath -ldflags="-s -w" -o build_output/sec-portable${EXT} ./cmd/portable
+          # Build portable only when a real Go entry point is implemented.
+          if [[ -f cmd/portable/main.go ]]; then
+            CGO_ENABLED=0 GOOS="$TARGET_GOOS" GOARCH="$TARGET_GOARCH" \
+              go build -trimpath -ldflags="-s -w" \
+              -o "build_output/sec-portable$ext" ./cmd/portable
           fi
 
-      - name: Package Artifacts
-        id: package
+      - name: Package artifacts and checksums
+        shell: bash
+        env:
+          TARGET_GOOS: ${{ matrix.goos }}
+          TARGET_GOARCH: ${{ matrix.goarch }}
         run: |
+          set -euo pipefail
+          command -v tar
+          command -v zip
+          command -v sha256sum
+
           mkdir -p dist_pkg
-          PKG_BASE="scanner-platform-${{ matrix.goos }}-${{ matrix.goarch }}"
-          
-          if [ "${{ matrix.goos }}" = "windows" ]; then
-            PKG_NAME="${PKG_BASE}.zip"
-            (cd build_output && zip -q -r "../dist_pkg/${PKG_NAME}" .)
+          base="scanner-platform-$TARGET_GOOS-$TARGET_GOARCH"
+          if [[ "$TARGET_GOOS" == windows ]]; then
+            archive="$base.zip"
+            (cd build_output && zip -q -r "../dist_pkg/$archive" .)
           else
-            PKG_NAME="${PKG_BASE}.tar.gz"
-            tar -czvf "dist_pkg/${PKG_NAME}" -C build_output .
+            archive="$base.tar.gz"
+            tar -czf "dist_pkg/$archive" -C build_output .
           fi
 
-          cd dist_pkg
-          sha256sum "${PKG_NAME}" > "${PKG_NAME}.sha256"
-          echo "pkg_name=${PKG_NAME}" >> $GITHUB_OUTPUT
+          (cd dist_pkg && sha256sum "$archive" > "$archive.sha256")
 
-      - name: Upload Single Platform Artifact
+      - name: Upload platform artifact
         uses: actions/upload-artifact@v4
         with:
           name: package-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist_pkg/*
           if-no-files-found: error
+          retention-days: 14
 
   release:
-    name: Publish GitHub Release
-    needs: build
+    name: Create Phase 0 Draft Release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [verify, build]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    timeout-minutes: 15
+    permissions:
+      contents: write
     steps:
-      - name: Download all built artifacts
+      - name: Download all platform artifacts
         uses: actions/download-artifact@v4
         with:
           path: all_artifacts
           pattern: package-*
           merge-multiple: true
 
-      - name: Generate Consolidated Checksums
+      - name: Verify packages and prepare checksums
+        shell: bash
         run: |
+          set -euo pipefail
+          shopt -s nullglob
+          archives=(all_artifacts/scanner-platform-*.zip all_artifacts/scanner-platform-*.tar.gz)
+          checksums=(all_artifacts/scanner-platform-*.sha256)
+          if [[ "${#archives[@]}" -ne 6 || "${#checksums[@]}" -ne 6 ]]; then
+            echo "Expected exactly six archives and checksum files" >&2
+            exit 1
+          fi
+          (cd all_artifacts && sha256sum --check -- *.sha256)
           mkdir -p release_assets
-          cp all_artifacts/* release_assets/
-          cd release_assets
-          # 清理单文件的临时 sha256，生成汇总 checksums.txt
-          rm -f *.sha256
-          sha256sum * > checksums.txt
-          ls -la
+          cp -- "${archives[@]}" release_assets/
+          (cd release_assets && sha256sum -- * > checksums.txt)
 
-      - name: Create Release
+      - name: Create draft release (manual publication required)
         uses: softprops/action-gh-release@v2
         with:
           files: release_assets/*
+          fail_on_unmatched_files: true
           generate_release_notes: true
-          draft: false
-          prerelease: false
+          draft: true
+          prerelease: true
+          body: |
+            Phase 0 / PoC artifacts only. Not production-ready.
+            Server, Updater and Worker are currently fail-closed scaffolds.
+            The portable client is included only after its entry point is implemented.
+            Review security validation and platform runtime tests before publication.

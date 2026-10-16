@@ -23,3 +23,13 @@ make test-lab
 ```
 
 `make verify-flags` 在 Nuclei、Trivy 版本和参数核验流程锁定前会明确失败。真实扫描类验收只能在隔离实验环境运行；详见 [`AGENTS.md`](AGENTS.md) 和各 PoC 说明。
+
+## GitHub Actions：跨平台构建与发布
+
+- `.github/workflows/ci.yml`：`main` Push / PR 执行格式检查、`-race` 单测，并在 Linux、macOS、Windows 的 amd64/arm64 托管 Runner 上分别运行 `go build ./...`。也提供 `workflow_call` 供发布流水线复用。Windows 构建不依赖 GNU Make。
+- `.github/workflows/build-artifacts.yml`：手动运行 `workflow_dispatch` 或 Push `v*` 标签时，先**完整通过上述 CI**，再由 Ubuntu Runner 交叉编译六种平台打包为 `.zip` / `.tar.gz`，每个平台生成 SHA-256 校验文件。
+- **手动触发只上传 Actions Artifacts，不创建 GitHub Release**；标签触发会在汇总前逐一验证校验文件，随后仅创建 **Draft + Pre-release**，需要人工审查后才能公开发布。
+- 当前归档中的 `sec-server`、`sec-updater`、`sec-worker` 都还是安全拒绝启动的 Phase 0 骨架；`sec-portable` 只有存在 `cmd/portable/main.go` 后才会构建。构建通过不代表客户端已经可用。
+- `go.mod` 目前没有外部依赖或 `go.sum`，Actions 暂时禁用 Go 缓存。未来应独立评审发布产物的 Windows 签名、macOS 签名/公证及 Artifact Attestation，不能把普通 SHA-256 文件当作软件签名。
+
+相关本地与云端验证记录见 `docs/verification-log.md`。

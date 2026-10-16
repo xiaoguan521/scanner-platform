@@ -2,9 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [main]
   pull_request:
-    branches: [ "main" ]
+    branches: [main]
+  workflow_call:
 
 permissions:
   contents: read
@@ -13,15 +14,18 @@ jobs:
   lint:
     name: Lint & Code Style
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
-          go-version-file: 'go.mod'
-          check-latest: true
+          go-version-file: go.mod
+          cache: false
 
       - name: Run Lint
         run: make lint
@@ -29,35 +33,55 @@ jobs:
   test:
     name: Unit Tests (-race)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
-          go-version-file: 'go.mod'
-          check-latest: true
+          go-version-file: go.mod
+          cache: false
 
       - name: Run Tests
         run: make test
 
   build-check:
-    name: Build Verification
-    runs-on: ${{ matrix.os }}
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - target: linux/amd64
+            runner: ubuntu-latest
+          - target: linux/arm64
+            runner: ubuntu-24.04-arm
+          - target: darwin/amd64
+            runner: macos-15-intel
+          - target: darwin/arm64
+            runner: macos-latest
+          - target: windows/amd64
+            runner: windows-latest
+          - target: windows/arm64
+            runner: windows-11-arm
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
-          go-version-file: 'go.mod'
-          check-latest: true
+          go-version-file: go.mod
+          cache: false
 
+      # The hosted Windows images are not guaranteed to provide GNU Make.
+      # Running Go directly also verifies the project without POSIX shell assumptions.
       - name: Build All Targets
-        run: make build
+        run: go build ./...
