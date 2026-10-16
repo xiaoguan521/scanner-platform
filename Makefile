@@ -6,7 +6,7 @@ ifeq ($(GOOS),windows)
 EXE_EXT := .exe
 endif
 
-.PHONY: build test lint verify-flags test-lab web-install web-dev web-build dev
+.PHONY: build test lint verify-flags test-lab web-install web-dev web-build dev test-local
 
 dev:
 	bash scripts/dev.sh
@@ -22,10 +22,10 @@ web-install:
 	cd web && npm ci --ignore-scripts
 
 web-dev:
-	cd web && npm run dev
+	cd web && VITE_DATA_MODE=server npm run dev
 
 web-build:
-	cd web && npm run build
+	cd web && VITE_DATA_MODE=server npm run build
 
 
 test:
@@ -51,3 +51,6 @@ test-lab:
 		exit 2; \
 	fi
 	$(GO) test -tags=lab ./...
+
+test-local: build web-build
+	python3 scripts/test_local.py
