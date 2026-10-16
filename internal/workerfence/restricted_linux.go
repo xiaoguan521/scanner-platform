@@ -4,6 +4,7 @@ package workerfence
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os/exec"
@@ -15,6 +16,12 @@ import (
 // Process-group termination on cancellation is a PoC-level safeguard; full
 // cgroup kill semantics remain required before production engine integration.
 func (p RestrictedExec) Launch(ctx context.Context) error {
+	// Fail closed until internal/executor supplies a version-verified,
+	// allowlisted engine command. A raw EngineArgs slice alone is never
+	// authorization to execute Nuclei or Trivy.
+	if !p.verified {
+		return errors.New("engine version and argument whitelist unverified; launcher disabled")
+	}
 	argv, env, err := p.restrictedCommand()
 	if err != nil {
 		return fmt.Errorf("restricted command denied: %w", err)

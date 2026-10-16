@@ -10,6 +10,19 @@ import (
 	"testing"
 )
 
+func TestLinuxLauncherRejectsUnverifiedEngineFlags(t *testing.T) {
+	p := RestrictedExec{
+		SetprivPath: "/usr/bin/setpriv",
+		EnginePath:  "/usr/bin/nuclei",
+		EngineArgs:  []string{"-code"},
+		RuntimeDir:  "/runtime",
+	}
+	err := p.Launch(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "unverified") {
+		t.Fatalf("unverified engine flags could execute: %v", err)
+	}
+}
+
 func TestLinuxFenceRefusesMissingNamespaceProof(t *testing.T) {
 	err := NewConfigurator("/usr/sbin/nft", nil).Apply(context.Background(), RuleSet{script: "add table inet sec_scan_fence\n"})
 	if err == nil || !strings.Contains(err.Error(), "pre-isolation") {

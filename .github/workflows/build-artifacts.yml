@@ -1,0 +1,127 @@
+name: Build & Release Artifacts
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+          - goos: windows
+            goarch: arm64
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          check-latest: true
+
+      - name: Install compression tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zip tar
+
+      - name: Compile Binaries
+        run: |
+          mkdir -p build_output
+          EXT=""
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            EXT=".exe"
+          fi
+
+          echo "Compiling sec-server for ${{ matrix.goos }}/${{ matrix.goarch }}..."
+          CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
+            go build -trimpath -ldflags="-s -w" -o build_output/sec-server${EXT} ./cmd/server
+
+          echo "Compiling sec-updater for ${{ matrix.goos }}/${{ matrix.goarch }}..."
+          CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
+            go build -trimpath -ldflags="-s -w" -o build_output/sec-updater${EXT} ./cmd/updater
+
+          echo "Compiling sec-worker for ${{ matrix.goos }}/${{ matrix.goarch }}..."
+          CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
+            go build -trimpath -ldflags="-s -w" -o build_output/sec-worker${EXT} ./cmd/worker
+
+          if [ -f "cmd/portable/main.go" ]; then
+            echo "Compiling sec-portable for ${{ matrix.goos }}/${{ matrix.goarch }}..."
+            CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
+              go build -trimpath -ldflags="-s -w" -o build_output/sec-portable${EXT} ./cmd/portable
+          fi
+
+      - name: Package Artifacts
+        id: package
+        run: |
+          mkdir -p dist_pkg
+          PKG_BASE="scanner-platform-${{ matrix.goos }}-${{ matrix.goarch }}"
+          
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            PKG_NAME="${PKG_BASE}.zip"
+            (cd build_output && zip -q -r "../dist_pkg/${PKG_NAME}" .)
+          else
+            PKG_NAME="${PKG_BASE}.tar.gz"
+            tar -czvf "dist_pkg/${PKG_NAME}" -C build_output .
+          fi
+
+          cd dist_pkg
+          sha256sum "${PKG_NAME}" > "${PKG_NAME}.sha256"
+          echo "pkg_name=${PKG_NAME}" >> $GITHUB_OUTPUT
+
+      - name: Upload Single Platform Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist_pkg/*
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download all built artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all_artifacts
+          pattern: package-*
+          merge-multiple: true
+
+      - name: Generate Consolidated Checksums
+        run: |
+          mkdir -p release_assets
+          cp all_artifacts/* release_assets/
+          cd release_assets
+          # 清理单文件的临时 sha256，生成汇总 checksums.txt
+          rm -f *.sha256
+          sha256sum * > checksums.txt
+          ls -la
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release_assets/*
+          generate_release_notes: true
+          draft: false
+          prerelease: false

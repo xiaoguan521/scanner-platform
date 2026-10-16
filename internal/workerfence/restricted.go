@@ -14,6 +14,9 @@ type RestrictedExec struct {
 	EnginePath  string
 	EngineArgs  []string
 	RuntimeDir  string
+	// Only a future verified engineflags/executor integration may set this.
+	// No external package can set or bypass this field.
+	verified bool
 }
 
 // Only the built-in restricted launcher satisfies the supervisor launch gate.

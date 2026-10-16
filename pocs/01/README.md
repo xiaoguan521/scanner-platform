@@ -10,6 +10,7 @@
 - `internal/workerfence/nft_linux.go`：Linux 上只允许绝对路径的 `nft -f -` 一次性批量应用；**必须提供可信启动器在隔离前打开的父网络 namespace 文件句柄**，并校验 NSFS 类型与当前网络命名空间不同；非 root 或验收失败时拒绝执行。此检查不足以单独证明隔离环境正确，还必须由部署层约束禁止 `hostNetwork`，确保专属 netns。
 - `internal/workerfence/restricted_linux.go`：预备经 `setpriv` 清除 UID/GID、附加组、inheritable/ambient/bounding capabilities，并设置 `no_new_privs` 后启动经信任的引擎；参数切片而非 shell，运行目录和环境变量私有化，原始 stdout/stderr 不直通日志，截止时间后杀进程组。Linux 镜像需内置并锁定 `nft`、`setpriv` 的版本与绝对路径。
 - 非 Linux 系统明确返回“不支持 Linux 围栏/受限启动”；`cmd/worker` **仍然是拒绝启动的占位入口**，并未调用以上模块，更没有直接运行引擎。
+- **启动器额外硬闸**：版本和参数白名单尚未由 `internal/executor` 核实，`RestrictedExec.Launch` 默认拒绝所有真实引擎启动（包括包含 `-code` 的参数）。`setpriv` 参数和取消逻辑目前仅用于代码级核查，不能声称实际降权已验证。
 
 ## 本地模拟测试（不执行网络命令）
 
