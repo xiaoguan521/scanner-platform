@@ -23,6 +23,7 @@ import (
 
 	"scanner-platform/internal/account"
 	"scanner-platform/internal/api"
+	"scanner-platform/internal/assets"
 )
 
 type Role string
@@ -150,7 +151,12 @@ func Run(role Role, args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		defer store.Close()
-		handler = api.NewDevelopmentHandler(store)
+		assetStore, err := assets.New(store.SQLDB())
+		if err != nil {
+			fmt.Fprintf(stderr, "initialize asset database: %v\n", err)
+			return 1
+		}
+		handler = api.NewDevelopmentHandler(store, assetStore)
 	}
 	if err := serveDevAPI(ctx, string(role), *listenAddr, handler); err != nil {
 		slog.Error("development API stopped", "role", role, "error", err)

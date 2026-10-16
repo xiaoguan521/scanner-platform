@@ -1,270 +1,134 @@
-import React, { useState } from 'react';
-import {
-  Card,
-  Table,
-  Tag,
-  Button,
-  Space,
-  Modal,
-  Form,
-  Input,
-  Select,
-  Alert,
-  message,
-  Typography,
-  Badge,
-  Tooltip,
-} from 'antd';
-import {
-  PlusOutlined,
-  ExclamationCircleOutlined,
-  SafetyCertificateOutlined,
-  StopOutlined,
-  CheckCircleOutlined,
-} from '@ant-design/icons';
+import React, { useMemo, useState } from 'react';
+import { Alert, Button, Card, Form, Input, message, Modal, Select, Space, Table, Tag, Typography } from 'antd';
+import { PlusOutlined } from '@ant-design/icons';
 import { mockAssets, mockPortQuarantines } from '../../mock/data';
-import { Asset, AssetPort } from '../../types';
-import { isDemoMode } from '../../api/client';
+import type { Asset } from '../../types';
+import { apiClient, isDemoMode } from '../../api/client';
 import { useCollection } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
+import { useAuth } from '../../auth/AuthProvider';
 
 const { Text } = Typography;
-
+type AssetForm = {kind:'host'|'image_repo';address:string;businessGroup:string;owner:string;requestedPorts?:string};
+function parsePorts(text?: string): number[] {
+  if (!text?.trim()) return [];
+  const tokens = text.split(',').map(v => v.trim());
+  if (tokens.length > 50 || tokens.some(v => !/^[0-9]{1,5}$/.test(v))) throw new Error('端口请用英文逗号分隔，最多 50 个');
+  const ports = tokens.map(Number);
+  if (ports.some(v => v < 1 || v > 65535) || new Set(ports).size !== ports.length) {
+    throw new Error('端口范围必须为 1–65535，不能重复');
+  }
+  return ports;
+}
 export const AssetsPage: React.FC = () => {
-  const { data: assets, setData: setAssets, loading: assetsLoading, error: assetsError } = useCollection('assets', mockAssets);
-  const { data: quarantines, setData: setQuarantines, loading: quarantinesLoading, error: quarantinesError } = useCollection('port-quarantines', mockPortQuarantines);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [form] = Form.useForm();
+  const {user} = useAuth();
+  const canEdit = isDemoMode || user?.role === 'admin' || user?.role === 'security_engineer';
+  const {data:assets,setData:setAssets,loading,error} = useCollection('assets',mockAssets);
+  const {data:quarantines,setData:setQuarantines} = useCollection('port-quarantines',mockPortQuarantines);
+  const [createOpen,setCreateOpen] = useState(false);
+  const [editing,setEditing] = useState<Asset|null>(null);
+  const [saving,setSaving] = useState(false);
+  const [filter,setFilter] = useState('');
+  const [createForm] = Form.useForm<AssetForm>();
+  const [editForm] = Form.useForm<Pick<AssetForm,'businessGroup'|'owner'|'requestedPorts'>>();
+  const rows = useMemo(()=>assets.filter(a=>(a.address+' '+a.businessGroup+' '+a.owner).toLowerCase().includes(filter.toLowerCase())),[assets,filter]);
 
-  const handleAddAsset = (values: any) => {
-    if (!isDemoMode) return message.warning('Server 尚未开放资产登记 API');
-    const newAsset: Asset = {
-      id: `asset-${Date.now().toString().slice(-4)}`,
-      kind: values.kind,
-      address: values.address,
-      resolvedIp: values.kind === 'host' ? values.address : undefined,
-      businessGroup: values.businessGroup,
-      owner: values.owner,
-      createdAt: new Date().toISOString(),
-      // A typed-in port is never an authorized port grant.
-      ports: [],
-      quarantinedPorts: [],
-    };
-    setAssets((prev) => [newAsset, ...prev]);
-    message.info('仅演示：新增资产草稿；端口未获授权，Server 未发生变更');
-    setIsModalOpen(false);
-    form.resetFields();
+  const create = async (input: AssetForm) => {
+    setSaving(true);
+    try {
+      const requestedPorts=parsePorts(input.requestedPorts);
+      let asset: Asset;
+      if (isDemoMode) {
+        asset={id:'demo-'+Date.now(),kind:input.kind,address:input.address,businessGroup:input.businessGroup,
+          owner:input.owner,createdAt:new Date().toISOString(),ports:[],requestedPorts,quarantinedPorts:[]};
+        message.info('仅演示：添加本地草稿，端口尚未获扫描授权');
+      } else {
+        asset=await apiClient.createAsset({...input,requestedPorts});
+        message.success('资产已登记到 SQLite；端口仅为申请记录，不允许扫描');
+      }
+      setAssets(prev=>[asset,...prev]);setCreateOpen(false);createForm.resetFields();
+    } catch(e) {message.error(e instanceof Error?e.message:'登记失败');}
+    finally {setSaving(false);}
+  };
+  const update = async (input: Pick<AssetForm,'businessGroup'|'owner'|'requestedPorts'>) => {
+    if (!editing) return;
+    setSaving(true);
+    try {
+      const patch={businessGroup:input.businessGroup!,owner:input.owner!,requestedPorts:parsePorts(input.requestedPorts)};
+      const result=isDemoMode?{...editing,...patch}:await apiClient.updateAsset(editing.id,patch);
+      setAssets(prev=>prev.map(a=>a.id===editing.id?result:a));
+      setEditing(null);
+      message[isDemoMode?'info':'success'](isDemoMode?'仅演示：更新本地数据':'资产信息已保存；拟申请端口仍未授权');
+    }catch(e){message.error(e instanceof Error?e.message:'更新失败');}
+    finally{setSaving(false);}
+  };
+  const releaseDemo = (assetId:string,port:number)=>{
+    if (!isDemoMode)return;
+    Modal.confirm({title:'仅在演示页面解除隔离？',content:'不会更改 Server 或实际安全状态',
+      onOk:()=>{
+        setQuarantines(prev=>prev.filter(q=>q.assetId!==assetId || q.port!==port));
+        setAssets(prev=>prev.map(a=>a.id===assetId?{...a,quarantinedPorts:a.quarantinedPorts?.filter(p=>p!==port)}:a));
+        message.info('仅演示：本地显示更新');
+      }});
   };
 
-  const handleReleaseQuarantine = (assetId: string, port: number) => {
-    if (!isDemoMode) return message.warning('实际解除隔离必须由 Server 审批');
-    Modal.confirm({
-      title: `确认解除端口隔离 [${port}]？`,
-      content: '仅更改演示页面，不解除 Server 隔离、不恢复扫描。',
-      okText: '确认解除',
-      okType: 'danger',
-      cancelText: '取消',
-      onOk: () => {
-        setQuarantines(quarantines.filter((q) => !(q.assetId === assetId && q.port === port)));
-        setAssets((prev) =>
-          prev.map((a) =>
-            a.id === assetId
-              ? { ...a, quarantinedPorts: a.quarantinedPorts?.filter((p) => p !== port) }
-              : a
-          )
-        );
-        message.info(`仅演示：端口 ${port} 本地状态已改变，Server 未发生变更`);
-      },
-    });
-  };
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-      <CollectionNotice loading={assetsLoading || quarantinesLoading} error={assetsError || quarantinesError} />
-      {/* 运维硬性规范提示 */}
-      <Alert
-        message="端口授权硬规则：未登记端口一律不扫"
-        description="所有扫描目标与端口必须显式核准。被判定为四层代理（EXCLUDED_PROXY）或时延突变隔离（Quarantine）的端口将强制跳过，防止经由代理穿透至外部系统。"
-        type="warning"
-        showIcon
-        icon={<ExclamationCircleOutlined />}
-      />
-
-      {/* 四层代理与时延隔离警示条 */}
-      {quarantines.length > 0 && (
-        <Card
-          title={
-            <Space>
-              <StopOutlined style={{ color: '#ff4d4f' }} />
-              <span style={{ color: '#ff4d4f' }}>
-                疑似四层转发隔离区 (Port Quarantine) · 待人工复核
-              </span>
-            </Space>
-          }
-          bordered={false}
-          style={{ borderColor: '#ff4d4f' }}
-        >
-          <Table
-            dataSource={quarantines}
-            rowKey={(r) => `${r.assetId}-${r.port}`}
-            pagination={false}
-            size="small"
-            columns={[
-              { title: '资产地址', dataIndex: 'address', width: 180 },
-              {
-                title: '受控隔离端口',
-                dataIndex: 'port',
-                width: 120,
-                render: (p: number) => <Tag color="error">:{p} (Quarantined)</Tag>,
-              },
-              { title: '触发原因 / 探针判定', dataIndex: 'reason' },
-              { title: '拦截时间', dataIndex: 'detectedAt', width: 180 },
-              {
-                title: '操作',
-                width: 130,
-                render: (_, r) => (
-                  <Button
-                    type="link"
-                    size="small"
-                    disabled={!isDemoMode}
-                    onClick={() => handleReleaseQuarantine(r.assetId, r.port)}
-                  >
-                    复核并解除
-                  </Button>
-                ),
-              },
-            ]}
-          />
-        </Card>
-      )}
-
-      {/* 资产列表主表 */}
-      <Card
-        title="资产与端口授权台账"
-        bordered={false}
-        extra={
-          <Button type="primary" icon={<PlusOutlined />} disabled={!isDemoMode}
-          onClick={() => setIsModalOpen(true)}>
-            登记新资产
-          </Button>
-        }
-      >
-        <Table
-          dataSource={assets}
-          rowKey="id"
-          columns={[
-            { title: '资产 ID', dataIndex: 'id', width: 120 },
-            {
-              title: '目标地址',
-              dataIndex: 'address',
-              render: (addr: string, record: Asset) => (
-                <Space direction="vertical" size={2}>
-                  <Text strong>{addr}</Text>
-                  {record.resolvedIp && record.resolvedIp !== addr && (
-                    <Text type="secondary" style={{ fontSize: 12 }}>
-                      已固定 IP: {record.resolvedIp}
-                    </Text>
-                  )}
-                </Space>
-              ),
-            },
-            {
-              title: '资产类型',
-              dataIndex: 'kind',
-              width: 120,
-              render: (k: string) => (
-                <Tag color={k === 'host' ? 'blue' : 'purple'}>
-                  {k === 'host' ? '主机资产' : 'Harbor 镜像'}
-                </Tag>
-              ),
-            },
-            { title: '所属业务组', dataIndex: 'businessGroup', width: 150 },
-            { title: '责任人', dataIndex: 'owner', width: 140 },
-            {
-              title: '已授权端口 (Port Grants)',
-              dataIndex: 'ports',
-              render: (ports: AssetPort[], record: Asset) => {
-                if (!ports || ports.length === 0) {
-                  return <Text type="secondary">无已核准端口 (不可扫)</Text>;
-                }
-                return (
-                  <Space wrap size={[6, 6]}>
-                    {ports.map((p) => {
-                      const isQuarantined = record.quarantinedPorts?.includes(p.port);
-                      if (isQuarantined) {
-                        return (
-                          <Tooltip key={p.port} title="已被时延探针自动隔离跳过">
-                            <Tag color="error">:{p.port} 隔离</Tag>
-                          </Tooltip>
-                        );
-                      }
-                      if (p.kind === 'EXCLUDED_PROXY') {
-                        return (
-                          <Tooltip key={p.port} title="已知 Nginx 四层代理，永久跳过">
-                            <Tag color="default">:{p.port} (四层代理)</Tag>
-                          </Tooltip>
-                        );
-                      }
-                      if (p.kind === 'WEB') {
-                        return (
-                          <Tooltip key={p.port} title="WEB 端口 (运行 Web 漏洞 POC)">
-                            <Tag color="cyan">:{p.port} WEB</Tag>
-                          </Tooltip>
-                        );
-                      }
-                      return (
-                        <Tooltip key={p.port} title="NON_WEB 端口 (仅协议指纹扫描)">
-                          <Tag color="blue">:{p.port} 协议</Tag>
-                        </Tooltip>
-                      );
-                    })}
-                  </Space>
-                );
-              },
-            },
-            { title: '登记时间', dataIndex: 'createdAt', width: 170 },
-          ]}
-        />
-      </Card>
-
-      {/* 登记资产对话框 */}
-      <Modal
-        title="登记新目标资产"
-        open={isModalOpen}
-        onCancel={() => setIsModalOpen(false)}
-        onOk={() => form.submit()}
-        okButtonProps={{ disabled: !isDemoMode }}
-      >
-        <Form form={form} layout="vertical" onFinish={handleAddAsset}>
-          <Form.Item name="kind" label="资产形态" initialValue="host" rules={[{ required: true }]}>
-            <Select>
-              <Select.Option value="host">主机 IP / 独立主机</Select.Option>
-              <Select.Option value="image_repo">Harbor 镜像仓库</Select.Option>
-            </Select>
-          </Form.Item>
-          <Form.Item
-            name="address"
-            label="目标地址 (纯数字 IP 或 镜像仓库名)"
-            rules={[{ required: true, message: '请输入目标地址' }]}
-            extra="Worker 绝不解析域名或自行展开 CIDR，主机请直接输入纯数字 IPv4/IPv6"
-          >
-            <Input placeholder="例如: 192.0.2.18" />
-          </Form.Item>
-          <Form.Item name="businessGroup" label="所属业务组" rules={[{ required: true }]}>
-            <Input placeholder="例如: 核心网关组" />
-          </Form.Item>
-          <Form.Item name="owner" label="安全责任人" rules={[{ required: true }]}>
-            <Input placeholder="例如: 张工" />
-          </Form.Item>
-          <Form.Item
-            name="ports"
-            label="拟申请端口 (不会自动授权)"
-            extra="未填写的端口将被扫描器默认关闭拒绝"
-          >
-            <Input placeholder="例如: 80, 443, 8080" />
-          </Form.Item>
-        </Form>
-      </Modal>
-    </div>
-  );
+  return <div style={{display:'flex',flexDirection:'column',gap:16}}>
+    <CollectionNotice loading={loading} error={error}/>
+    <Alert type="warning" showIcon
+      message="资产登记 ≠ 扫描授权"
+      description="登记主机 IP、镜像仓库和拟申请端口，不会自动放行端口、创建任务或运行扫描引擎。实际授权与隔离审批尚未开放。"/>
+    {!isDemoMode && <Alert type="info" showIcon message="端口隔离列表接口仍在开发中；未加载到记录不代表没有隔离端口。"/>}
+    {quarantines.length > 0 && <Card title="疑似四层转发隔离区（仅演示）">
+      <Table rowKey={q=>q.assetId+'-'+q.port} dataSource={quarantines} size="small" pagination={false}
+        columns={[
+          {title:'地址',dataIndex:'address'},{title:'端口',dataIndex:'port'},{title:'原因',dataIndex:'reason'},
+          {title:'操作',render:(_:unknown,q:typeof quarantines[number])=><Button type="link" disabled={!isDemoMode}
+            onClick={()=>releaseDemo(q.assetId,q.port)}>演示解除</Button>}
+        ]}/>
+    </Card>}
+    <Card title="资产登记台账" extra={<Space>
+      <Input.Search placeholder="搜索地址、组或负责人" allowClear value={filter} onChange={e=>setFilter(e.target.value)} style={{width:220}}/>
+      <Button type="primary" icon={<PlusOutlined/>} disabled={!canEdit} onClick={()=>setCreateOpen(true)}>登记资产</Button>
+    </Space>}>
+      <Table<Asset> rowKey="id" dataSource={rows} loading={loading} scroll={{x:1000}} pagination={{pageSize:10}}
+        columns={[
+          {title:'资产地址',dataIndex:'address',render:(value:string)=><Text strong>{value}</Text>},
+          {title:'类型',dataIndex:'kind',render:(v:string)=><Tag>{v==='host'?'主机':'镜像仓库'}</Tag>},
+          {title:'业务组',dataIndex:'businessGroup'},{title:'责任人',dataIndex:'owner'},
+          {title:'拟申请端口（未授权）',dataIndex:'requestedPorts',render:(ports:number[]|undefined)=>
+            ports?.length?<Space wrap>{ports.map(port=><Tag key={port} color="gold">{port} 待审批</Tag>)}</Space>:<Text type="secondary">未填写</Text>},
+          {title:'已授权端口',dataIndex:'ports',render:(ports:Asset['ports'])=>
+            ports?.length?<Space wrap>{ports.map(p=><Tag key={p.port}>{p.port} {p.kind}</Tag>)}</Space>:<Text type="secondary">无（不可扫）</Text>},
+          {title:'登记时间',dataIndex:'createdAt',render:(value:string)=>new Date(value).toLocaleString()},
+          {title:'操作',render:(_:unknown,asset:Asset)=><Button type="link" disabled={!canEdit} onClick={()=>{
+            editForm.setFieldsValue({businessGroup:asset.businessGroup,owner:asset.owner,requestedPorts:asset.requestedPorts?.join(', ')??''});
+            setEditing(asset);
+          }}>编辑信息</Button>}
+        ]}/>
+    </Card>
+    <Modal title={isDemoMode?'演示：登记资产':'登记新资产'} open={createOpen}
+      onCancel={()=>setCreateOpen(false)} onOk={()=>createForm.submit()} okButtonProps={{loading:saving}}>
+      <Form form={createForm} layout="vertical" onFinish={create} autoComplete="off">
+        <Form.Item name="kind" label="资产类型" initialValue="host" rules={[{required:true}]}>
+          <Select options={[{label:'主机（纯数字 IPv4/IPv6）',value:'host'},{label:'镜像仓库',value:'image_repo'}]}/>
+        </Form.Item>
+        <Form.Item name="address" label="资产地址" rules={[{required:true}]} extra="主机只接受数字 IP，不展开 CIDR 或域名">
+          <Input placeholder="例如 192.0.2.18"/>
+        </Form.Item>
+        <Form.Item name="businessGroup" label="所属业务组" rules={[{required:true}]}><Input maxLength={100}/></Form.Item>
+        <Form.Item name="owner" label="责任人" rules={[{required:true}]}><Input maxLength={100}/></Form.Item>
+        <Form.Item name="requestedPorts" label="拟申请端口（不会自动授权）" extra="英文逗号分隔，如 80,443；空值表示未申请">
+          <Input placeholder="80, 443"/>
+        </Form.Item>
+      </Form>
+    </Modal>
+    <Modal title={'编辑资产：'+(editing?.address??'')} open={!!editing}
+      onCancel={()=>setEditing(null)} onOk={()=>editForm.submit()} okButtonProps={{loading:saving}}>
+      <Form form={editForm} layout="vertical" onFinish={update}>
+        <Form.Item name="businessGroup" label="业务组" rules={[{required:true}]}><Input maxLength={100}/></Form.Item>
+        <Form.Item name="owner" label="责任人" rules={[{required:true}]}><Input maxLength={100}/></Form.Item>
+        <Form.Item name="requestedPorts" label="拟申请端口" extra="只是申请记录，不是扫描授权"><Input/></Form.Item>
+      </Form>
+    </Modal>
+  </div>;
 };

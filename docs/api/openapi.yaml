@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Scanner Platform UI API (Phase 0 contract)
-  version: 0.2.0
+  version: 0.3.0
   description: |
     Canonical contract for the control-plane UI. This is a scaffold, not an
     authorization to scan. Local development mode implements SQLite-backed
@@ -14,6 +14,7 @@ tags:
   - name: system
   - name: future
   - name: accounts
+  - name: assets
 paths:
   /healthz:
     get:
@@ -156,13 +157,13 @@ paths:
         '403': {description: Forbidden update}
   /api/v1/assets:
     get:
-      tags: [future]
-      summary: Future authorized asset list (not implemented)
+      tags: [assets]
+      summary: Authenticated SQLite asset registry list
+      security: [{sessionCookie: []}]
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        '401': {description: Missing session}
         '200':
-          description: Future asset list
+          description: Asset list (requested ports do not grant scanning permission)
           content:
             application/json:
               schema:
@@ -175,6 +176,50 @@ paths:
                         type: array
                         items:
                           $ref: '#/components/schemas/Asset'
+    post:
+      tags: [assets]
+      summary: Register an asset and unapproved port requests
+      description: Only admin or security_engineer can register assets. Does not approve ports or start scanning.
+      security: [{sessionCookie: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/NewAssetRequest'}
+      responses:
+        '201':
+          description: Newly registered asset
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Asset'}
+        '400': {description: Invalid address, metadata or port request}
+        '403': {description: Insufficient role}
+        '409': {description: Duplicate asset}
+  /api/v1/assets/{id}:
+    patch:
+      tags: [assets]
+      summary: Update owner, business group and unapproved port requests
+      description: Only admin or security_engineer. Asset address and kind are immutable.
+      security: [{sessionCookie: []}]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/EditAssetRequest'}
+      responses:
+        '200':
+          description: Updated asset
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Asset'}
+        '400': {description: Invalid metadata or port request}
+        '403': {description: Insufficient role}
+        '404': {description: No matching asset}
   /api/v1/port-quarantines:
     get:
       tags: [future]
@@ -400,6 +445,30 @@ components:
         start: {type: string, pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'}
         end: {type: string, pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'}
         timeZone: {type: string, example: Asia/Shanghai}
+    NewAssetRequest:
+      type: object
+      required: [kind, address, businessGroup, owner, requestedPorts]
+      properties:
+        kind: {type: string, enum: [host, image_repo]}
+        address: {type: string, description: Numeric host IP or registry path}
+        businessGroup: {type: string, maxLength: 100}
+        owner: {type: string, maxLength: 100}
+        requestedPorts:
+          type: array
+          maxItems: 50
+          uniqueItems: true
+          items: {type: integer, minimum: 1, maximum: 65535}
+    EditAssetRequest:
+      type: object
+      required: [businessGroup, owner, requestedPorts]
+      properties:
+        businessGroup: {type: string, maxLength: 100}
+        owner: {type: string, maxLength: 100}
+        requestedPorts:
+          type: array
+          maxItems: 50
+          uniqueItems: true
+          items: {type: integer, minimum: 1, maximum: 65535}
     AssetPort:
       type: object
       required: [port, kind, source]
@@ -434,6 +503,11 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AssetPort'
+        requestedPorts:
+          type: array
+          description: Unapproved registration requests, never scanning grants
+          maxItems: 50
+          items: {type: integer, minimum: 1, maximum: 65535}
         quarantinedPorts:
           type: array
           items: {type: integer, minimum: 1, maximum: 65535}

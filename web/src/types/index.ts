@@ -37,6 +37,7 @@ export interface Asset {
   owner: string;
   createdAt: string;
   ports: AssetPort[];
+  requestedPorts?: number[]; // Registration request only; NOT an approved scan port
   quarantinedPorts?: number[];
 }
 

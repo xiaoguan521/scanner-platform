@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"scanner-platform/internal/account"
+	"scanner-platform/internal/assets"
 )
 
 const sessionCookie = "scanner_session"
@@ -120,7 +121,7 @@ func auth(s account.Repository, adminOnly bool, next func(http.ResponseWriter, *
 
 // NewDevelopmentHandler builds the minimal authenticated UI API.
 // All scanner endpoints remain in the fail-closed scaffold handler.
-func NewDevelopmentHandler(s account.Repository) http.Handler {
+func NewDevelopmentHandler(s account.Repository, assetStore assets.Repository) http.Handler {
 	mux := http.NewServeMux()
 	limiter := &loginLimiter{}
 	scaffold := NewScaffoldHandler("sec-server")
@@ -128,12 +129,12 @@ func NewDevelopmentHandler(s account.Repository) http.Handler {
 	mux.HandleFunc("GET /api/v1/system/status", func(w http.ResponseWriter, r *http.Request) {
 		respond(w, 200, Status{
 			Role: "sec-server", Phase: "Phase 0 / early MVP", State: "SCAFFOLD", Ready: false,
-			Enabled:     []string{"local-status", "authentication", "user-management", "rbac-users"},
+			Enabled:     []string{"local-status", "database", "authentication", "user-management", "asset-registry", "rbac-users"},
 			Unavailable: []string{"node-api", "task-dispatch", "scanning", "rule-activation"},
 		})
 	})
 	mux.HandleFunc("GET /api/v1/system/capabilities", func(w http.ResponseWriter, r *http.Request) {
-		respond(w, 200, map[string]any{"enabled": []string{"local-status", "authentication", "user-management", "rbac-users"}, "unavailable": []string{"node-api", "task-dispatch", "scanning", "rule-activation"}})
+		respond(w, 200, map[string]any{"enabled": []string{"local-status", "database", "authentication", "user-management", "asset-registry", "rbac-users"}, "unavailable": []string{"node-api", "task-dispatch", "scanning", "rule-activation"}})
 	})
 	mux.HandleFunc("POST /api/v1/auth/login", func(w http.ResponseWriter, r *http.Request) {
 		if !mutationGuard(w, r) {
@@ -240,6 +241,67 @@ func NewDevelopmentHandler(s account.Repository) http.Handler {
 			return
 		}
 		respond(w, 200, user)
+	}))
+
+	mux.HandleFunc("GET /api/v1/assets", auth(s, false, func(w http.ResponseWriter, r *http.Request, _ account.User) {
+		list, err := assetStore.List(r.Context())
+		if err != nil {
+			bad(w, http.StatusInternalServerError, "db_error")
+			return
+		}
+		respond(w, http.StatusOK, ListResponse[assets.Asset]{Items: list, Total: len(list)})
+	}))
+	mux.HandleFunc("POST /api/v1/assets", auth(s, false, func(w http.ResponseWriter, r *http.Request, user account.User) {
+		if user.Role != "admin" && user.Role != "security_engineer" {
+			bad(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		if !mutationGuard(w, r) {
+			return
+		}
+		var input assets.Input
+		if !readJSON(w, r, &input) {
+			return
+		}
+		item, err := assetStore.Create(r.Context(), user.ID, input)
+		if err != nil {
+			switch {
+			case errors.Is(err, assets.ErrInvalid):
+				bad(w, 400, "invalid_asset")
+			case errors.Is(err, assets.ErrDuplicate):
+				bad(w, 409, "asset_exists")
+			default:
+				bad(w, 500, "db_error")
+			}
+			return
+		}
+		respond(w, http.StatusCreated, item)
+	}))
+	mux.HandleFunc("PATCH /api/v1/assets/{id}", auth(s, false, func(w http.ResponseWriter, r *http.Request, user account.User) {
+		if user.Role != "admin" && user.Role != "security_engineer" {
+			bad(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		if !mutationGuard(w, r) {
+			return
+		}
+		var input assets.Edit
+		if !readJSON(w, r, &input) {
+			return
+		}
+		item, err := assetStore.Update(r.Context(), user.ID, r.PathValue("id"), input)
+		if err != nil {
+			switch {
+			case errors.Is(err, assets.ErrInvalid):
+				bad(w, 400, "invalid_asset")
+			case errors.Is(err, assets.ErrNotFound):
+				bad(w, 404, "not_found")
+			default:
+				bad(w, 500, "db_error")
+			}
+			return
+		}
+		respond(w, http.StatusOK, item)
 	}))
 	return mux
 }

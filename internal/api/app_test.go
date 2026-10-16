@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"scanner-platform/internal/account"
+	"scanner-platform/internal/assets"
 )
 
 func TestUserAPILoginRBACAndLogout(t *testing.T) {
@@ -21,7 +22,11 @@ func TestUserAPILoginRBACAndLogout(t *testing.T) {
 	if err := store.InitAdmin(context.Background(), "siteadmin", "Test-Secure-Password-123"); err != nil {
 		t.Fatal(err)
 	}
-	handler := NewDevelopmentHandler(store)
+	assetStore, err := assets.New(store.SQLDB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := NewDevelopmentHandler(store, assetStore)
 	send := func(method, path, payload string, cookie *http.Cookie, header bool) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, bytes.NewBufferString(payload))
 		req.RemoteAddr = "127.0.0.1:57432"

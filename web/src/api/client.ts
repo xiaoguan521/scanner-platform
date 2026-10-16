@@ -68,6 +68,12 @@ export const apiClient = {
   updateUser(id: string, role: UserRole, isActive: boolean) {
     return requestJSON<User>('/api/v1/users/' + encodeURIComponent(id), 'PATCH', {role,isActive});
   },
+  createAsset(input: {kind: Asset['kind']; address: string; businessGroup: string; owner: string; requestedPorts: number[]}) {
+    return requestJSON<Asset>('/api/v1/assets', 'POST', input);
+  },
+  updateAsset(id: string, input: {businessGroup: string; owner: string; requestedPorts: number[]}) {
+    return requestJSON<Asset>('/api/v1/assets/' + encodeURIComponent(id), 'PATCH', input);
+  },
 };
 // Other business mutations intentionally remain unavailable. The Server owns
 // authorization, scope approval, FIXED and rule activation.

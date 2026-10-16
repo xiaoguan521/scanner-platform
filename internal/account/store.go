@@ -89,7 +89,10 @@ func New(path string) (*Store, error) {
 	}
 	return &Store{db: db}, nil
 }
-func (s *Store) Close() error { return s.db.Close() }
+
+// SQLDB exposes the single Server-owned SQLite connection to Repository adapters.
+func (s *Store) SQLDB() *sql.DB { return s.db }
+func (s *Store) Close() error   { return s.db.Close() }
 func randomID() (string, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
