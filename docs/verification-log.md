@@ -15,3 +15,4 @@
 | GitHub Actions 六平台 CI / Release（2026-10-16） | 本地 actionlint、YAML、Go 测试和六平台交叉编译/压缩包校验通过；GitHub 云端未运行 | CI 可复用且覆盖六类原生 Runner；标签构建只有完整 CI 通过才打包；发布权限仅 Release Job，标签仅创建 Draft + Pre-release。Go 工具链以 go.mod 的 1.26.0 为准；本地 actionlint 1.7.12。运行 GitHub Actions 后需查看各 Runner 实际日志与 Release 草稿资产。 |
 | 正式客户端签名/公证和供应链证明 | 未实施 | Phase 0 归档仅是占位骨架。缺少 Windows 代码签名、macOS 签名/公证及 Artifact Attestation；不能直接当作受信任的可部署产品发布。 |
 | AGENTS 补充条款与 PR #1 拆分指令整理（2026-10-16） | make build、make lint、make test（含 -race）及文档一致性检查通过；未执行代码拆分 | 第 8.3 节合入人工评审范围，第 9–13 节与补充文件一致，硬规则 1–49 连续且无重复，保留 PR A 的 11 个评审问题；固定源 diff 的 55 个文件均可归入方案，共享片段及第 29/38/45 条冲突已列明。人工授权暂时维持 Public，不更改可见性；main ruleset 尚未要求 PR 评审和 CI，未找到 CODEOWNERS。补充条款待人工合并，portable 去留、规则冲突及关闭原 PR 均未获决定；历史信息排查与后续各代码 PR 的独立验收未完成。 |
+| 按日计划补入文档 PR #2（2026-10-16） | 文档一致性与差异检查通过；本轮仅修改文档 | 纳入此前未跟踪的 dev-plan-daily.md，纠正 CURRENT 尚未开发和直接合并原 PR #1 的陈旧描述，明确替代 PR A 的评审与原 PR 的人工关闭条件；真实 Harbor 样本清单仅保留在获批环境，不提交仓库。未改变任务验收状态，计划仍待人工确认；未创建 A/B/C，未关闭或合并任何 PR。 |
