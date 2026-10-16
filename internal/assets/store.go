@@ -73,6 +73,31 @@ func New(db *sql.DB) (*Store, error) {
     asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
     port INTEGER NOT NULL CHECK(port BETWEEN 1 AND 65535),
     PRIMARY KEY(asset_id,port))`,
+		`CREATE TABLE IF NOT EXISTS asset_port_request_authors (
+    asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    port INTEGER NOT NULL CHECK(port BETWEEN 1 AND 65535),
+    requested_by TEXT NOT NULL REFERENCES users(id),
+    PRIMARY KEY(asset_id,port))`,
+		`CREATE TABLE IF NOT EXISTS asset_ports (
+    asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    port INTEGER NOT NULL CHECK(port BETWEEN 1 AND 65535),
+    kind TEXT NOT NULL CHECK(kind IN ('WEB','NON_WEB','EXCLUDED_PROXY')),
+    source TEXT NOT NULL,
+    PRIMARY KEY(asset_id,port))`,
+		`CREATE TABLE IF NOT EXISTS port_quarantine (
+    asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    port INTEGER NOT NULL CHECK(port BETWEEN 1 AND 65535),
+    reason TEXT NOT NULL, detected_at TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(status IN ('ACTIVE','RELEASED')),
+    reviewed_by TEXT, reviewed_at TEXT,
+    PRIMARY KEY(asset_id,port))`,
+		`CREATE TABLE IF NOT EXISTS asset_port_reviews (
+    asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+    port INTEGER NOT NULL CHECK(port BETWEEN 1 AND 65535),
+    status TEXT NOT NULL CHECK(status IN ('APPROVED','REJECTED')),
+    reviewed_by TEXT NOT NULL REFERENCES users(id),
+    approval_ticket TEXT NOT NULL,reviewed_at TEXT NOT NULL,
+    review_note TEXT NOT NULL DEFAULT '',PRIMARY KEY(asset_id,port))`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			return nil, fmt.Errorf("initialize asset schema: %w", err)
@@ -139,9 +164,12 @@ func auditTx(ctx context.Context, tx *sql.Tx, actor, action, id string) error {
  VALUES (?,?,?,'asset',?,'',?)`, key, actor, action, id, time.Now().UTC().Format(time.RFC3339Nano))
 	return err
 }
-func storeRequests(ctx context.Context, tx *sql.Tx, id string, ports []int) error {
+func storeRequests(ctx context.Context, tx *sql.Tx, id, actor string, ports []int) error {
 	for _, port := range ports {
 		if _, err := tx.ExecContext(ctx, "INSERT INTO asset_port_requests(asset_id,port) VALUES (?,?)", id, port); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, "INSERT INTO asset_port_request_authors(asset_id,port,requested_by) VALUES (?,?,?)", id, port, actor); err != nil {
 			return err
 		}
 	}
@@ -201,6 +229,47 @@ func (s *Store) List(ctx context.Context) ([]Asset, error) {
 			return nil, err
 		}
 	}
+
+	for i := range result {
+		approved, err := s.db.QueryContext(ctx, `SELECT p.port,p.kind,p.source FROM asset_ports p
+        WHERE p.asset_id=? AND NOT EXISTS(
+          SELECT 1 FROM port_quarantine q
+           WHERE q.asset_id=p.asset_id AND q.port=p.port AND q.status='ACTIVE'
+        ) ORDER BY p.port`, result[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		for approved.Next() {
+			var item Port
+			if err := approved.Scan(&item.Port, &item.Kind, &item.Source); err != nil {
+				approved.Close()
+				return nil, err
+			}
+			result[i].Ports = append(result[i].Ports, item)
+		}
+		err = approved.Err()
+		approved.Close()
+		if err != nil {
+			return nil, err
+		}
+		quarantine, err := s.db.QueryContext(ctx, "SELECT port FROM port_quarantine WHERE asset_id=? AND status='ACTIVE' ORDER BY port", result[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		for quarantine.Next() {
+			var port int
+			if err := quarantine.Scan(&port); err != nil {
+				quarantine.Close()
+				return nil, err
+			}
+			result[i].QuarantinedPorts = append(result[i].QuarantinedPorts, port)
+		}
+		err = quarantine.Err()
+		quarantine.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
 	return result, nil
 }
 func (s *Store) Create(ctx context.Context, actor string, in Input) (Asset, error) {
@@ -230,7 +299,7 @@ func (s *Store) Create(ctx context.Context, actor string, in Input) (Asset, erro
 		}
 		return Asset{}, fmt.Errorf("create asset: %w", err)
 	}
-	if err := storeRequests(ctx, tx, id, in.RequestedPorts); err != nil {
+	if err := storeRequests(ctx, tx, id, actor, in.RequestedPorts); err != nil {
 		return Asset{}, err
 	}
 	if err := auditTx(ctx, tx, actor, "create_asset", id); err != nil {
@@ -268,10 +337,19 @@ func (s *Store) Update(ctx context.Context, actor, id string, edit Edit) (Asset,
 	if _, err := tx.ExecContext(ctx, "UPDATE assets SET business_group=?,owner=? WHERE id=?", edit.BusinessGroup, edit.Owner, id); err != nil {
 		return Asset{}, err
 	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM asset_port_requests WHERE asset_id=?", id); err != nil {
-		return Asset{}, err
+	// Any metadata or request edit invalidates all earlier port decisions.
+	// Never retain stale approvals when an asset is resubmitted.
+	for _, query := range []string{
+		"DELETE FROM asset_ports WHERE asset_id=?",
+		"DELETE FROM asset_port_reviews WHERE asset_id=?",
+		"DELETE FROM asset_port_request_authors WHERE asset_id=?",
+		"DELETE FROM asset_port_requests WHERE asset_id=?",
+	} {
+		if _, err := tx.ExecContext(ctx, query, id); err != nil {
+			return Asset{}, err
+		}
 	}
-	if err := storeRequests(ctx, tx, id, ports); err != nil {
+	if err := storeRequests(ctx, tx, id, actor, ports); err != nil {
 		return Asset{}, err
 	}
 	if err := auditTx(ctx, tx, actor, "update_asset", id); err != nil {
@@ -283,5 +361,6 @@ func (s *Store) Update(ctx context.Context, actor, id string, edit Edit) (Asset,
 	a.BusinessGroup = edit.BusinessGroup
 	a.Owner = edit.Owner
 	a.RequestedPorts = ports
+	a.Ports = []Port{}
 	return a, nil
 }

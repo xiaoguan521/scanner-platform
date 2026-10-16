@@ -1,4 +1,4 @@
-import type { Asset, AuthorizedScope, Finding, NodeInfo, PortQuarantine, RuleBundle, ScanTask, User, UserRole } from '../types';
+import type { Asset, AuthorizedScope, Finding, NodeInfo, PortQuarantine, RuleBundle, ScanTask, User, UserRole, PortRequest, TimeWindow, ApprovalDecision } from '../types';
 
 export const dataMode: 'demo' | 'server' = import.meta.env.VITE_DATA_MODE === 'server' ? 'server' : 'demo';
 export const isDemoMode = dataMode === 'demo';
@@ -19,6 +19,7 @@ export interface Resources {
   assets: Asset;
   'port-quarantines': PortQuarantine;
   scopes: AuthorizedScope;
+  'port-requests': PortRequest;
   tasks: ScanTask;
   findings: Finding;
   nodes: NodeInfo;
@@ -74,6 +75,15 @@ export const apiClient = {
   updateAsset(id: string, input: {businessGroup: string; owner: string; requestedPorts: number[]}) {
     return requestJSON<Asset>('/api/v1/assets/' + encodeURIComponent(id), 'PATCH', input);
   },
+  requestScope(input: {assetId:string; timeWindows:TimeWindow[]; expiresAt:string}) {
+    return requestJSON<AuthorizedScope>('/api/v1/scopes', 'POST', input);
+  },
+  reviewScope(id:string, decision:ApprovalDecision) {
+    return requestJSON<AuthorizedScope>('/api/v1/scopes/' + encodeURIComponent(id) + '/review', 'POST', decision);
+  },
+  reviewPort(assetId:string, port:number, decision:ApprovalDecision) {
+    return requestJSON<PortRequest>('/api/v1/port-requests/' + encodeURIComponent(assetId) + '/' + port + '/review', 'POST', decision);
+  },
 };
-// Other business mutations intentionally remain unavailable. The Server owns
-// authorization, scope approval, FIXED and rule activation.
+// Approval endpoints are administrative records only; no execution leases or
+// scanner operations are exposed. The Server retains all execution decisions.

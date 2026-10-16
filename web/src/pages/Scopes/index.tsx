@@ -1,211 +1,195 @@
-import React, { useState } from 'react';
-import {
-  Card,
-  Table,
-  Tag,
-  Button,
-  Space,
-  Modal,
-  Form,
-  Input,
-  InputNumber,
-  Select,
-  Alert,
-  message,
-  Typography,
-} from 'antd';
-import {
-  PlusOutlined,
-  CalendarOutlined,
-  AuditOutlined,
-  CheckCircleOutlined,
-  ClockCircleOutlined,
-} from '@ant-design/icons';
-import { mockScopes } from '../../mock/data';
-import { AuthorizedScope } from '../../types';
-import { isDemoMode } from '../../api/client';
+import React, { useMemo, useState } from 'react';
+import { Alert, Button, Card, Form, Input, message, Modal, Select, Space, Table, Tag, Typography } from 'antd';
+import { PlusOutlined } from '@ant-design/icons';
+import { apiClient, isDemoMode } from '../../api/client';
 import { useCollection } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
+import { useAuth } from '../../auth/AuthProvider';
+import { mockAssets, mockScopes } from '../../mock/data';
+import type { ApprovalDecision, AuthorizedScope, PortRequest, ReviewStatus, TimeWindow } from '../../types';
 
 const { Text } = Typography;
+const weekdays = [
+  { value: 1, label: '周一' }, { value: 2, label: '周二' },
+  { value: 3, label: '周三' }, { value: 4, label: '周四' },
+  { value: 5, label: '周五' }, { value: 6, label: '周六' }, { value: 0, label: '周日' },
+];
+const statusNames: Record<ReviewStatus | 'REVOKED', string> = {
+  PENDING: '待审核', APPROVED: '已批准', REJECTED: '已驳回', REVOKED: '已撤销',
+};
+type ScopeForm = {
+  assetId: string;
+  weekdays: number[];
+  start: string;
+  end: string;
+  timeZone: string;
+  expiresAt: string;
+};
+type ReviewTarget = { kind: 'scope'; id: string; requestedBy?: string } |
+  { kind: 'port'; id: string; port: number; requestedBy?: string };
 
 export const ScopesPage: React.FC = () => {
+  const { user } = useAuth();
   const { data: scopes, setData: setScopes, loading, error } = useCollection('scopes', mockScopes);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [form] = Form.useForm();
+  const { data: assets } = useCollection('assets', mockAssets);
+  const { data: ports, setData: setPorts, loading: portsLoading, error: portsError } =
+    useCollection('port-requests', []);
+  const canRequest = !isDemoMode && (user?.role === 'admin' || user?.role === 'security_engineer');
+  const canReview = !isDemoMode && (user?.role === 'admin' || user?.role === 'ops_approver');
+  const [requestOpen, setRequestOpen] = useState(false);
+  const [reviewTarget, setReviewTarget] = useState<ReviewTarget | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [requestForm] = Form.useForm<ScopeForm>();
+  const [reviewForm] = Form.useForm<ApprovalDecision>();
+  const pendingPortReview = reviewTarget?.kind === 'port';
+  const hostAssets = useMemo(() => assets.filter(asset => asset.kind === 'host'), [assets]);
+  const scopeStatus = (scope: AuthorizedScope): ReviewStatus | 'REVOKED' =>
+    scope.status ?? (scope.isActive ? 'APPROVED' : 'PENDING');
 
-  const handleAddScope = (values: any) => {
-    if (!isDemoMode) return message.warning('正式授权必须经 Server 审批');
-    const newScope: AuthorizedScope = {
-      id: `scope-${Date.now().toString().slice(-4)}`,
-      cidrOrHost: values.cidrOrHost,
-      maxTargets: values.maxTargets || 128,
-      timeWindows: [
-        {
-          weekdays: values.weekdays || [1, 2, 3, 4, 5],
-          start: values.start || '01:00',
-          end: values.end || '05:00',
-          timeZone: 'Asia/Shanghai',
-        },
-      ],
-      approvedBy: values.approvedBy,
-      approvalTicket: values.approvalTicket,
-      expiresAt: values.expiresAt || new Date(Date.now() + 30 * 86400000).toISOString(),
-      isActive: false, // Frontend form input is not an actual approval.
-    };
-    setScopes((prev) => [newScope, ...prev]);
-    message.info('仅演示：新增未审批的范围草稿；Server 未发生变更');
-    setIsModalOpen(false);
-    form.resetFields();
+  const requestScope = async (values: ScopeForm) => {
+    if (!canRequest) return;
+    setBusy(true);
+    try {
+      const expiry = new Date(values.expiresAt);
+      if (!Number.isFinite(expiry.getTime())) throw new Error('请选择有效的截止时间');
+      if (values.start >= values.end) throw new Error('当前版本只支持同一天内的时间窗');
+      if (!values.weekdays?.length) throw new Error('请选择允许的星期');
+      const windows: TimeWindow[] = [{
+        weekdays: values.weekdays, start: values.start, end: values.end, timeZone: values.timeZone,
+      }];
+      const result = await apiClient.requestScope({
+        assetId: values.assetId, timeWindows: windows, expiresAt: expiry.toISOString(),
+      });
+      setScopes(prev => [result, ...prev]);
+      requestForm.resetFields();
+      setRequestOpen(false);
+      message.success('范围申请已保存，等待另一位审批人审核');
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : '提交授权申请失败');
+    } finally { setBusy(false); }
   };
-
-  const getWeekdayLabels = (weekdays: number[]) => {
-    const map = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
-    return weekdays.map((w) => map[w]).join('、');
+  const openReview = (target: ReviewTarget) => {
+    if (!canReview || target.requestedBy === user?.id) return;
+    reviewForm.setFieldsValue({ decision: 'APPROVE', approvalTicket: '', note: '', kind: 'WEB' });
+    setReviewTarget(target);
   };
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-      <CollectionNotice loading={loading} error={error} />
-      {/* 调度安全与时间窗合规说明 */}
-      <Alert
-        message="授权范围与时间窗硬约束"
-        description="所有扫描必须严格绑定经审批的 CIDR 范围和审批工单；执行期间 Worker 按目标分块执行，块与块之间严格校验时间窗，到点自然暂停，次日继续。任务具备 Worker 本地强制硬截止时间。"
-        type="info"
-        showIcon
-        icon={<AuditOutlined />}
-      />
-
-      <Card
-        title="扫描授权范围与执行时间窗"
-        bordered={false}
-        extra={
-          <Button type="primary" icon={<PlusOutlined />} disabled={!isDemoMode}
-          onClick={() => setIsModalOpen(true)}>
-            新建范围授权与时间窗
-          </Button>
-        }
-      >
-        <Table
-          dataSource={scopes}
-          rowKey="id"
-          columns={[
-            { title: '授权 ID', dataIndex: 'id', width: 110 },
-            {
-              title: '授权范围 / CIDR',
-              dataIndex: 'cidrOrHost',
-              render: (text: string) => <Tag color="blue">{text}</Tag>,
-            },
-            {
-              title: '规模上限',
-              dataIndex: 'maxTargets',
-              width: 120,
-              render: (val: number) => `${val} 主机`,
-            },
-            {
-              title: '允许扫描时间窗 (Windows)',
-              dataIndex: 'timeWindows',
-              render: (windows) => {
-                if (!windows || windows.length === 0) return <Text type="secondary">全天禁止</Text>;
-                return (
-                  <Space direction="vertical" size={2}>
-                    {windows.map((w: any, idx: number) => (
-                      <div key={idx} style={{ fontSize: 13 }}>
-                        <ClockCircleOutlined style={{ marginRight: 6, color: '#fa8c16' }} />
-                        <span>{getWeekdayLabels(w.weekdays)}</span>
-                        <Tag color="orange" style={{ marginLeft: 8 }}>
-                          {w.start} ~ {w.end} ({w.timeZone})
-                        </Tag>
-                      </div>
-                    ))}
-                  </Space>
-                );
-              },
-            },
-            {
-              title: '审批凭据 / 工单',
-              render: (_, record) => (
-                <Space direction="vertical" size={2}>
-                  <Text strong>{record.approvalTicket}</Text>
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    审批人: {record.approvedBy}
-                  </Text>
-                </Space>
-              ),
-            },
-            {
-              title: '有效期截止',
-              dataIndex: 'expiresAt',
-              width: 170,
-            },
-            {
-              title: '生效状态',
-              dataIndex: 'isActive',
-              width: 100,
-              render: (active: boolean) => (
-                <Tag color={active ? 'success' : 'default'} icon={active ? <CheckCircleOutlined /> : undefined}>
-                  {active ? '已生效' : '已归档'}
-                </Tag>
-              ),
-            },
-          ]}
-        />
-      </Card>
-
-      <Modal
-        title="演示：创建未审批范围草稿"
-        open={isModalOpen}
-        onCancel={() => setIsModalOpen(false)}
-        onOk={() => form.submit()}
-        okButtonProps={{ disabled: !isDemoMode }}
-      >
-        <Form form={form} layout="vertical" onFinish={handleAddScope}>
-          <Form.Item
-            name="cidrOrHost"
-            label="授权目标网段 (CIDR) 或主机"
-            rules={[{ required: true, message: '请输入授权网段' }]}
-            extra="Worker 不展开 CIDR，由控制面在下发前计算固定为 IP:端口"
-          >
-            <Input placeholder="例如: 192.0.2.0/24" />
-          </Form.Item>
-          <Form.Item name="maxTargets" label="最大允许目标数上限" initialValue={128}>
-            <InputNumber min={1} max={1024} style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item
-            name="approvalTicket"
-            label="审批工单编号"
-            rules={[{ required: true, message: '必须具备审批工单' }]}
-          >
-            <Input placeholder="例如: SEC-APPROVAL-202610-120" />
-          </Form.Item>
-          <Form.Item
-            name="approvedBy"
-            label="工单审批人"
-            rules={[{ required: true, message: '请填写审批人' }]}
-          >
-            <Input placeholder="例如: 刘主管 (安全运营部)" />
-          </Form.Item>
-          <Form.Item name="weekdays" label="时间窗允许日期" initialValue={[1, 2, 3, 4, 5]}>
-            <Select mode="multiple">
-              <Select.Option value={1}>周一</Select.Option>
-              <Select.Option value={2}>周二</Select.Option>
-              <Select.Option value={3}>周三</Select.Option>
-              <Select.Option value={4}>周四</Select.Option>
-              <Select.Option value={5}>周五</Select.Option>
-              <Select.Option value={6}>周六</Select.Option>
-              <Select.Option value={0}>周日</Select.Option>
-            </Select>
-          </Form.Item>
-          <Space style={{ display: 'flex' }}>
-            <Form.Item name="start" label="起始时间 (HH:MM)" initialValue="01:00">
-              <Input placeholder="01:00" />
-            </Form.Item>
-            <Form.Item name="end" label="结束时间 (HH:MM)" initialValue="05:00">
-              <Input placeholder="05:00" />
-            </Form.Item>
-          </Space>
-        </Form>
-      </Modal>
-    </div>
+  const submitReview = async (decision: ApprovalDecision) => {
+    if (!canReview || !reviewTarget) return;
+    setBusy(true);
+    try {
+      if (reviewTarget.kind === 'scope') {
+        const updated = await apiClient.reviewScope(reviewTarget.id, decision);
+        setScopes(prev => prev.map(s => s.id === updated.id ? updated : s));
+      } else {
+        const updated = await apiClient.reviewPort(reviewTarget.id, reviewTarget.port, decision);
+        setPorts(prev => prev.map(p =>
+          p.assetId === updated.assetId && p.port === updated.port ? updated : p));
+      }
+      setReviewTarget(null);
+      message.success(decision.decision === 'APPROVE' ? '审批结果已记录' : '驳回结果已记录');
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : '审批失败，记录未改变');
+    } finally { setBusy(false); }
+  };
+  const renderDecision = (status: ReviewStatus | 'REVOKED', target: ReviewTarget) => (
+    <Space>
+      <Tag color={status === 'APPROVED' ? 'green' : status === 'REJECTED' ? 'red' : 'gold'}>
+        {statusNames[status]}
+      </Tag>
+      {status === 'PENDING' && <Button size="small" disabled={!canReview || target.requestedBy === user?.id}
+        onClick={() => openReview(target)}>审核</Button>}
+    </Space>
   );
+
+  return <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <CollectionNotice loading={loading || portsLoading} error={error || portsError} />
+    <Alert showIcon type="warning" message="审批记录不等于扫描执行许可"
+      description="当前只保存已登记主机 IP 的授权申请及端口人工审核结果。完整的任务准入、租约、网络围栏及扫描器仍未连通，审批通过不会自动发起扫描。" />
+    <Card title="扫描授权范围与执行时间窗" extra={
+      <Button type="primary" icon={<PlusOutlined />} disabled={!canRequest}
+        onClick={() => setRequestOpen(true)}>申请范围授权</Button>
+    }>
+      <Table<AuthorizedScope> dataSource={scopes} rowKey="id" loading={loading}
+        scroll={{ x: 1200 }} pagination={{ pageSize: 10 }}
+        columns={[
+          { title: '目标 IP', dataIndex: 'cidrOrHost', render: (v: string) => <Tag>{v}</Tag> },
+          { title: '上限', dataIndex: 'maxTargets', render: (v: number) => v + ' 台' },
+          { title: '允许时间', dataIndex: 'timeWindows', render: (windows: TimeWindow[]) =>
+            <Space direction="vertical" size={0}>{windows.map((w, i) =>
+              <Text key={i}>{w.weekdays.map(day => weekdays.find(d => d.value === day)?.label).join('、')}
+                {' '}{w.start}–{w.end} ({w.timeZone})</Text>)}</Space> },
+          { title: '截止时间', dataIndex: 'expiresAt', render: (v: string) =>
+            v ? new Date(v).toLocaleString() : '未填写' },
+          { title: '审批单', render: (_: unknown, scope: AuthorizedScope) =>
+            <Space direction="vertical" size={0}>
+              <Text>{scope.approvalTicket || '待审批'}</Text>
+              <Text type="secondary">{scope.approvedBy || '无审批人'}</Text>
+            </Space> },
+          { title: '状态', render: (_: unknown, scope: AuthorizedScope) =>
+            <Space direction="vertical">
+              {renderDecision(scopeStatus(scope), {kind:'scope',id:scope.id,requestedBy:scope.requestedBy})}
+              {scopeStatus(scope) === 'APPROVED' && !scope.isActive && <Tag>已过期</Tag>}
+            </Space> },
+        ]} />
+    </Card>
+    <Card title="资产端口申请审批" extra={<Text type="secondary">仅人工审核已登记端口，未实现扫描任务派发</Text>}>
+      <Table<PortRequest> dataSource={ports} loading={portsLoading} pagination={{pageSize:10}}
+        rowKey={p => p.assetId + ':' + p.port} scroll={{x:1050}}
+        columns={[
+          {title:'资产地址',dataIndex:'address'},
+          {title:'端口',dataIndex:'port'},
+          {title:'端口类型',dataIndex:'kind',render:(v:string)=>v||'待审核'},
+          {title:'状态',render: (_:unknown, p:PortRequest) =>
+            renderDecision(p.status,{kind:'port',id:p.assetId,port:p.port,requestedBy:p.requestedBy})},
+          {title:'审批单',dataIndex:'approvalTicket',render:(v:string)=>v||'—'},
+          {title:'审核人',dataIndex:'reviewedBy',render:(v:string)=>v||'—'},
+          {title:'备注',dataIndex:'reviewNote'},
+        ]}/>
+    </Card>
+    <Modal title="申请扫描授权（单个主机 IP）" open={requestOpen}
+      onCancel={()=>setRequestOpen(false)} onOk={()=>requestForm.submit()} okButtonProps={{loading:busy}}>
+      <Form<ScopeForm> form={requestForm} layout="vertical" onFinish={requestScope}
+        initialValues={{weekdays:[1,2,3,4,5],start:'09:00',end:'18:00',timeZone:'Asia/Shanghai'}}>
+        <Form.Item name="assetId" label="从资产台账选择主机" rules={[{required:true}]}>
+          <Select showSearch optionFilterProp="label" options={hostAssets.map(a=>({value:a.id,label:a.address+' ('+a.businessGroup+')'}))}/>
+        </Form.Item>
+        <Form.Item name="weekdays" label="允许星期" rules={[{required:true,type:'array',min:1}]}>
+          <Select mode="multiple" options={weekdays}/>
+        </Form.Item>
+        <Space align="start">
+          <Form.Item name="start" label="起始时间" rules={[{required:true}]}>
+            <Input placeholder="09:00" maxLength={5}/>
+          </Form.Item>
+          <Form.Item name="end" label="结束时间" rules={[{required:true}]}>
+            <Input placeholder="18:00" maxLength={5}/>
+          </Form.Item>
+        </Space>
+        <Form.Item name="timeZone" label="时区" rules={[{required:true}]}>
+          <Select options={['Asia/Shanghai','Asia/Singapore','UTC','Asia/Tokyo'].map(z=>({value:z,label:z}))}/>
+        </Form.Item>
+        <Form.Item name="expiresAt" label="授权截止时间" rules={[{required:true}]} extra="必须晚于当前时间；最大有效期为一年">
+          <Input type="datetime-local"/>
+        </Form.Item>
+      </Form>
+    </Modal>
+    <Modal title="人工审批" open={!!reviewTarget} onCancel={()=>setReviewTarget(null)}
+      onOk={()=>reviewForm.submit()} okButtonProps={{loading:busy}}>
+      <Alert type="info" showIcon style={{marginBottom:14}}
+        message="不能审批自己提交的申请；审批必须填写真实工单。"/>
+      <Form form={reviewForm} layout="vertical" onFinish={submitReview}>
+        <Form.Item name="decision" label="处理意见" rules={[{required:true}]}>
+          <Select options={[{value:'APPROVE',label:'批准'},{value:'REJECT',label:'驳回'}]}/>
+        </Form.Item>
+        {pendingPortReview && <Form.Item name="kind" label="经人工确认的端口类型" rules={[{required:true}]}>
+          <Select options={[{value:'WEB',label:'WEB（明确确认是可扫描 Web 服务）'},
+            {value:'NON_WEB',label:'非 Web（Web 扫描器不得扫描）'}]}/>
+        </Form.Item>}
+        <Form.Item name="approvalTicket" label="审批工单号" rules={[{required:true,min:3}]}>
+          <Input maxLength={120} placeholder="如 SEC-2026-001"/>
+        </Form.Item>
+        <Form.Item name="note" label="审核说明"><Input.TextArea rows={3} maxLength={400}/></Form.Item>
+      </Form>
+    </Modal>
+  </div>;
 };
+

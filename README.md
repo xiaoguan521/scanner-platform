@@ -36,6 +36,6 @@ make test-lab
 - 当前归档中的 `sec-server`、`sec-updater`、`sec-worker` 都还是安全拒绝启动的 Phase 0 骨架；`sec-portable` 现已加入构建矩阵，但目前仅有状态输出与显式开启的只读本地调试接口。构建通过不代表客户端已经可用。
 - `go.mod` 已增加纯 Go SQLite 驱动、bcrypt 和安全终端读取密码的依赖；发布仍以完整 CI 为前提。未来应独立评审发布产物的 Windows 签名、macOS 签名/公证及 Artifact Attestation，不能把普通 SHA-256 文件当作软件签名。
 
-管理员登录、创建用户、角色调整和启停账号已使用本地 SQLite；资产台账的查询、新增、编辑也已接入 SQLite（端口只登记待审批请求）；任务、漏洞及节点的真实业务仍未实现，不可据此启动实际扫描。接口契约参见 [`docs/api/README.md`](docs/api/README.md)。
+管理员登录、创建用户、角色调整和启停账号已使用本地 SQLite；资产台账的查询、新增、编辑已接入 SQLite；授权范围申请、人工审批以及端口审核代码已写入，尚待验证。任务、漏洞和节点的真实扫描业务仍未实现，不可据此启动实际扫描。接口契约参见 [`docs/api/README.md`](docs/api/README.md)。
 
 相关本地与云端验证记录见 `docs/verification-log.md`。

@@ -23,6 +23,7 @@ import (
 
 	"scanner-platform/internal/account"
 	"scanner-platform/internal/api"
+	"scanner-platform/internal/approvals"
 	"scanner-platform/internal/assets"
 )
 
@@ -156,7 +157,12 @@ func Run(role Role, args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "initialize asset database: %v\n", err)
 			return 1
 		}
-		handler = api.NewDevelopmentHandler(store, assetStore)
+		approvalStore, err := approvals.New(store.SQLDB())
+		if err != nil {
+			fmt.Fprintf(stderr, "initialize approvals: %v\n", err)
+			return 1
+		}
+		handler = api.NewDevelopmentHandler(store, assetStore, approvalStore)
 	}
 	if err := serveDevAPI(ctx, string(role), *listenAddr, handler); err != nil {
 		slog.Error("development API stopped", "role", role, "error", err)

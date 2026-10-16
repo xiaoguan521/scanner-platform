@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Scanner Platform UI API (Phase 0 contract)
-  version: 0.3.0
+  version: 0.4.0
   description: |
     Canonical contract for the control-plane UI. This is a scaffold, not an
     authorization to scan. Local development mode implements SQLite-backed
@@ -15,6 +15,7 @@ tags:
   - name: future
   - name: accounts
   - name: assets
+  - name: approvals
 paths:
   /healthz:
     get:
@@ -243,13 +244,12 @@ paths:
                           $ref: '#/components/schemas/PortQuarantine'
   /api/v1/scopes:
     get:
-      tags: [future]
-      summary: Future authorized scopes list (not implemented)
+      tags: [approvals]
+      summary: Authenticated scope requests list, not execution rights
+      security: [{sessionCookie: []}]
       responses:
-        '501':
-          $ref: '#/components/responses/NotImplemented'
         '200':
-          description: Future scope list
+          description: All scope applications
           content:
             application/json:
               schema:
@@ -260,8 +260,97 @@ paths:
                     properties:
                       items:
                         type: array
-                        items:
-                          $ref: '#/components/schemas/AuthorizedScope'
+                        items: {$ref: '#/components/schemas/AuthorizedScope'}
+        '401': {description: Missing session}
+    post:
+      tags: [approvals]
+      summary: Apply for scope of a registered numeric host IP
+      description: Requires admin or security_engineer; application starts PENDING.
+      security: [{sessionCookie: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ScopeApplication'}
+      responses:
+        '201':
+          description: Pending request (not a Worker scan grant)
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AuthorizedScope'}
+        '400': {description: Invalid scope or time window}
+        '403': {description: Insufficient role}
+  /api/v1/scopes/{id}/review:
+    post:
+      tags: [approvals]
+      summary: Review a pending scope application
+      description: Admin or ops_approver only, and must be a different user than the applicant.
+      security: [{sessionCookie: []}]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ReviewDecision'}
+      responses:
+        '200':
+          description: Reviewed scope
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AuthorizedScope'}
+        '403': {description: Reviewer is applicant or insufficient role}
+        '409': {description: Already reviewed, expired or changed}
+  /api/v1/port-requests:
+    get:
+      tags: [approvals]
+      summary: Authenticated list of registered port requests
+      security: [{sessionCookie: []}]
+      responses:
+        '200':
+          description: Port review status and request identities
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Pagination'
+                  - type: object
+                    required: [items]
+                    properties:
+                      items:
+                        type: array
+                        items: {$ref: '#/components/schemas/PortRequest'}
+  /api/v1/port-requests/{assetId}/{port}/review:
+    post:
+      tags: [approvals]
+      summary: Explicit port review (not a scan command)
+      description: Admin or ops_approver only; reviewer cannot be request author.
+      security: [{sessionCookie: []}]
+      parameters:
+        - in: path
+          name: assetId
+          required: true
+          schema: {type: string}
+        - in: path
+          name: port
+          required: true
+          schema: {type: integer, minimum: 1, maximum: 65535}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ReviewDecision'}
+      responses:
+        '200':
+          description: Port decision recorded
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PortRequest'}
+        '403': {description: Reviewer is applicant or insufficient role}
+        '409': {description: Already reviewed or quarantined}
   /api/v1/tasks:
     get:
       tags: [future]
@@ -511,21 +600,58 @@ components:
         quarantinedPorts:
           type: array
           items: {type: integer, minimum: 1, maximum: 65535}
+    ScopeApplication:
+      type: object
+      required: [assetId, timeWindows, expiresAt]
+      properties:
+        assetId: {type: string, description: Existing asset ID for a numeric IP host}
+        timeWindows:
+          type: array
+          minItems: 1
+          maxItems: 1
+          items: {$ref: '#/components/schemas/TimeWindow'}
+        expiresAt: {type: string, format: date-time}
+    ReviewDecision:
+      type: object
+      required: [decision, approvalTicket, note]
+      properties:
+        decision: {type: string, enum: [APPROVE, REJECT]}
+        approvalTicket: {type: string, minLength: 3, maxLength: 120}
+        note: {type: string, maxLength: 400}
+        kind: {type: string, enum: [WEB, NON_WEB], description: Required for port approval}
+    PortRequest:
+      type: object
+      required: [assetId, address, port, kind, requestedBy, status, reviewedBy, approvalTicket, reviewedAt, reviewNote]
+      properties:
+        assetId: {type: string}
+        address: {type: string}
+        port: {type: integer, minimum: 1, maximum: 65535}
+        kind: {type: string}
+        requestedBy: {type: string}
+        status: {type: string, enum: [PENDING, APPROVED, REJECTED]}
+        reviewedBy: {type: string}
+        approvalTicket: {type: string}
+        reviewedAt: {type: string}
+        reviewNote: {type: string}
     AuthorizedScope:
       type: object
-      required: [id, cidrOrHost, maxTargets, timeWindows, approvedBy, approvalTicket, expiresAt, isActive]
+      required: [id, assetId, cidrOrHost, maxTargets, timeWindows, requestedBy, approvedBy, approvalTicket, expiresAt, isActive, status, reviewNote]
       properties:
         id: {type: string}
+        assetId: {type: string}
         cidrOrHost: {type: string}
         maxTargets: {type: integer, minimum: 1}
         timeWindows:
           type: array
           items:
             $ref: '#/components/schemas/TimeWindow'
+        requestedBy: {type: string}
         approvedBy: {type: string}
         approvalTicket: {type: string}
         expiresAt: {type: string, format: date-time}
         isActive: {type: boolean}
+        status: {type: string, enum: [PENDING, APPROVED, REJECTED, REVOKED]}
+        reviewNote: {type: string}
     TaskChunk:
       type: object
       required: [id, taskId, targets, status]

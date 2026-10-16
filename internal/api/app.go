@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"scanner-platform/internal/account"
+	"scanner-platform/internal/approvals"
 	"scanner-platform/internal/assets"
 )
 
@@ -121,7 +122,7 @@ func auth(s account.Repository, adminOnly bool, next func(http.ResponseWriter, *
 
 // NewDevelopmentHandler builds the minimal authenticated UI API.
 // All scanner endpoints remain in the fail-closed scaffold handler.
-func NewDevelopmentHandler(s account.Repository, assetStore assets.Repository) http.Handler {
+func NewDevelopmentHandler(s account.Repository, assetStore assets.Repository, approvalStores ...approvals.Repository) http.Handler {
 	mux := http.NewServeMux()
 	limiter := &loginLimiter{}
 	scaffold := NewScaffoldHandler("sec-server")
@@ -129,7 +130,7 @@ func NewDevelopmentHandler(s account.Repository, assetStore assets.Repository) h
 	mux.HandleFunc("GET /api/v1/system/status", func(w http.ResponseWriter, r *http.Request) {
 		respond(w, 200, Status{
 			Role: "sec-server", Phase: "Phase 0 / early MVP", State: "SCAFFOLD", Ready: false,
-			Enabled:     []string{"local-status", "database", "authentication", "user-management", "asset-registry", "rbac-users"},
+			Enabled:     []string{"local-status", "database", "authentication", "user-management", "asset-registry", "scope-proposals", "approval-reviews", "rbac-users"},
 			Unavailable: []string{"node-api", "task-dispatch", "scanning", "rule-activation"},
 		})
 	})
@@ -303,5 +304,8 @@ func NewDevelopmentHandler(s account.Repository, assetStore assets.Repository) h
 		}
 		respond(w, http.StatusOK, item)
 	}))
+	if len(approvalStores) > 0 && approvalStores[0] != nil {
+		registerApprovalHandlers(mux, s, approvalStores[0])
+	}
 	return mux
 }

@@ -58,7 +58,7 @@ export const AssetsPage: React.FC = () => {
       const result=isDemoMode?{...editing,...patch}:await apiClient.updateAsset(editing.id,patch);
       setAssets(prev=>prev.map(a=>a.id===editing.id?result:a));
       setEditing(null);
-      message[isDemoMode?'info':'success'](isDemoMode?'仅演示：更新本地数据':'资产信息已保存；拟申请端口仍未授权');
+      message[isDemoMode?'info':'success'](isDemoMode?'仅演示：更新本地数据':'资产信息已保存；原有端口审批已重置');
     }catch(e){message.error(e instanceof Error?e.message:'更新失败');}
     finally{setSaving(false);}
   };
@@ -76,7 +76,7 @@ export const AssetsPage: React.FC = () => {
     <CollectionNotice loading={loading} error={error}/>
     <Alert type="warning" showIcon
       message="资产登记 ≠ 扫描授权"
-      description="登记主机 IP、镜像仓库和拟申请端口，不会自动放行端口、创建任务或运行扫描引擎。实际授权与隔离审批尚未开放。"/>
+      description="资产及拟申请端口登记不会自动允许扫描。端口由“授权范围”页面人工审批；编辑资产会重置该资产已有端口审批。审批成功也不会自动启动扫描任务。"/>
     {!isDemoMode && <Alert type="info" showIcon message="端口隔离列表接口仍在开发中；未加载到记录不代表没有隔离端口。"/>}
     {quarantines.length > 0 && <Card title="疑似四层转发隔离区（仅演示）">
       <Table rowKey={q=>q.assetId+'-'+q.port} dataSource={quarantines} size="small" pagination={false}
@@ -95,10 +95,10 @@ export const AssetsPage: React.FC = () => {
           {title:'资产地址',dataIndex:'address',render:(value:string)=><Text strong>{value}</Text>},
           {title:'类型',dataIndex:'kind',render:(v:string)=><Tag>{v==='host'?'主机':'镜像仓库'}</Tag>},
           {title:'业务组',dataIndex:'businessGroup'},{title:'责任人',dataIndex:'owner'},
-          {title:'拟申请端口（未授权）',dataIndex:'requestedPorts',render:(ports:number[]|undefined)=>
-            ports?.length?<Space wrap>{ports.map(port=><Tag key={port} color="gold">{port} 待审批</Tag>)}</Space>:<Text type="secondary">未填写</Text>},
-          {title:'已授权端口',dataIndex:'ports',render:(ports:Asset['ports'])=>
-            ports?.length?<Space wrap>{ports.map(p=><Tag key={p.port}>{p.port} {p.kind}</Tag>)}</Space>:<Text type="secondary">无（不可扫）</Text>},
+          {title:'已登记的申请端口',dataIndex:'requestedPorts',render:(ports:number[]|undefined)=>
+            ports?.length?<Space wrap>{ports.map(port=><Tag key={port} color="gold">{port} 申请中</Tag>)}</Space>:<Text type="secondary">未填写</Text>},
+          {title:'人工批准端口（仍不可自动扫描）',dataIndex:'ports',render:(ports:Asset['ports'])=>
+            ports?.length?<Space wrap>{ports.map(p=><Tag key={p.port} color={p.kind==='WEB'?'green':'default'}>{p.port} {p.kind}</Tag>)}</Space>:<Text type="secondary">无（不可扫）</Text>},
           {title:'登记时间',dataIndex:'createdAt',render:(value:string)=>new Date(value).toLocaleString()},
           {title:'操作',render:(_:unknown,asset:Asset)=><Button type="link" disabled={!canEdit} onClick={()=>{
             editForm.setFieldsValue({businessGroup:asset.businessGroup,owner:asset.owner,requestedPorts:asset.requestedPorts?.join(', ')??''});
