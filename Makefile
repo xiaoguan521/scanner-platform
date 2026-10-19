@@ -30,6 +30,7 @@ web-build:
 
 test:
 	$(GO) test -race ./...
+	python3 -m unittest discover -s scripts -p 'test_collect_linux_inputs.py'
 
 lint:
 	@command -v $(GOFMT) >/dev/null 2>&1 || { echo 'gofmt unavailable' >&2; exit 1; }

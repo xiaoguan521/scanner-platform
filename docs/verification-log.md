@@ -6,8 +6,8 @@
 
 | 项目 | 状态 | 说明 |
 | --- | --- | --- |
-| Nuclei / Trivy 版本锁定 | 未决 | 架构文档要求固定版本，但当前没有批准的版本号或二进制。版本确定后再运行 `make verify-flags`。 |
-| 引擎参数白名单 | 未验证 | 按架构文档 §13 在锁定版本上核对；特别是被标记为“待核对”的参数，在核验通过前不得用于运行扫描。 |
+| Nuclei / Trivy / ZAP 版本锁定 | 本机核验通过 | 3.11.1 / 0.76.0 / 2.17.0，官方程序版本、下载哈希与参数已在本机核对；见 2026-10-16 及后续记录。 |
+| 引擎参数白名单 | 已安装版本核验通过 | `make verify-flags` 对实际帮助核对；2026-10-19 新增 rootfs 与 OS 包类型参数，不代表真实服务器已验收。 |
 | Phase 0 PoC | 未运行 | 真实扫描、防火墙和抓包验证只允许在隔离实验环境开展。 |
 | PoC #1 应用层准入（2026-10-16） | 单元测试通过，实验验收未运行 | 显式 IP:端口、审批/到期、端口隔离、时间窗均为纯逻辑验证；网络围栏、降权、DROP 告警和隔离靶场验收未做。 |
 | PoC #1 Linux 围栏与受限启动预备代码（2026-10-16） | 本地模拟通过，实验待验证 | nftables 原子规则、默认 DROP、精确协议+IP:端口白名单，netns 父句柄检查及 setpriv 去特权启动参数已实现；未接入 cmd/worker，未在 Linux 实测 nft 和 setpriv。必须人工核对 Linux 工具版本、ns 隔离有效性、内核行为、实际无外联和 DROP 统计。 |
@@ -60,3 +60,16 @@
 操作说明：`docs/engines.md`。所有真实任务都由用户明确选引擎后创建，目标在创建和领取时复核；未检出不自动转 FIXED。本文计数只记录夹具验证摘要，不包含真实扫描结果或资产数据。
 
 同日补充：Worker 会在发送前检查结果 JSON 的 4 MiB 上限，超出时回报明确失败并提示拆分输入，避免请求被拒后任务停留在执行中。新增超大结果回归测试；`go test -race ./internal/taskflow ./internal/api` 与 `make build` 通过。此项不改变 API 字段或现有大小限制。
+
+## 2026-10-19：Linux 软件包快照与混合部署输入
+
+- 新增 Trivy `rootfs --pkg-types os` 任务；API、Server 校验、调度输入、Worker、前端类型与 OpenAPI 同步。仍在已有任务/发现项页面操作；新增按目标、组件或 CVE 筛选，修正窄窗口下 CVE 和指纹挤压。系统包指纹忽略临时分析路径，使用稳定输入别名、包、安装版本与 CVE。
+- 新增标准库 Python Linux 采集工具：只复制发行版/包数据库、明确指定的应用依赖文件、指定本地 Docker 镜像或预先导出的归档。RPM SQLite 使用一致备份（含已提交 WAL）；不枚举镜像/容器/集群，不自动登录，不执行应用，不保存 kubeconfig 或 Docker 凭据。每个组件生成文件 SHA-256 清单；输出私有权限并自带忽略全部内容的 `.gitignore`。
+- Worker 扫描前后核对快照，拒绝漏传、修改、未声明文件、符号链接和越界路径。哈希阶段保留 context 取消/截止语义。采集失败不发布完整目录、不覆盖现有输出。
+- 修复固定 Trivy 对 OCI tar 的输入差异：该版本要求 OCI layout 目录。Worker 私有解包白名单布局，核对 blob SHA-256，拒绝穿越、链接、重复、缺失或多平台歧义，不解开容器层，结束后清理；Docker tar 保持直接输入。
+- 系统包检查使用实际发行版 ID；麒麟等未适配源明确失败，忽略 `ID_LIKE` 的厂商替代含义。不把 CentOS Stream / RHEL 10 的 SBOM 能力当作当前漏洞覆盖。Worker 只把显式定义的安全提示回传网页，原始诊断仍留在私有日志。
+- `make build`、`make lint`、`make test`（race 与采集工具 8 项测试）、Server/Demo 前端构建通过；Linux amd64/arm64、Windows amd64 交叉编译通过。仅表示可编译，未在这些 Linux 系统或 CPU 上运行引擎。
+- `make verify-flags` 核对 Nuclei 23 / Trivy 18 / ZAP 7 个参数；快照 JSON fuzz 实际运行约 32 万次，无失败；新 Linux release 与 OCI tar fuzz 入口包含在单元测试。
+- 原有 `scripts/test_local.py` 9 组普通业务回归通过。`LAB_ENV=isolated python3 scripts/test_engines_local.py` 完整通过：合成 Debian 系统包 49 条、选定 Node 依赖 5 条、Docker 与 OCI 归档各 49 条且相同镜像跨格式去重；重复系统检查不重复，修改快照拒绝，模拟麒麟发行版明确失败，缺失输入拒绝。Nuclei/ZAP 既有回环夹具各 4 条。计数基于本机当前漏洞库；没有连接真实服务器、Docker/containerd daemon 或 Kubernetes API。
+- 浏览器实际提交 rootfs 夹具任务，完成后查看系统包发现项：显示稳定来源、采集时间、组件、安装/修复版本，`lab-a/os` 筛选共 49 条；前端无 console error。原始证据留在本机私有临时目录，截图在本机可视化目录，未提交资产或结果。
+- 已知边界：只实测合成 Debian / Node / 镜像；CentOS 7 RPM 实际识别、银河麒麟厂商源、源码安装中间件、国产数据库产品级检测、运行内核/进程/容器卷仍待专项适配和指定服务器验证。CentOS 使用 RHEL 公告的限制见官方文档；不能伪造发行版来补覆盖。Java 索引默认尚未准备，后续单独补齐。说明见 `docs/linux-server-scan.md`。

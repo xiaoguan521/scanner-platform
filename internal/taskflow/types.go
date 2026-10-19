@@ -32,6 +32,14 @@ const SyntheticTitle = "模拟发现项：任务链路已完成（未执行真�
 
 const MaxReportBytes = 4 << 20
 
+// ExecutionError exposes a deliberate, static user-facing explanation. Do not
+// construct UserMessage from engine output, paths, credentials or raw requests.
+type ExecutionError struct {
+	UserMessage string
+}
+
+func (e *ExecutionError) Error() string { return e.UserMessage }
+
 type Chunk struct {
 	ID             string     `json:"id"`
 	TaskID         string     `json:"taskId"`

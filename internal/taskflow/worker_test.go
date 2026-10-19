@@ -3,6 +3,7 @@ package taskflow
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -76,5 +77,42 @@ func TestOversizedEngineResultReportsFailureInsteadOfLeavingTaskRunning(t *testi
 	}
 	if received.Status != "FAILED" || len(received.Findings) != 0 || received.Error == "" {
 		t.Fatalf("oversized result did not report a bounded failure: %+v", received)
+	}
+}
+
+func TestWorkerReportsOnlyDeliberatePublicExecutionErrors(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"coverage", &ExecutionError{UserMessage: "该发行版尚未适配漏洞源"}, "该发行版尚未适配漏洞源"},
+		{"private", fmt.Errorf("private engine diagnostic fixture"), "引擎执行失败，请检查节点状态、规则库、输入和 Worker 日志"},
+		{"oversize", &ExecutionError{UserMessage: strings.Repeat("x", 501)}, "引擎执行失败，请检查节点状态、规则库、输入和 Worker 日志"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var received Report
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/worker/claim":
+					_ = json.NewEncoder(w).Encode(Task{ID: "fixture", Engines: []string{"trivy"}, Chunks: []Chunk{{Targets: []string{"lab-a/os"}}}})
+				case "/api/v1/worker/report":
+					if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+						t.Error(err)
+					}
+					w.WriteHeader(200)
+				default:
+					w.WriteHeader(400)
+				}
+			}))
+			defer server.Close()
+			worker := Worker{ServerURL: server.URL, ID: "worker", Client: server.Client(), Execute: func(context.Context, Task) ([]Detection, error) { return nil, test.err }}
+			if _, err := worker.ProcessOne(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if received.Status != "FAILED" || received.Error != test.want || len(received.Findings) != 0 {
+				t.Fatal(received)
+			}
+		})
 	}
 }

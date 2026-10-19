@@ -155,6 +155,45 @@ func TestImageFingerprintUsesImageIdentityAcrossArchiveNames(t *testing.T) {
 	}
 }
 
+func TestRootfsTaskDedupUsesStableHostAndPackage(t *testing.T) {
+	store, actor := localFixture(t)
+	ctx := context.Background()
+	data, _ := json.Marshal(rules.Bundle{Version: "20261019.01", Engines: []string{"trivy"}, IsCurrent: true, IntegrityVerified: true})
+	if _, err := store.db.ExecContext(ctx, "INSERT INTO local_rule_bundles(version,data) VALUES(?,?)", "20261019.01", string(data)); err != nil {
+		t.Fatal(err)
+	}
+	for iteration, path := range []string{"lab-a/os", "lab-a/os", "lab-b/os"} {
+		input := taskflow.TaskInput{Engine: "trivy", InputKind: "rootfs", InputPath: path}
+		if _, err := store.CreateLocalTask(ctx, input, actor); err != nil {
+			t.Fatal(err)
+		}
+		task, err := store.ClaimRuntimeTask(ctx, "worker")
+		if err != nil || task == nil || task.InputKind != "rootfs" {
+			t.Fatal(task, err)
+		}
+		if err := store.CompleteRuntimeTask(ctx, taskflow.Report{TaskID: task.ID, WorkerID: "worker", Status: "COMPLETED", Findings: []taskflow.Detection{{Engine: "trivy", Target: path, TemplateID: "CVE-2099-0001", Title: "fixture", Severity: "HIGH", Package: "fixture", InstalledVersion: "1.0", MatchedPath: time.Now().String()}}}); err != nil {
+			t.Fatal(err)
+		}
+		findings, err := store.ListRuntimeFindings(ctx)
+		expected := 1
+		if iteration == 2 {
+			expected = 2
+		}
+		if err != nil || len(findings) != expected {
+			t.Fatalf("host/package dedup failed: %d results: %v", len(findings), err)
+		}
+	}
+	for _, input := range []taskflow.TaskInput{
+		{Engine: "trivy", InputKind: "rootfs", InputPath: "../outside"},
+		{Engine: "trivy", InputKind: "rootfs", InputPath: "lab-a/os", Targets: []string{"192.0.2.10:80"}},
+		{Engine: "trivy", InputKind: "rootfs", InputPath: "lab-a/os", Scheme: "http"},
+	} {
+		if _, err := store.CreateLocalTask(ctx, input, actor); !errors.Is(err, ErrInvalidTask) {
+			t.Fatal("invalid rootfs input accepted", err)
+		}
+	}
+}
+
 func TestLateEngineCompletionPausesWithoutFinding(t *testing.T) {
 	store, actor := localFixture(t)
 	ctx := context.Background()

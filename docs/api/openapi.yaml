@@ -1690,6 +1690,10 @@ components:
           type: string
         inputKind:
           type: string
+          enum:
+          - filesystem
+          - image-archive
+          - rootfs
         error:
           type: string
     Finding:
@@ -1915,11 +1919,13 @@ components:
           enum:
           - filesystem
           - image-archive
+          - rootfs
       required:
       - synthetic
       - targets
       description: Choose synthetic=true, a root HTTP baseline engine (nuclei/zap
-        with scheme and registered targets), or trivy with a local Worker input path/kind.
+        with scheme and registered targets), or trivy with a local Worker input path/kind
+        (filesystem dependencies, image-archive, or Linux rootfs OS package snapshot).
         No discovery, remote image pull, SSH or active ZAP scans.
     Schedule:
       allOf:

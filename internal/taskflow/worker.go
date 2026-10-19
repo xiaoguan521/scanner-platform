@@ -132,6 +132,10 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 			return true, err
 		} else {
 			report = Report{TaskID: task.ID, WorkerID: w.ID, Status: "FAILED", Error: "引擎执行失败，请检查节点状态、规则库、输入和 Worker 日志"}
+			var publicError *ExecutionError
+			if errors.As(err, &publicError) && len(publicError.UserMessage) > 0 && len(publicError.UserMessage) <= 500 {
+				report.Error = publicError.UserMessage
+			}
 			slog.Warn("engine execution failed", "task_id", task.ID, "error", err)
 		}
 	}

@@ -114,6 +114,11 @@ func (s *RuntimeStore) completeEngineTask(ctx context.Context, report taskflow.R
 		for _, d := range report.Findings {
 			identity := d.Target
 			matchedPath := d.MatchedPath
+			if d.Engine == "trivy" && task.InputKind == "rootfs" {
+				// The stable input alias identifies the host; distro descriptions and
+				// temporary analyzer paths must not change an OS package fingerprint.
+				matchedPath = ""
+			}
 			if d.Engine == "trivy" && task.InputKind == "image-archive" {
 				if !strings.HasPrefix(d.ArtifactID, "sha256:") || len(d.ArtifactID) != 71 {
 					return ErrInvalidTask

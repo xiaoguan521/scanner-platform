@@ -6,15 +6,13 @@ import {
   Button,
   Space,
   Select,
+  Input,
   Typography,
   Alert,
   Tooltip,
   message,
 } from 'antd';
-import {
-  SecurityScanOutlined,
-  SafetyCertificateOutlined,
-} from '@ant-design/icons';
+import { SafetyCertificateOutlined } from '@ant-design/icons';
 import { mockFindings } from '../../mock/data';
 import { Finding, FindingSeverity, FindingStatus } from '../../types';
 import { isDemoMode } from '../../api/client';
@@ -31,10 +29,13 @@ export const FindingsPage: React.FC = () => {
   const { data: findings, setData: setFindings, loading, error } = useCollection('findings', mockFindings);
   const [severityFilter, setSeverityFilter] = useState<string>('ALL');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
+  const [query, setQuery] = useState('');
+  const normalizedQuery = query.trim().toLowerCase();
 
   const filteredFindings = findings.filter((f) => {
     if (severityFilter !== 'ALL' && f.severity !== severityFilter) return false;
     if (statusFilter !== 'ALL' && f.status !== statusFilter) return false;
+    if (normalizedQuery && ![f.target, f.package ?? '', f.templateOrCve, f.title].some(value => value.toLowerCase().includes(normalizedQuery))) return false;
     return true;
   });
 
@@ -86,6 +87,8 @@ export const FindingsPage: React.FC = () => {
         icon={<SafetyCertificateOutlined />}
       />
 
+      <Input aria-label="按目标、组件或 CVE 筛选" placeholder="按目标、服务器别名、组件或 CVE 筛选" allowClear value={query} onChange={event => setQuery(event.target.value)} style={{maxWidth:480}} />
+
       <Card
         title="漏洞发现与生命周期闭环看板"
         bordered={false}
@@ -124,7 +127,8 @@ export const FindingsPage: React.FC = () => {
         <Table
           dataSource={filteredFindings}
           rowKey="id"
-          scroll={{x:1300}}
+          pagination={{showTotal:total=>`共 ${total} 项`}}
+          scroll={{x:1500}}
           expandable={{expandedRowRender:r=><Space direction="vertical"><Text>{r.description||'暂无补充描述'}</Text><Text>匹配路径：{r.matchedPath||'—'}</Text>{r.package&&<Text>组件：{r.package}；安装版本：{r.installedVersion||'—'}；修复版本：{r.fixedVersion||'暂无'}</Text>}</Space>}}
           columns={[
             {
@@ -135,22 +139,18 @@ export const FindingsPage: React.FC = () => {
             },
             {
               title: '漏洞详情与稳定指纹',
+              width: 420,
               render: (_, record) => (
-                <Space direction="vertical" size={2}>
-                  <Text strong>{record.title}</Text>
+                <Space direction="vertical" size={2} style={{width:'100%'}}>
+                  <Text strong style={{whiteSpace:'normal',wordBreak:'break-word'}}>{record.title}</Text>
                   {record.synthetic && <Tag color="blue">模拟结果</Tag>}
-                  <Space size={8}>
+                  <Space size={8} wrap>
                     <Tag color={record.engine === 'nuclei' ? 'purple' : 'cyan'}>
                       {record.engine.toUpperCase()}
                     </Tag>
-                    <Text code>{record.templateOrCve}</Text>
-                    <Tooltip title="归一化稳定指纹 (SHA256)">
-                      <Space size={2} style={{ fontSize: 11, color: '#64748b' }}>
-                        <SecurityScanOutlined />
-                        <span>{record.fingerprint}</span>
-                      </Space>
-                    </Tooltip>
+                    <Text code style={{whiteSpace:'nowrap'}}>{record.templateOrCve}</Text>
                   </Space>
+                  <Tooltip title={`稳定指纹：${record.fingerprint}`}><Text type="secondary" ellipsis style={{maxWidth:330,fontSize:11}}>{record.fingerprint}</Text></Tooltip>
                 </Space>
               ),
             },
@@ -162,6 +162,7 @@ export const FindingsPage: React.FC = () => {
             },
             {
               title: '业务归属',
+              width: 160,
               render: (_, r) => (
                 <Space direction="vertical" size={2}>
                   <Text>{r.businessGroup}</Text>
@@ -179,6 +180,7 @@ export const FindingsPage: React.FC = () => {
             },
             {
               title: '最近检出 / 未检出计数',
+              width: 230,
               render: (_, r) => (
                 <Space direction="vertical" size={1} style={{ fontSize: 12 }}>
                   <span>最近: {r.lastSeen}</span>

@@ -10,8 +10,13 @@ func TrivyArgs(kind, input, cache, output string) []string {
 	command := "filesystem"
 	if kind == "image-archive" {
 		command = "image"
+	} else if kind == "rootfs" {
+		command = "rootfs"
 	}
 	args := []string{command, "--cache-dir", cache, "--config", "", "--ignorefile", "", "--scanners", "vuln", "--format", "json", "--output", output, "--offline-scan", "--skip-db-update", "--skip-java-db-update", "--skip-check-update", "--skip-version-check", "--disable-telemetry", "--skip-vex-repo-update", "--no-progress", "--timeout", "10m"}
+	if kind == "rootfs" {
+		args = append(args, "--pkg-types", "os")
+	}
 	if kind == "image-archive" {
 		args = append(args, "--input", input)
 	} else {

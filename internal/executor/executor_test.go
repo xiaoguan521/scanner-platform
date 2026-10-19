@@ -124,6 +124,9 @@ func TestTrivyLocalInputAndArguments(t *testing.T) {
 	if _, err := localInput(root, "deps", "filesystem"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := localInput(root, "deps", "rootfs"); err != nil {
+		t.Fatal(err)
+	}
 	for _, relative := range []string{"../elsewhere", "/absolute", "http://example.com", "--flag"} {
 		if _, err := localInput(root, relative, "filesystem"); err == nil {
 			t.Fatal("unsafe input accepted")
@@ -141,9 +144,25 @@ func TestTrivyLocalInputAndArguments(t *testing.T) {
 			t.Fatalf("missing %s", flag)
 		}
 	}
+	args = strings.Join(engineflags.TrivyArgs("rootfs", "/input/os", "/cache", "/out"), " ")
+	if !strings.HasPrefix(args, "rootfs ") || !strings.Contains(args, "--pkg-types os") || strings.Contains(args, "--input") {
+		t.Fatal("rootfs must use only OS package analysis", args)
+	}
 	plan, _ := json.Marshal(ZAPPlan("fixture.har", "output", []string{"http://192.0.2.1:80"}))
 	if strings.Contains(string(plan), "spider") || strings.Contains(string(plan), "activeScan") || strings.Contains(string(plan), `"type":"requestor"`) {
 		t.Fatal("ZAP plan must only import responses")
+	}
+}
+
+func TestTrivyRootfsRejectsUnanalyzedOS(t *testing.T) {
+	for _, report := range []string{`{}`, `{"Results":[]}`, `{"Results":[{"Class":"lang-pkgs","Target":"package-lock.json"}]}`} {
+		if _, err := parseTrivy([]byte(report), "lab-a/os", true); err == nil {
+			t.Fatal("missing OS package analysis reported as success", report)
+		}
+	}
+	// A supported OS package analysis may legitimately have no known CVEs.
+	if got, err := parseTrivy([]byte(`{"Results":[{"Class":"os-pkgs","Target":"Debian 12"}]}`), "lab-a/os", true); err != nil || len(got) != 0 {
+		t.Fatal(got, err)
 	}
 }
 

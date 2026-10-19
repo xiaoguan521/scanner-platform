@@ -25,7 +25,7 @@ with tempfile.TemporaryDirectory(prefix='scanner-flags-') as temp:
         else:
             command = [str(ROOT / ('bin/' + name + extension))]
             version = subprocess.check_output(command + ['-version' if name == 'nuclei' else '--version'], env=env, cwd=temp, stderr=subprocess.STDOUT, timeout=30).decode()
-            commands = [['-h']] if name == 'nuclei' else [['filesystem', '--help'], ['image', '--help']]
+            commands = [['-h']] if name == 'nuclei' else [['filesystem', '--help'], ['image', '--help'], ['rootfs', '--help']]
             help_text = '\n'.join(subprocess.check_output(command + args, env=env, cwd=temp, stderr=subprocess.STDOUT, timeout=30).decode() for args in commands)
             function = 'NucleiArgs' if name == 'nuclei' else 'TrivyArgs'
         assert lock[name]['version'] in version, f'{name}: installed version differs from lock'

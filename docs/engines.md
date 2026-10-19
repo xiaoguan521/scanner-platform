@@ -5,7 +5,7 @@
 | 引擎 | 固定版本 / 许可证 | 本机程序 | 当前用途 |
 |---|---|---|---|
 | Nuclei | 3.11.1 / MIT | `bin/nuclei`（Windows 为 `.exe`） | 指定 IP:端口的只读 HTTP 基线 |
-| Trivy | 0.76.0 / Apache-2.0 | `bin/trivy`（Windows 为 `.exe`） | 离线依赖目录、Docker-save / OCI 镜像归档 |
+| Trivy | 0.76.0 / Apache-2.0 | `bin/trivy`（Windows 为 `.exe`） | Linux 系统包快照、离线依赖目录、Docker-save / OCI 镜像归档 |
 | ZAP | 2.17.0 / Apache-2.0 | `bin/zap/zap-2.17.0.jar` | 指定地址响应的离线被动检查；需要 Java 17+ |
 
 官方来源：[Nuclei release](https://github.com/projectdiscovery/nuclei/releases/tag/v3.11.1)、[Trivy release](https://github.com/aquasecurity/trivy/releases/tag/v0.76.0)、[ZAP release](https://github.com/zaproxy/zaproxy/releases/tag/v2.17.0)。下载地址与各平台 SHA-256 固定在 `config/engines.lock.json`。安装器校验压缩包哈希后解压，保留许可证和安装来源。Git 只记录安装器、版本锁与代码；程序、漏洞库、扫描输入和结果留在被忽略的本机目录。
@@ -23,7 +23,7 @@ make dev       # 启动网页、Server、Worker、Updater
 
 `make engines` 的规则准备也可以单独运行：`dist/sec-updater --prepare-engines`。它只安装数据、切换 CURRENT，不创建扫描任务；运行中的任务仍使用创建时固定的规则版本。随后启动的 Updater 会把实际目录状态同步到网页。`make verify-flags` 检查已安装程序版本和实际帮助输出，不扫描任何目标。
 
-## 明天验证 Web 服务
+## 验证 Web 服务
 
 1. 资产页登记你有权验证的服务器数字 IP 和明确端口；Nginx 四层转发端口填写“跳过端口”。不输入域名或 CIDR。
 2. 节点页查看引擎版本与就绪状态。Nuclei 还需要当前规则版本含 `nuclei/`；ZAP 使用随程序固定的被动规则。
@@ -37,7 +37,9 @@ Nuclei 禁用重定向（`-dr`）、OAST、httpx 探测和更新，默认每秒 
 
 ZAP 由 Go 先读取指定根地址响应（不跟随重定向、单响应上限 2 MiB），随后以 HAR 导入，执行 passiveScan 和 JSON 报告。没有爬虫或主动扫描任务，插件只保留这条被动流水线及其依赖。使用 `-silent -notel` 关闭未请求的联网行为。实现依据：[HAR 导入](https://www.zaproxy.org/docs/desktop/addons/import-export/automation/)、[ZAP 命令行](https://www.zaproxy.org/docs/desktop/cmdline/)。固定分发包中的 exim 0.16.0 只支持导入记录响应，不支持新版文档中的 `sendRequests` 参数，代码未传该参数。
 
-## Trivy：依赖与镜像归档
+## Trivy：Linux 系统、依赖与镜像归档
+
+Linux 上同时有 Docker 和直接部署时，使用 [Linux 采集与扫描说明](linux-server-scan.md)：在目标机器由操作员明确选择应用目录和本地镜像，采集主机软件包数据库、指定依赖与镜像，复制到 Worker，再分别创建 `rootfs`、`filesystem`、`image-archive` 任务。新 rootfs 模式仅分析 OS 软件包。采集不会发起网络探测或远程登录。
 
 将要检查的内容放到 Worker 本机输入根目录：
 
@@ -48,7 +50,7 @@ runtime/inputs/images/example-image.tar
 
 创建任务时选 Trivy，类型选“依赖目录”并填 `deps/example-project`，或者选“镜像归档”并填 `images/example-image.tar`。镜像归档由操作员使用 `docker save` 或 OCI 导出准备；Worker 不拉取镜像、不连接 Docker socket、不通过 SSH 读取服务器。输入路径必须位于配置根目录内，拒绝符号链接。
 
-Worker 使用固定规则版本中的 `trivy/db/trivy.db` 与 `metadata.json`，先复制到本节点按引擎/规则版本隔离的可写缓存；后续同版本复用缓存。启用 `--offline-scan`、禁用 DB/Java DB/检查规则/VEX 更新与遥测；只运行漏洞扫描，不加载输入目录的 Trivy 配置。JAR 分析需要另行提供同一规则包内的 `trivy/java-db/`；默认准备仅下载主漏洞库。依赖目录和镜像包都已在本地夹具上验证；真实业务文件留待明天验证。配置依据：[Trivy filesystem 参数](https://trivy.dev/latest/docs/references/configuration/cli/trivy_filesystem/)。
+Worker 使用固定规则版本中的 `trivy/db/trivy.db` 与 `metadata.json`，先复制到本节点按引擎/规则版本隔离的可写缓存；后续同版本复用缓存。启用 `--offline-scan`、禁用 DB/Java DB/检查规则/VEX 更新与遥测；只运行漏洞扫描，不加载输入目录的 Trivy 配置。JAR 分析需要另行提供同一规则包内的 `trivy/java-db/`；默认准备仅下载主漏洞库。依赖目录和镜像包都已在本地夹具上验证；真实业务文件尚待验证。配置依据：[Trivy filesystem 参数](https://trivy.dev/latest/docs/references/configuration/cli/trivy_filesystem/)。
 
 结果保留组件、安装版本、漏洞编号与修复版本。镜像使用 Trivy 返回的不可变 ImageID 去重，不依赖归档文件名；重复检测保留首次时间和人工处理状态。未检出不会自动标记 FIXED。
 
@@ -63,4 +65,4 @@ make test-engines-local   # 自建回环 HTTP 夹具、临时 SQLite 和本地�
 
 最后一条需要先完成引擎和数据库安装；不会读取登记资产，也不连接真实服务器。普通单元测试不需要引擎或互联网。引擎测试证据为终端打印的临时目录；原始扫描响应和运行日志不提交仓库。
 
-这是早期本机运行模式：Server/节点 API 仍限回环地址，未提供生产 TLS/独立节点令牌与系统网络围栏。扫描 Worker 要使用普通用户运行，拒绝 root。规则文件在执行前校验完整性，尚未验签；完整模板兼容性、真实服务器覆盖与生产部署未验证。今天的接入不表示明天的真实服务器验证已经通过。
+这是早期本机运行模式：Server/节点 API 仍限回环地址，未提供生产 TLS/独立节点令牌与系统网络围栏。扫描 Worker 要使用普通用户运行，拒绝 root。规则文件在执行前校验完整性，尚未验签；完整模板兼容性、真实服务器覆盖与生产部署未验证。本地夹具通过不表示真实服务器验证已通过。
