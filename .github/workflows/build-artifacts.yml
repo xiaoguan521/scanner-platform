@@ -29,12 +29,12 @@ jobs:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
       - name: Setup Node.js LTS
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '22'
           cache: npm
@@ -49,7 +49,7 @@ jobs:
         run: npm run build --prefix web
 
       - name: Upload frontend static bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: frontend-dist
           path: web/dist/
@@ -77,12 +77,12 @@ jobs:
             goarch: amd64
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           cache: false
@@ -137,7 +137,7 @@ jobs:
           test -s build_output/bin/zap.installed.json
 
       - name: Download reviewed frontend bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: frontend-dist
           path: build_output/web/dist
@@ -186,7 +186,7 @@ jobs:
           (cd dist_pkg && sha256sum "$archive" > "$archive.sha256")
 
       - name: Upload platform artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: package-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist_pkg/*
@@ -203,7 +203,7 @@ jobs:
       contents: write
     steps:
       - name: Download all platform artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: all_artifacts
           pattern: package-*
@@ -226,7 +226,7 @@ jobs:
           (cd release_assets && sha256sum -- * > checksums.txt)
 
       - name: Create draft release (manual publication required)
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@72f2c25fcb47643c292f7107632f7a47c1df5cd8 # v2.3.2
         with:
           files: release_assets/*
           fail_on_unmatched_files: true

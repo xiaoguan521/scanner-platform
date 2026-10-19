@@ -103,3 +103,11 @@
 - 知识库仅支持公开来源整理的规范 JSON 与自建中文内容,不自动导入 OSV 原始格式,不自动接入 CNNVD/CNVD。通用组件识别与版本推断不能证明 CentOS/麒麟、国产数据库或所有厂商产品覆盖。HTTP 预检/代理/原生检查共享端点请求预算及强度限速;TLS 隧道模板仍需模板白名单与引擎限速共同约束。
 - 使用路径见 `docs/product/report-usage.md`,R1–R6、HTML/Word 八章、Excel 八表清单见 `docs/product/report-checklist.md`。真实隔离靶机和排除端口抓包、Word/Excel 原生软件视觉排版、PostgreSQL 实例、大规模内存/耗时与具体厂商覆盖均待环境验证。本轮未读取或提交参考报告的真实地址、资产、结果。
 - 本轮约定方案 GPT-6 Sol、开发 GPT-6.1 Sol、独立验证 GPT-6 Luna;上述文档/契约开发检查由 GPT-6.1 Sol 实际执行。独立验证与最终全仓库门禁结果由协调代理另行记录,不以开发报告代替独立验收。
+
+## 2026-10-19：合并后最终本地复核
+
+- 修正 Nuclei 3.11.1 参数互斥错误：`-dr` 与 `-fhr` 同时传入会导致引擎拒绝启动，现仅传硬规则要求的 `-fhr`；`make verify-flags` 与隔离回环 Nuclei/ZAP 运行均通过。
+- 远端并入的报告范围回归、同主机多端口影响资产去重、PostgreSQL 只读资产/范围适配和迁移工作流已通过 `make test` 的 race 测试；PostgreSQL 云端实例仍由 GitHub Actions 负责实际执行。
+- 第三方 GitHub Actions 已固定到提交 SHA，并在行尾保留版本注释；YAML 解析通过，未使用 `pull_request_target`。
+- 当前代理实际运行并通过：`make build`、`make lint`、`make test`、`make verify-flags`、`make test-local`、`make test-engines-local`、Server 模式前端构建、Windows/Linux/macOS 交叉编译，以及 HTML/XLSX/DOCX 合成报告结构检查。
+- 仍未连接真实业务服务器、真实 CentOS 7/银河麒麟主机、生产 PostgreSQL、Microsoft Word/Excel 或生产网络围栏；本地引擎回归仅使用回环夹具、临时数据库和本地漏洞库，未读取真实资产或扫描结果。
