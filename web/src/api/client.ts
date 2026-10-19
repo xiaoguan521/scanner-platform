@@ -52,7 +52,7 @@ export async function requestJSON<T>(path: string, method = 'GET', body?: unknow
     try {
       const err: ApiErrorBody = await response.json();
       if (typeof err.message === 'string') {
-        const messages:Record<string,string>={invalid_user:'用户名、角色或密码不符合要求（密码 12–72 字节）',user_exists:'用户名已存在',invalid_asset:'请输入有效数字 IP、业务组、负责人和端口；跳过端口须属于目标端口',asset_exists:'资产已存在',forbidden:'当前账号无权执行此操作',invalid_approval:'审批记录或时间窗格式不正确',approval_conflict:'记录已审核、已过期或端口被标记跳过',db_error:'保存失败，请查看 Server 日志',already_initialized:'管理员已初始化，请直接登录'};
+        const messages:Record<string,string>={invalid_user:'用户名、角色或密码不符合要求（密码 12–72 字节）',user_exists:'用户名已存在',invalid_asset:'请输入有效数字 IP、业务组、负责人和端口；跳过端口须属于目标端口',asset_exists:'资产已存在',invalid_port_request:'端口申请格式无效',port_request_conflict:'端口已申请、已跳过或处于隔离状态',forbidden:'当前账号无权执行此操作',invalid_approval:'审批记录或时间窗格式不正确',approval_conflict:'记录已审核、已过期或端口被标记跳过',db_error:'保存失败，请查看 Server 日志',already_initialized:'管理员已初始化，请直接登录'};
         description=messages[err.error]??err.message;
       }
     } catch { /* Unknown error bodies stay generic. */ }
@@ -82,6 +82,9 @@ export const apiClient = {
   },
   updateAsset(id: string, input: {businessGroup: string; owner: string; requestedPorts: number[]; skippedPorts?: number[]}) {
     return requestJSON<Asset>('/api/v1/assets/' + encodeURIComponent(id), 'PATCH', input);
+  },
+  requestAssetPort(id: string, port: number) {
+    return requestJSON<{port:number;status:string}>('/api/v1/assets/' + encodeURIComponent(id) + '/port-requests', 'POST', {port});
   },
   requestScope(input: {assetId:string; timeWindows:TimeWindow[]; expiresAt:string}) {
     return requestJSON<AuthorizedScope>('/api/v1/scopes', 'POST', input);

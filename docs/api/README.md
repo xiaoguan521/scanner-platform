@@ -6,9 +6,9 @@ UI 使用 HttpOnly 的 `scanner_session` Cookie，所有写请求携带 `X-Reque
 
 - `/auth/setup`：首次管理员初始化状态/创建，已有用户后拒绝再次初始化。
 - `/auth/login`、`/auth/me`、`/auth/logout`、`/users`：账号与会话。
-- `/assets`：数字 IP 或镜像仓库登记；`requestedPorts` 为显式目标端口，`skippedPorts` 为其中需要排除的端口。`/port-quarantines` 读取实际隔离记录。
-- `/scopes`、`/port-requests`：范围与端口审批台账。早期模式不把审批作为模拟任务门禁；不会自动发起扫描。
-- `/tasks`：接受模拟任务 `synthetic: true`；或真实任务 `synthetic: false` 加 `engine: nuclei/zap`、`scheme: http/https`、`targets: [IP:port]`；Trivy 使用 `engine: trivy`、`inputKind: filesystem/artifact/image-archive/rootfs`、相对 Worker 输入目录的 `inputPath`、空 `targets`。filesystem 用于项目锁文件，artifact 用于已部署 JAR/Go 文件，rootfs 只分析 Linux 系统软件包；输入模式选错时拒绝，不静默跳过部署产物。均支持可选 `timeWindows`；返回实际下发目标、`skippedTargets`、`hardDeadline`、`ruleVersion` 与进度。未登记目标、全部跳过、重复目标、CIDR/域名均拒绝；领取前复查目标。
+- `/assets`：数字 IP 或镜像仓库登记；`requestedPorts` 为端口申请，`skippedPorts` 为需要排除的端口。`POST /assets/{id}/port-requests` 可把探测候选追加为待审批申请；不会直接授权扫描。`/port-quarantines` 读取实际隔离记录。
+- `/scopes`、`/port-requests`：范围与端口审批台账。真实 Nuclei/ZAP 任务只能使用已登记且已审批的端口；模拟任务不连接目标。
+- `/tasks`：接受模拟任务 `synthetic: true`；`nuclei/zap` 使用 `scheme: http/https` 和已审批的 `targets: [IP:port]`；Trivy 使用 `inputKind: filesystem/artifact/image-archive/rootfs`、相对 Worker 输入目录的 `inputPath`、空 `targets`。端口探测使用 `engine: port-probe`、单个 `assetId` 和 `portProbe` 范围/排除设置，配置须确认运维授权。服务端将端口清单限制为每任务最多 1024 个 TCP 端口；只回报开放候选，不做服务识别或漏洞扫描。完整边界见 [单台主机 TCP 端口探测](../port-probe.md)。任务返回实际下发目标、探测清单、结果、`skippedTargets`、`hardDeadline`、`ruleVersion` 与进度；未登记目标、未审批扫描端口、全部跳过、重复目标、CIDR/域名均拒绝；领取前复查目标和授权。
 - `/tasks/{id}/cancel`：取消待处理或执行中任务。`/findings/{id}` 可更新 `OPEN/IN_PROGRESS/FALSE_POSITIVE`；不提供手工 FIXED。
 - `/schedules`：首次运行时间、分钟间隔（0=单次）、显式目标、时间窗；PATCH 可启停，返回最近任务及错误。
 - `/nodes`：真实本机心跳，10 秒未上报显示离线，并回报固定版本、安装与就绪状态 `engines`。`/nodes/heartbeat`、`/worker/*`、`/updater/*` 仅为绑定回环地址的本机进程协议，不是生产部署接口。

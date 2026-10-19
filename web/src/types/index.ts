@@ -110,7 +110,7 @@ export interface ScanTask {
   id: string;
   scopeId: string;
   scopeName: string;
-  engines: ('nuclei' | 'trivy' | 'zap' | 'synthetic')[];
+  engines: ('nuclei' | 'trivy' | 'zap' | 'synthetic' | 'port-probe')[];
   status: TaskStatus;
   hardDeadline: string;
   totalChunks: number;
@@ -123,7 +123,20 @@ export interface ScanTask {
   timeWindows?: TimeWindow[];
   ruleVersion?: string;
   scheme?: string; inputPath?: string; inputKind?: string; error?: string;
+  assetId?: string;
+  portProbeConfig?: PortProbeConfig;
+  portProbePorts?: number[];
+  portProbeResults?: PortProbeResult[];
 }
+
+export interface PortProbeRange { start: number; end: number }
+export interface PortProbeConfig {
+  preset: 'common'|'custom'|'common-and-custom';
+  ranges?: PortProbeRange[];
+  exclusions?: PortProbeRange[];
+  opsApproved?: boolean;
+}
+export interface PortProbeResult { port: number }
 
 export type FindingSeverity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO';
 
@@ -184,7 +197,7 @@ export interface RuleBundle {
 }
 
 export interface EngineStatus { name: string; version: string; installed: boolean; ready: boolean; message: string }
-export interface TaskInput { synthetic: boolean; engine?: 'nuclei'|'trivy'|'zap'|'synthetic'; scheme?: 'http'|'https'; inputPath?: string; inputKind?: 'filesystem'|'image-archive'|'rootfs'|'artifact'; targets: string[]; timeWindows: TimeWindow[] }
+export interface TaskInput { synthetic: boolean; engine?: 'nuclei'|'trivy'|'zap'|'synthetic'|'port-probe'; scheme?: 'http'|'https'; inputPath?: string; inputKind?: 'filesystem'|'image-archive'|'rootfs'|'artifact'; assetId?: string; portProbe?: PortProbeConfig; targets: string[]; timeWindows: TimeWindow[] }
 export interface Schedule extends TaskInput {
   id: string; name: string; nextRun: string; intervalMinutes: number; enabled: boolean;
   lastTaskId: string; lastError: string; createdBy: string;

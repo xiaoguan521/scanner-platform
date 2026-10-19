@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"scanner-platform/internal/account"
+	"scanner-platform/internal/assets"
 	"scanner-platform/internal/repo"
 	"scanner-platform/internal/taskflow"
 )
@@ -84,5 +86,52 @@ func TestRuntimeServesUIAndRejectsInvalidTaskRequests(t *testing.T) {
 				t.Fatalf("status=%d want=%d body=%s", out.Code, tc.want, out.Body.String())
 			}
 		})
+	}
+}
+
+func TestRuntimeAcceptsBoundedPortProbePlan(t *testing.T) {
+	accounts, err := account.New(filepath.Join(t.TempDir(), "platform.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer accounts.Close()
+	registry, err := assets.New(accounts.SQLDB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	asset, err := registry.Create(context.Background(), "local-test", assets.Input{Kind: "host", Address: "192.0.2.20", BusinessGroup: "QA", Owner: "Example"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := repo.NewRuntime(accounts.SQLDB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := NewRuntimeHandler(store, nil, "")
+	send := func(body string) *httptest.ResponseRecorder {
+		out := httptest.NewRecorder()
+		handler.ServeHTTP(out, httptest.NewRequest(http.MethodPost, "/api/v1/tasks", strings.NewReader(body)))
+		return out
+	}
+	response := send(`{"synthetic":false,"engine":"port-probe","assetId":"` + asset.ID + `","portProbe":{"preset":"custom","ranges":[{"start":8000,"end":8004}],"exclusions":[{"start":8001,"end":8001}],"opsApproved":true},"targets":[],"timeWindows":[]}`)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("port probe task rejected: %d %s", response.Code, response.Body.String())
+	}
+	var task taskflow.Task
+	if err := json.NewDecoder(response.Body).Decode(&task); err != nil {
+		t.Fatal(err)
+	}
+	want := []int{8000, 8002, 8003, 8004}
+	if len(task.Engines) != 1 || task.Engines[0] != "port-probe" || task.TargetCount != 1 || len(task.PortProbePorts) != len(want) {
+		t.Fatalf("unexpected bounded task plan: %+v", task)
+	}
+	for index, port := range want {
+		if task.PortProbePorts[index] != port {
+			t.Fatalf("unexpected effective ports: %v", task.PortProbePorts)
+		}
+	}
+	tooWide := send(`{"synthetic":false,"engine":"port-probe","assetId":"` + asset.ID + `","portProbe":{"preset":"custom","ranges":[{"start":1,"end":1025}],"opsApproved":true},"targets":[],"timeWindows":[]}`)
+	if tooWide.Code != http.StatusBadRequest {
+		t.Fatalf("oversized port range accepted: %d %s", tooWide.Code, tooWide.Body.String())
 	}
 }

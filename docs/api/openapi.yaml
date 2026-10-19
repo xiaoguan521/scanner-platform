@@ -327,6 +327,51 @@ paths:
           description: Insufficient role
         '404':
           description: No matching asset
+  "/api/v1/assets/{id}/port-requests":
+    post:
+      tags:
+      - assets
+      summary: Submit one discovered port as an unapproved request
+      description: Only admin or security_engineer. Does not grant scan permission; an ops approver must review it.
+      security:
+      - sessionCookie: []
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema:
+          type: string
+          enum:
+          - XMLHttpRequest
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - port
+              properties:
+                port:
+                  type: integer
+                  minimum: 1
+                  maximum: 65535
+      responses:
+        '201':
+          description: Port is now pending review
+        '400':
+          description: Invalid port request
+        '403':
+          description: Insufficient role
+        '404':
+          description: No matching asset
+        '409':
+          description: Port is already requested, skipped, or quarantined
   "/api/v1/port-quarantines":
     get:
       summary: Authenticated local port-quarantines
@@ -1594,7 +1639,7 @@ components:
           type: array
           items:
             type: string
-            description: Preapproved numeric IP:port only
+            description: Numeric IP:port for vulnerability scans; port-probe tasks contain one Server-bound registered host IP.
         status:
           type: string
           enum:
@@ -1643,6 +1688,7 @@ components:
             - trivy
             - synthetic
             - zap
+            - port-probe
         status:
           type: string
           enum:
@@ -1695,6 +1741,23 @@ components:
           - image-archive
           - rootfs
           - artifact
+        assetId:
+          type: string
+        portProbeConfig:
+          "$ref": "#/components/schemas/PortProbeConfig"
+        portProbePorts:
+          type: array
+          maxItems: 1024
+          items:
+            type: integer
+            minimum: 1
+            maximum: 65535
+          description: Exact validated port list dispatched by Server.
+        portProbeResults:
+          type: array
+          maxItems: 1024
+          items:
+            "$ref": "#/components/schemas/PortProbeResult"
         error:
           type: string
     Finding:
@@ -1882,6 +1945,56 @@ components:
           type: boolean
         engineValidated:
           type: boolean
+    PortRange:
+      type: object
+      required:
+      - start
+      - end
+      properties:
+        start:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        end:
+          type: integer
+          minimum: 1
+          maximum: 65535
+          description: Inclusive range end; must be greater than or equal to start.
+    PortProbeConfig:
+      type: object
+      required:
+      - preset
+      - opsApproved
+      properties:
+        preset:
+          type: string
+          enum:
+          - common
+          - custom
+          - common-and-custom
+        ranges:
+          type: array
+          maxItems: 128
+          items:
+            "$ref": "#/components/schemas/PortRange"
+        exclusions:
+          type: array
+          maxItems: 128
+          items:
+            "$ref": "#/components/schemas/PortRange"
+        opsApproved:
+          type: boolean
+          description: Caller confirms operational approval and exclusion of known TCP proxy ports.
+    PortProbeResult:
+      type: object
+      required:
+      - port
+      properties:
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+          description: A TCP connection succeeded; no service data was collected.
     TaskInput:
       type: object
       properties:
@@ -1906,6 +2019,7 @@ components:
           - nuclei
           - trivy
           - zap
+          - port-probe
         scheme:
           type: string
           enum:
@@ -1922,13 +2036,15 @@ components:
           - image-archive
           - rootfs
           - artifact
+        assetId:
+          type: string
+          description: Required for a single-asset port-probe task; resolved by Server to its registered numeric IP.
+        portProbe:
+          "$ref": "#/components/schemas/PortProbeConfig"
       required:
       - synthetic
       - targets
-      description: Choose synthetic=true, a root HTTP baseline engine (nuclei/zap
-        with scheme and registered targets), or trivy with a local Worker input path/kind
-        (filesystem lockfiles, artifact deployed JAR/Go files, image-archive, or Linux rootfs OS package snapshot).
-        No discovery, remote image pull, SSH or active ZAP scans.
+      description: Choose synthetic=true, nuclei/zap with scheme and approved registered targets, trivy with a local Worker input path/kind, or port-probe with one registered assetId and an opsApproved bounded TCP plan. Port probes use at most 1024 ports, return open candidates only, and never authorize vulnerability scans. No host discovery, CIDR expansion, UDP probes, remote image pull, SSH or active ZAP scans.
     Schedule:
       allOf:
       - "$ref": "#/components/schemas/TaskInput"
@@ -2084,3 +2200,8 @@ components:
           maxItems: 2000
           items:
             "$ref": "#/components/schemas/Detection"
+        portProbeResults:
+          type: array
+          maxItems: 1024
+          items:
+            "$ref": "#/components/schemas/PortProbeResult"

@@ -60,7 +60,7 @@ func RunWorker(args []string, stdout, stderr io.Writer) int {
 	defer stop()
 	worker := taskflow.Worker{
 		ServerURL: *server, ID: *id, Interval: *interval, Delay: *delay,
-		Execute: runner.Execute, EngineStatus: runner.Status,
+		Execute: runner.Execute, ProbePorts: runner.ProbePorts, EngineStatus: runner.Status,
 		Client: &http.Client{
 			Timeout:       5 * time.Second,
 			Transport:     &http.Transport{Proxy: nil},

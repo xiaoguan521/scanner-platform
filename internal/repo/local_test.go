@@ -10,6 +10,7 @@ import (
 
 	"scanner-platform/internal/account"
 	"scanner-platform/internal/assets"
+	"scanner-platform/internal/portprobe"
 	"scanner-platform/internal/scheduler"
 	"scanner-platform/internal/taskflow"
 )
@@ -99,6 +100,94 @@ func TestLocalTargetsSchedulesAndCancellation(t *testing.T) {
 		t.Fatal("disabled schedule triggered")
 	}
 }
+
+func TestPortProbeIsBoundedToOneRegisteredAssetAndStoresCandidates(t *testing.T) {
+	store, actor := localFixture(t)
+	ctx := context.Background()
+	var assetID string
+	if err := store.db.QueryRowContext(ctx, "SELECT id FROM assets WHERE address=?", "192.0.2.20").Scan(&assetID); err != nil {
+		t.Fatal(err)
+	}
+	input := taskflow.TaskInput{
+		Engine: "port-probe", AssetID: assetID, Targets: []string{},
+		PortProbe: portprobe.Config{Preset: portprobe.PresetCommon, Exclusions: []portprobe.Range{{Start: 80, End: 81}}, OpsApproved: true},
+	}
+	task, err := store.CreateLocalTask(ctx, input, actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Synthetic || task.AssetID != assetID || task.TargetCount != 1 || len(task.Chunks[0].Targets) != 1 || task.Chunks[0].Targets[0] != "192.0.2.20" {
+		t.Fatalf("probe escaped its single registered asset: %+v", task)
+	}
+	if len(task.PortProbePorts) != len(portprobe.CommonPorts())-2 {
+		t.Fatalf("wrong effective port count: %d (%v)", len(task.PortProbePorts), task.PortProbePorts)
+	}
+	for _, excluded := range []int{80, 81, 443} {
+		for _, port := range task.PortProbePorts {
+			if port == excluded {
+				t.Fatalf("excluded port %d included in task", excluded)
+			}
+		}
+	}
+	if _, err := store.CreateLocalTask(ctx, taskflow.TaskInput{Engine: "port-probe", AssetID: assetID, PortProbe: portprobe.Config{Preset: portprobe.PresetCommon}}, actor); !errors.Is(err, ErrInvalidTask) {
+		t.Fatalf("probe without operation acknowledgement accepted: %v", err)
+	}
+	if _, err := store.CreateLocalTask(ctx, taskflow.TaskInput{Engine: "port-probe", AssetID: "missing-asset", PortProbe: portprobe.Config{Preset: portprobe.PresetCommon, OpsApproved: true}}, actor); !errors.Is(err, ErrInvalidTask) {
+		t.Fatalf("unregistered asset probe accepted: %v", err)
+	}
+	if _, err := store.SaveSchedule(ctx, taskflow.Schedule{Name: "probe", TaskInput: input, NextRun: time.Now().Add(time.Hour).UTC().Format(time.RFC3339), IntervalMinutes: 0}, actor); !errors.Is(err, ErrInvalidTask) {
+		t.Fatalf("scheduled port probe accepted: %v", err)
+	}
+	if _, err := store.CreateLocalTask(ctx, taskflow.TaskInput{Engine: "nuclei", Scheme: "http", Targets: []string{"192.0.2.20:80"}}, actor); !errors.Is(err, ErrInvalidTask) {
+		t.Fatalf("unapproved port accepted for vulnerability scan: %v", err)
+	}
+	claimed, err := store.ClaimRuntimeTask(ctx, "probe-worker")
+	if err != nil || claimed == nil || claimed.AssetID != assetID || len(claimed.PortProbePorts) != len(task.PortProbePorts) {
+		t.Fatalf("probe task claim failed: task=%+v err=%v", claimed, err)
+	}
+	if err := store.CompleteRuntimeTask(ctx, taskflow.Report{TaskID: task.ID, WorkerID: "probe-worker", Status: "COMPLETED", PortProbeResults: []taskflow.PortProbeResult{{Port: 443}}}); !errors.Is(err, ErrInvalidTask) {
+		t.Fatalf("report included skipped port: %v", err)
+	}
+	if err := store.CompleteRuntimeTask(ctx, taskflow.Report{TaskID: task.ID, WorkerID: "probe-worker", Status: "COMPLETED", PortProbeResults: []taskflow.PortProbeResult{{Port: 22}}}); err != nil {
+		t.Fatal(err)
+	}
+	tasks, err := store.ListRuntimeTasks(ctx)
+	if err != nil || len(tasks) == 0 || tasks[0].Status != "COMPLETED" || len(tasks[0].PortProbeResults) != 1 || tasks[0].PortProbeResults[0].Port != 22 {
+		t.Fatalf("port probe result not persisted: %+v err=%v", tasks, err)
+	}
+}
+
+func TestPortProbeAppliesManyAutomaticExclusionsWithoutChangingUserConfig(t *testing.T) {
+	store, actor := localFixture(t)
+	ctx := context.Background()
+	var assetID string
+	if err := store.db.QueryRowContext(ctx, "SELECT id FROM assets WHERE address=?", "192.0.2.20").Scan(&assetID); err != nil {
+		t.Fatal(err)
+	}
+	for port := 1000; port < 1140; port++ {
+		if _, err := store.db.ExecContext(ctx, `INSERT INTO port_quarantine(asset_id,port,reason,detected_at,status)
+VALUES(?,?,?,?,'ACTIVE')`, assetID, port, "fixture", time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	config := portprobe.Config{Preset: portprobe.PresetCustom, Ranges: []portprobe.Range{{Start: 1000, End: 1200}}, OpsApproved: true}
+	task, err := store.CreateLocalTask(ctx, taskflow.TaskInput{Engine: "port-probe", AssetID: assetID, PortProbe: config}, actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(task.PortProbePorts) != 61 || len(task.SkippedTargets) != 140 {
+		t.Fatalf("automatic quarantine exclusions were not applied: ports=%d skipped=%d", len(task.PortProbePorts), len(task.SkippedTargets))
+	}
+	if len(task.PortProbeConfig.Exclusions) != 0 {
+		t.Fatalf("automatic exclusions changed the user plan: %+v", task.PortProbeConfig.Exclusions)
+	}
+	for _, port := range task.PortProbePorts {
+		if port < 1140 || port > 1200 {
+			t.Fatalf("quarantined port %d remains in the effective plan", port)
+		}
+	}
+}
+
 func TestWindowWaitPauseResumeAndNoFalseSuccess(t *testing.T) {
 	store, actor := localFixture(t)
 	ctx := context.Background()

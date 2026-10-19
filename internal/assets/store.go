@@ -14,9 +14,11 @@ import (
 )
 
 var (
-	ErrInvalid   = errors.New("invalid asset")
-	ErrDuplicate = errors.New("asset already exists")
-	ErrNotFound  = errors.New("asset not found")
+	ErrInvalid       = errors.New("invalid asset")
+	ErrDuplicate     = errors.New("asset already exists")
+	ErrNotFound      = errors.New("asset not found")
+	ErrPortRequested = errors.New("port already requested")
+	ErrPortExcluded  = errors.New("port is skipped or quarantined")
 )
 
 type Asset struct {
@@ -55,6 +57,7 @@ type Repository interface {
 	List(context.Context) ([]Asset, error)
 	Create(context.Context, string, Input) (Asset, error)
 	Update(context.Context, string, string, Edit) (Asset, error)
+	RequestPort(context.Context, string, string, int) error
 }
 type Store struct{ db *sql.DB }
 
@@ -438,4 +441,53 @@ func (s *Store) Update(ctx context.Context, actor, id string, edit Edit) (Asset,
 	a.Ports = skippedPortRecords(normalized.SkippedPorts)
 	a.SkippedPorts = normalized.SkippedPorts
 	return a, nil
+}
+
+// RequestPort appends one explicit port request without resetting decisions on
+// other ports for the asset. It refuses ports already marked as proxy or
+// quarantined.
+func (s *Store) RequestPort(ctx context.Context, actor, id string, port int) error {
+	if strings.TrimSpace(actor) == "" || id == "" || port < 1 || port > 65535 {
+		return ErrInvalid
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var kind string
+	if err := tx.QueryRowContext(ctx, "SELECT kind FROM assets WHERE id=?", id).Scan(&kind); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	if kind != "host" {
+		return ErrInvalid
+	}
+	var exists int
+	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM asset_port_requests WHERE asset_id=? AND port=?", id, port).Scan(&exists); err != nil {
+		return err
+	}
+	if exists > 0 {
+		return ErrPortRequested
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT
+ (SELECT count(*) FROM asset_ports WHERE asset_id=? AND port=? AND kind='EXCLUDED_PROXY')+
+ (SELECT count(*) FROM port_quarantine WHERE asset_id=? AND port=? AND status='ACTIVE')`, id, port, id, port).Scan(&exists); err != nil {
+		return err
+	}
+	if exists > 0 {
+		return ErrPortExcluded
+	}
+	if _, err := tx.ExecContext(ctx, "INSERT INTO asset_port_requests(asset_id,port) VALUES (?,?)", id, port); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, "INSERT INTO asset_port_request_authors(asset_id,port,requested_by) VALUES (?,?,?)", id, port, actor); err != nil {
+		return err
+	}
+	if err := auditTx(ctx, tx, actor, "request_asset_port", id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

@@ -11,9 +11,26 @@ import (
 	"scanner-platform/internal/taskflow"
 )
 
+func approveFixturePort(t *testing.T, store *RuntimeStore, actor, address string, port int) {
+	t.Helper()
+	var assetID string
+	if err := store.db.QueryRowContext(context.Background(), "SELECT id FROM assets WHERE address=?", address).Scan(&assetID); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := store.db.ExecContext(context.Background(), `INSERT INTO asset_port_reviews
+ (asset_id,port,status,reviewed_by,approval_ticket,reviewed_at,review_note) VALUES(?,?,'APPROVED',?,'fixture-approval',?,'')`, assetID, port, actor, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(context.Background(), `INSERT INTO asset_ports(asset_id,port,kind,source) VALUES(?,?,'WEB','fixture-approval')`, assetID, port); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRealTasksMultipleResultsDedupAndFailure(t *testing.T) {
 	store, actor := localFixture(t)
 	ctx := context.Background()
+	approveFixturePort(t, store, actor, "192.0.2.20", 80)
 	input := taskflow.TaskInput{Engine: "nuclei", Scheme: "http", Targets: []string{"192.0.2.20:80", "192.0.2.20:443"}}
 	if _, err := store.CreateLocalTask(ctx, input, actor); !errors.Is(err, ErrInvalidTask) {
 		t.Fatal("missing rules accepted", err)
@@ -197,6 +214,7 @@ func TestRootfsTaskDedupUsesStableHostAndPackage(t *testing.T) {
 func TestLateEngineCompletionPausesWithoutFinding(t *testing.T) {
 	store, actor := localFixture(t)
 	ctx := context.Background()
+	approveFixturePort(t, store, actor, "192.0.2.20", 80)
 	created, err := store.CreateLocalTask(ctx, taskflow.TaskInput{Engine: "zap", Scheme: "http", Targets: []string{"192.0.2.20:80"}}, actor)
 	if err != nil {
 		t.Fatal(err)

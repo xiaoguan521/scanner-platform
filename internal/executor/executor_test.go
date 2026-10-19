@@ -15,8 +15,26 @@ import (
 	"time"
 
 	"scanner-platform/internal/executor/engineflags"
+	"scanner-platform/internal/portprobe"
 	"scanner-platform/internal/rules"
 )
+
+func TestProbePlanAllowsOnlyServerNarrowing(t *testing.T) {
+	config := portprobe.Config{Preset: portprobe.PresetCustom, Ranges: []portprobe.Range{{Start: 8000, End: 8100}}, OpsApproved: true}
+	if !validProbePortPlan(config, []int{8000, 8002, 8100}) {
+		t.Fatal("server-filtered subset should be accepted")
+	}
+	for _, ports := range [][]int{
+		{7999, 8000},
+		{8000, 8000},
+		{8002, 8001},
+		{},
+	} {
+		if validProbePortPlan(config, ports) {
+			t.Errorf("invalid or expanded port plan accepted: %v", ports)
+		}
+	}
+}
 
 func TestBaselineTemplatePolicy(t *testing.T) {
 	for _, data := range rules.BaselineTemplates() {

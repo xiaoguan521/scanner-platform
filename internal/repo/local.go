@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"scanner-platform/internal/portprobe"
 	"scanner-platform/internal/scheduler"
 	"scanner-platform/internal/taskflow"
 )
@@ -27,12 +28,14 @@ type targetOwner struct {
 	Owner string `json:"owner"`
 }
 type taskDetails struct {
-	Input       taskflow.TaskInput     `json:"input"`
-	Skipped     []string               `json:"skipped"`
-	Owners      map[string]targetOwner `json:"owners"`
-	Deadline    string                 `json:"deadline"`
-	RuleVersion string                 `json:"ruleVersion"`
-	Error       string                 `json:"error,omitempty"`
+	Input        taskflow.TaskInput         `json:"input"`
+	Skipped      []string                   `json:"skipped"`
+	Owners       map[string]targetOwner     `json:"owners"`
+	ProbePorts   []int                      `json:"probePorts,omitempty"`
+	ProbeResults []taskflow.PortProbeResult `json:"probeResults,omitempty"`
+	Deadline     string                     `json:"deadline"`
+	RuleVersion  string                     `json:"ruleVersion"`
+	Error        string                     `json:"error,omitempty"`
 }
 
 func (s *RuntimeStore) initLocal(ctx context.Context) error {
@@ -100,15 +103,20 @@ func resolveTargets(ctx context.Context, tx *sql.Tx, in taskflow.TaskInput) ([]s
 		return nil, detail, ErrInvalidTask
 	}
 	if in.Synthetic {
-		if in.Engine != "" && in.Engine != "synthetic" || in.InputPath != "" || in.InputKind != "" || in.Scheme != "" {
+		if in.Engine != "" && in.Engine != "synthetic" || in.InputPath != "" || in.InputKind != "" || in.Scheme != "" || in.AssetID != "" || !emptyPortProbeConfig(in.PortProbe) {
 			return nil, detail, ErrInvalidTask
 		}
 	} else if in.Engine == "trivy" {
-		if len(in.Targets) != 0 || in.Scheme != "" || !filepath.IsLocal(in.InputPath) || strings.ContainsAny(in.InputPath, "\\:\x00") || len(in.InputPath) > 240 || (in.InputKind != "filesystem" && in.InputKind != "image-archive" && in.InputKind != "rootfs" && in.InputKind != "artifact") {
+		if len(in.Targets) != 0 || in.Scheme != "" || in.AssetID != "" || !emptyPortProbeConfig(in.PortProbe) || !filepath.IsLocal(in.InputPath) || strings.ContainsAny(in.InputPath, "\\:\x00") || len(in.InputPath) > 240 || (in.InputKind != "filesystem" && in.InputKind != "image-archive" && in.InputKind != "rootfs" && in.InputKind != "artifact") {
 			return nil, detail, fmt.Errorf("%w: Trivy requires a relative Worker input path and filesystem/artifact/image-archive/rootfs kind", ErrInvalidTask)
 		}
 		return []string{in.InputPath}, detail, nil
+	} else if in.Engine == "port-probe" {
+		return resolvePortProbe(ctx, tx, in, detail)
 	} else if (in.Engine != "nuclei" && in.Engine != "zap") || (in.Scheme != "http" && in.Scheme != "https") || in.InputPath != "" || in.InputKind != "" {
+		return nil, detail, ErrInvalidTask
+	}
+	if in.AssetID != "" || !emptyPortProbeConfig(in.PortProbe) {
 		return nil, detail, ErrInvalidTask
 	}
 	if len(in.Targets) == 0 || len(in.Targets) > 100 {
@@ -143,6 +151,17 @@ func resolveTargets(ctx context.Context, tx *sql.Tx, in taskflow.TaskInput) ([]s
 		if skip > 0 {
 			detail.Skipped = append(detail.Skipped, target)
 		} else {
+			if !in.Synthetic {
+				var approved int
+				if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM asset_port_reviews r JOIN asset_ports p
+   ON p.asset_id=r.asset_id AND p.port=r.port WHERE r.asset_id=? AND r.port=? AND r.status='APPROVED'
+   AND p.kind IN ('WEB','NON_WEB')`, id, port).Scan(&approved); err != nil {
+					return nil, detail, err
+				}
+				if approved != 1 {
+					return nil, detail, fmt.Errorf("%w: target port must be approved before vulnerability scanning", ErrInvalidTask)
+				}
+			}
 			targets = append(targets, target)
 			detail.Owners[target] = owner
 		}
@@ -152,6 +171,82 @@ func resolveTargets(ctx context.Context, tx *sql.Tx, in taskflow.TaskInput) ([]s
 	}
 	detail.Input.Targets = canonical
 	return targets, detail, nil
+}
+
+func emptyPortProbeConfig(config portprobe.Config) bool {
+	return config.Preset == "" && len(config.Ranges) == 0 && len(config.Exclusions) == 0 && !config.OpsApproved
+}
+
+func resolvePortProbe(ctx context.Context, tx *sql.Tx, in taskflow.TaskInput, detail taskDetails) ([]string, taskDetails, error) {
+	if in.AssetID == "" || in.Scheme != "" || in.InputPath != "" || in.InputKind != "" || !in.PortProbe.OpsApproved || (len(in.Targets) != 0 && len(in.Targets) != 1) {
+		return nil, detail, ErrInvalidTask
+	}
+	if in.PortProbe.Preset == "" {
+		in.PortProbe.Preset = portprobe.PresetCommon
+	}
+	ports, err := portprobe.SelectPorts(in.PortProbe)
+	if err != nil {
+		return nil, detail, ErrInvalidTask
+	}
+	var address string
+	var kind string
+	if err := tx.QueryRowContext(ctx, "SELECT address,kind FROM assets WHERE id=?", in.AssetID).Scan(&address, &kind); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, detail, fmt.Errorf("%w: port probe requires a registered asset", ErrInvalidTask)
+		}
+		return nil, detail, err
+	}
+	ip, err := netip.ParseAddr(address)
+	if err != nil || kind != "host" || ip.Zone() != "" || ip.IsUnspecified() || ip.IsMulticast() {
+		return nil, detail, ErrInvalidTask
+	}
+	address = ip.Unmap().String()
+	if len(in.Targets) == 1 && in.Targets[0] != address {
+		return nil, detail, ErrInvalidTask
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT port FROM asset_ports WHERE asset_id=? AND kind='EXCLUDED_PROXY'
+UNION SELECT port FROM port_quarantine WHERE asset_id=? AND status='ACTIVE'`, in.AssetID, in.AssetID)
+	if err != nil {
+		return nil, detail, err
+	}
+	selected := make(map[int]bool, len(ports))
+	for _, port := range ports {
+		selected[port] = true
+	}
+	automaticExclusions := make(map[int]bool)
+	for rows.Next() {
+		var port int
+		if err := rows.Scan(&port); err != nil {
+			rows.Close()
+			return nil, detail, err
+		}
+		if selected[port] {
+			automaticExclusions[port] = true
+			detail.Skipped = append(detail.Skipped, net.JoinHostPort(address, strconv.Itoa(port)))
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, detail, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, detail, err
+	}
+	effectivePorts := make([]int, 0, len(ports)-len(automaticExclusions))
+	for _, port := range ports {
+		if !automaticExclusions[port] {
+			effectivePorts = append(effectivePorts, port)
+		}
+	}
+	if len(effectivePorts) == 0 {
+		return nil, detail, fmt.Errorf("%w: all ports are excluded", ErrInvalidTask)
+	}
+	// Keep the requested plan for display and persist the exact resolved list
+	// separately so the Worker cannot expand or reinterpret the configured ranges.
+	detail.ProbePorts = effectivePorts
+	in.Targets = []string{address}
+	detail.Input = in
+	return []string{address}, detail, nil
 }
 
 func logLocal(ctx context.Context, tx *sql.Tx, actor, action, kind, id, detail string) error {
@@ -191,7 +286,7 @@ func createLocalTask(ctx context.Context, tx *sql.Tx, in taskflow.TaskInput, act
 	if in.Engine == "zap" {
 		detail.RuleVersion = ""
 	} // ZAP passive rules ship with the pinned binary.
-	if !in.Synthetic && in.Engine != "zap" {
+	if !in.Synthetic && in.Engine != "zap" && in.Engine != "port-probe" {
 		if current == "" {
 			return taskflow.Task{}, fmt.Errorf("%w: 请先导入并激活包含所选引擎的规则包", ErrInvalidTask)
 		}
@@ -297,6 +392,9 @@ func (s *RuntimeStore) UpdateFinding(ctx context.Context, id, status, actor stri
 }
 
 func (s *RuntimeStore) SaveSchedule(ctx context.Context, in taskflow.Schedule, actor string) (taskflow.Schedule, error) {
+	if in.Engine == "port-probe" {
+		return in, ErrInvalidTask
+	}
 	due, err := time.Parse(time.RFC3339, in.NextRun)
 	if err != nil || !due.After(time.Now()) || due.After(time.Now().Add(366*24*time.Hour)) || len(strings.TrimSpace(in.Name)) == 0 || len(in.Name) > 100 || in.IntervalMinutes < 0 || in.IntervalMinutes > 525600 {
 		return in, ErrInvalidTask

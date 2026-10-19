@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"scanner-platform/internal/portprobe"
 	"scanner-platform/internal/rules"
 	"scanner-platform/internal/taskflow"
 )
@@ -145,6 +146,48 @@ func (r *Runner) Execute(ctx context.Context, task taskflow.Task) ([]taskflow.De
 	default:
 		return nil, fmt.Errorf("unsupported engine")
 	}
+}
+
+// ProbePorts performs a bounded TCP connect probe for the single Server-bound
+// asset IP in the task. It does not send application data or identify services.
+func (r *Runner) ProbePorts(ctx context.Context, task taskflow.Task) ([]taskflow.PortProbeResult, error) {
+	if os.Geteuid() == 0 {
+		return nil, fmt.Errorf("run scanning Worker as an ordinary user")
+	}
+	if task.Synthetic || len(task.Engines) != 1 || task.Engines[0] != "port-probe" || len(task.Chunks) != 1 || len(task.Chunks[0].Targets) != 1 || task.AssetID == "" || !task.PortProbeConfig.OpsApproved {
+		return nil, fmt.Errorf("invalid TCP port probe task")
+	}
+	if !validProbePortPlan(task.PortProbeConfig, task.PortProbePorts) {
+		return nil, fmt.Errorf("invalid TCP port probe task")
+	}
+	open, err := portprobe.Scan(ctx, task.Chunks[0].Targets[0], task.PortProbePorts)
+	if err != nil {
+		return nil, err
+	}
+	results := make([]taskflow.PortProbeResult, 0, len(open))
+	for _, port := range open {
+		results = append(results, taskflow.PortProbeResult{Port: port})
+	}
+	return results, nil
+}
+
+func validProbePortPlan(config portprobe.Config, dispatched []int) bool {
+	selected, err := portprobe.SelectPorts(config)
+	if err != nil || len(dispatched) == 0 || len(dispatched) > portprobe.MaxPorts {
+		return false
+	}
+	allowed := make(map[int]bool, len(selected))
+	for _, port := range selected {
+		allowed[port] = true
+	}
+	previous := 0
+	for _, port := range dispatched {
+		if !allowed[port] || port <= previous {
+			return false
+		}
+		previous = port
+	}
+	return true
 }
 
 func decodeStrict(data []byte, value any) error {

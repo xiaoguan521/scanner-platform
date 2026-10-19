@@ -65,6 +65,27 @@ func TestAssetAPIRequiresLoginAndScopedWrites(t *testing.T) {
 	if len(asset.Ports) != 0 || len(asset.RequestedPorts) != 2 {
 		t.Fatalf("unsafe grant: %+v", asset)
 	}
+	requestedPort := send("POST", "/api/v1/assets/"+asset.ID+"/port-requests", `{"port":8080}`, c, true)
+	if requestedPort.Code != 201 {
+		t.Fatalf("request discovered candidate: %d %s", requestedPort.Code, requestedPort.Body.String())
+	}
+	if duplicate := send("POST", "/api/v1/assets/"+asset.ID+"/port-requests", `{"port":8080}`, c, true); duplicate.Code != 409 {
+		t.Fatalf("duplicate port request: %d", duplicate.Code)
+	}
+	skippedAsset := send("POST", "/api/v1/assets", `{"kind":"host","address":"192.0.2.21","businessGroup":"QA","owner":"Engineer","requestedPorts":[8443],"skippedPorts":[8443]}`, c, true)
+	if skippedAsset.Code != 201 {
+		t.Fatalf("create skipped-port fixture: %d %s", skippedAsset.Code, skippedAsset.Body.String())
+	}
+	var skipped assets.Asset
+	if err := json.Unmarshal(skippedAsset.Body.Bytes(), &skipped); err != nil {
+		t.Fatal(err)
+	}
+	if response := send("POST", "/api/v1/assets/"+skipped.ID+"/port-requests", `{"port":8443}`, c, true); response.Code != 409 {
+		t.Fatalf("skipped proxy port request accepted: %d", response.Code)
+	}
+	if viewerForbidden := send("POST", "/api/v1/assets/"+asset.ID+"/port-requests", `{"port":8081}`, nil, true); viewerForbidden.Code != 401 {
+		t.Fatalf("anonymous port request: %d", viewerForbidden.Code)
+	}
 	if got := send("POST", "/api/v1/assets", reqBody, c, true); got.Code != 409 {
 		t.Fatalf("duplicate asset: %d", got.Code)
 	}

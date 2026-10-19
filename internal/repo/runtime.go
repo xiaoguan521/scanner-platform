@@ -169,10 +169,17 @@ func readRuntimeTask(row rowScanner) (taskflow.Task, error) {
 	task.RuleVersion = detail.RuleVersion
 	task.Error = detail.Error
 	task.InputPath, task.InputKind, task.Scheme = detail.Input.InputPath, detail.Input.InputKind, detail.Input.Scheme
+	task.AssetID = detail.Input.AssetID
+	task.PortProbeConfig = detail.Input.PortProbe
+	task.PortProbePorts = detail.ProbePorts
+	task.PortProbeResults = detail.ProbeResults
 	if detail.Input.Engine != "" && detail.Input.Engine != "synthetic" {
 		task.Synthetic = false
 		task.Engines = []string{detail.Input.Engine}
 		task.ScopeName = "显式目标扫描"
+		if detail.Input.Engine == "port-probe" {
+			task.ScopeName = "单台资产 TCP 端口探测"
+		}
 	}
 	if task.SkippedTargets == nil {
 		task.SkippedTargets = []string{}

@@ -344,6 +344,36 @@ func NewDevelopmentHandler(s account.Repository, assetStore assets.Repository, a
 		}
 		respond(w, http.StatusOK, item)
 	}))
+	mux.HandleFunc("POST /api/v1/assets/{id}/port-requests", auth(s, false, func(w http.ResponseWriter, r *http.Request, user account.User) {
+		if user.Role != "admin" && user.Role != "security_engineer" {
+			bad(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		if !mutationGuard(w, r) {
+			return
+		}
+		var input struct {
+			Port int `json:"port"`
+		}
+		if !readJSON(w, r, &input) {
+			return
+		}
+		err := assetStore.RequestPort(r.Context(), user.ID, r.PathValue("id"), input.Port)
+		if err != nil {
+			switch {
+			case errors.Is(err, assets.ErrInvalid):
+				bad(w, 400, "invalid_port_request")
+			case errors.Is(err, assets.ErrNotFound):
+				bad(w, 404, "not_found")
+			case errors.Is(err, assets.ErrPortRequested), errors.Is(err, assets.ErrPortExcluded):
+				bad(w, 409, "port_request_conflict")
+			default:
+				bad(w, 500, "db_error")
+			}
+			return
+		}
+		respond(w, http.StatusCreated, map[string]any{"port": input.Port, "status": "PENDING"})
+	}))
 	if len(approvalStores) > 0 && approvalStores[0] != nil {
 		registerApprovalHandlers(mux, s, approvalStores[0])
 	}

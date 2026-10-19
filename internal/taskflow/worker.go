@@ -20,6 +20,7 @@ type Worker struct {
 	Delay        time.Duration
 	Interval     time.Duration
 	Execute      func(context.Context, Task) ([]Detection, error)
+	ProbePorts   func(context.Context, Task) ([]PortProbeResult, error)
 	EngineStatus func() []EngineStatus
 }
 
@@ -105,8 +106,15 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 		}
 	}()
 	var detections []Detection
+	var portProbeResults []PortProbeResult
 	if task.Synthetic {
 		err = waitFor(workCtx, w.Delay)
+	} else if len(task.Engines) == 1 && task.Engines[0] == "port-probe" {
+		if w.ProbePorts == nil {
+			err = fmt.Errorf("TCP port probe is not configured")
+		} else {
+			portProbeResults, err = w.ProbePorts(workCtx, task)
+		}
 	} else if w.Execute == nil {
 		err = fmt.Errorf("scanning engines are not configured")
 	} else {
@@ -116,6 +124,10 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 	report := Report{TaskID: task.ID, WorkerID: w.ID, Target: task.Chunks[0].Targets[0], Title: SyntheticTitle}
 	if !task.Synthetic {
 		report = Report{TaskID: task.ID, WorkerID: w.ID, Status: "COMPLETED", Findings: detections}
+		if len(task.Engines) == 1 && task.Engines[0] == "port-probe" {
+			report.Findings = nil
+			report.PortProbeResults = portProbeResults
+		}
 	}
 	if err != nil {
 		if ctx.Err() != nil {

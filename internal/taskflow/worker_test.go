@@ -116,3 +116,34 @@ func TestWorkerReportsOnlyDeliberatePublicExecutionErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestWorkerReportsPortProbeResultsWithoutFindings(t *testing.T) {
+	var received Report
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/worker/claim":
+			_ = json.NewEncoder(w).Encode(Task{ID: "port-probe-task", AssetID: "asset-fixture", Engines: []string{"port-probe"}, PortProbePorts: []int{80, 443}, Chunks: []Chunk{{Targets: []string{"192.0.2.20"}}}})
+		case "/api/v1/worker/report":
+			if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+				t.Error(err)
+			}
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+	worker := Worker{ServerURL: server.URL, ID: "probe-worker", Client: server.Client(), ProbePorts: func(_ context.Context, task Task) ([]PortProbeResult, error) {
+		if task.AssetID != "asset-fixture" || len(task.PortProbePorts) != 2 {
+			t.Fatalf("unexpected task: %+v", task)
+		}
+		return []PortProbeResult{{Port: 443}}, nil
+	}}
+	worked, err := worker.ProcessOne(context.Background())
+	if err != nil || !worked {
+		t.Fatalf("probe task did not complete: worked=%v err=%v", worked, err)
+	}
+	if received.Status != "COMPLETED" || len(received.Findings) != 0 || len(received.PortProbeResults) != 1 || received.PortProbeResults[0].Port != 443 {
+		t.Fatalf("unexpected probe report: %+v", received)
+	}
+}

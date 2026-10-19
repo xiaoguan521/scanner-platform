@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"scanner-platform/internal/portprobe"
 	"scanner-platform/internal/taskflow"
 )
 
@@ -56,6 +57,27 @@ func validDetection(d taskflow.Detection, task taskflow.Task) bool {
 	return targetOK
 }
 
+func validPortProbeResults(results []taskflow.PortProbeResult, task taskflow.Task) bool {
+	if len(task.Engines) != 1 || task.Engines[0] != "port-probe" || task.AssetID == "" || len(task.Chunks) != 1 || len(task.Chunks[0].Targets) != 1 || len(task.PortProbePorts) == 0 || len(task.PortProbePorts) > portprobe.MaxPorts || len(results) > len(task.PortProbePorts) {
+		return false
+	}
+	allowed := make(map[int]bool, len(task.PortProbePorts))
+	for _, port := range task.PortProbePorts {
+		if port < 1 || port > 65535 || allowed[port] {
+			return false
+		}
+		allowed[port] = true
+	}
+	seen := make(map[int]bool, len(results))
+	for _, result := range results {
+		if !allowed[result.Port] || seen[result.Port] {
+			return false
+		}
+		seen[result.Port] = true
+	}
+	return true
+}
+
 func (s *RuntimeStore) completeEngineTask(ctx context.Context, report taskflow.Report) error {
 	if len(report.Findings) > 2000 || len(report.Error) > 500 {
 		return ErrInvalidTask
@@ -71,6 +93,14 @@ func (s *RuntimeStore) completeEngineTask(ctx context.Context, report taskflow.R
 	}
 	if task.Synthetic || len(task.Chunks) != 1 || task.Chunks[0].WorkerNodeID != report.WorkerID {
 		return ErrTaskConflict
+	}
+	portProbeTask := len(task.Engines) == 1 && task.Engines[0] == "port-probe"
+	if portProbeTask {
+		if len(report.Findings) != 0 || !validPortProbeResults(report.PortProbeResults, task) {
+			return ErrInvalidTask
+		}
+	} else if len(report.PortProbeResults) != 0 {
+		return ErrInvalidTask
 	}
 	for _, d := range report.Findings {
 		if !validDetection(d, task) {
@@ -102,6 +132,9 @@ func (s *RuntimeStore) completeEngineTask(ctx context.Context, report taskflow.R
 	if report.Status == "FAILED" && len(report.Findings) != 0 {
 		return ErrInvalidTask
 	}
+	if report.Status == "FAILED" && len(report.PortProbeResults) != 0 {
+		return ErrInvalidTask
+	}
 	if report.Status == "COMPLETED" {
 		var details string
 		if err := tx.QueryRowContext(ctx, "SELECT details FROM scan_tasks WHERE id=?", task.ID).Scan(&details); err != nil {
@@ -110,6 +143,16 @@ func (s *RuntimeStore) completeEngineTask(ctx context.Context, report taskflow.R
 		var detail taskDetails
 		if err := json.Unmarshal([]byte(details), &detail); err != nil {
 			return err
+		}
+		if portProbeTask {
+			detail.ProbeResults = append([]taskflow.PortProbeResult{}, report.PortProbeResults...)
+			encoded, err := json.Marshal(detail)
+			if err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, "UPDATE scan_tasks SET details=? WHERE id=?", string(encoded), task.ID); err != nil {
+				return err
+			}
 		}
 		for _, d := range report.Findings {
 			identity := d.Target

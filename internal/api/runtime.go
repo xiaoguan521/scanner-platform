@@ -39,7 +39,7 @@ func NewRuntimeHandler(store *repo.RuntimeStore, fallback http.Handler, uiDir st
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		runtimeJSON(w, http.StatusOK, map[string]string{"state": "ready", "mode": "local"})
 	})
-	capabilities := []string{"database", "task-dispatch", "synthetic-worker", "web-ui", "authentication", "user-management", "asset-registry", "approval-reviews", "schedules", "rule-import", "rule-activation", "nuclei-http-baseline", "trivy-offline", "zap-passive"}
+	capabilities := []string{"database", "task-dispatch", "synthetic-worker", "web-ui", "authentication", "user-management", "asset-registry", "approval-reviews", "schedules", "rule-import", "rule-activation", "nuclei-http-baseline", "trivy-offline", "zap-passive", "bounded-tcp-port-probe"}
 	unavailable := []string{"engine-validation", "rule-signatures", "harbor"}
 	mux.HandleFunc("GET /api/v1/system/status", func(w http.ResponseWriter, r *http.Request) {
 		runtimeJSON(w, http.StatusOK, Status{

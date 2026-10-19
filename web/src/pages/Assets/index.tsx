@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Alert, Button, Card, Form, Input, message, Modal, Select, Space, Table, Tag, Typography } from 'antd';
 import { PlusOutlined } from '@ant-design/icons';
-import { mockAssets, mockPortQuarantines } from '../../mock/data';
+import { mockAssets, mockPortQuarantines, mockTasks } from '../../mock/data';
 import type { Asset } from '../../types';
 import { apiClient, isDemoMode } from '../../api/client';
 import { useCollection } from '../../api/hooks';
@@ -25,9 +25,11 @@ export const AssetsPage: React.FC = () => {
   const canEdit = isDemoMode || user?.role === 'admin' || user?.role === 'security_engineer';
   const {data:assets,setData:setAssets,loading,error} = useCollection('assets',mockAssets);
   const {data:quarantines,setData:setQuarantines} = useCollection('port-quarantines',mockPortQuarantines);
+  const {data:tasks,loading:taskLoading,error:taskError} = useCollection('tasks',mockTasks);
   const [createOpen,setCreateOpen] = useState(false);
   const [editing,setEditing] = useState<Asset|null>(null);
   const [saving,setSaving] = useState(false);
+  const [requestingPort,setRequestingPort] = useState('');
   const [filter,setFilter] = useState('');
   const [createForm] = Form.useForm<AssetForm>();
   const [editForm] = Form.useForm<Pick<AssetForm,'businessGroup'|'owner'|'requestedPorts'|'skippedPorts'>>();
@@ -73,12 +75,22 @@ export const AssetsPage: React.FC = () => {
         message.info('仅演示：本地显示更新');
       }});
   };
+  const requestCandidate = async(asset:Asset,port:number) => {
+    const key=`${asset.id}:${port}`;
+    setRequestingPort(key);
+    try {
+      await apiClient.requestAssetPort(asset.id,port);
+      setAssets(prev=>prev.map(item=>item.id===asset.id?{...item,requestedPorts:[...new Set([...(item.requestedPorts??[]),port])].sort((a,b)=>a-b)}:item));
+      message.success(`${port} 已提交端口申请；请到“授权与时间窗”由运维审批`);
+    } catch(cause) {message.error(cause instanceof Error?cause.message:'端口申请失败');}
+    finally {setRequestingPort('');}
+  };
 
   return <div style={{display:'flex',flexDirection:'column',gap:16}}>
-    <CollectionNotice loading={loading} error={error}/>
+    <CollectionNotice loading={loading||taskLoading} error={error||taskError}/>
     <Alert type="warning" showIcon
-      message="只处理明确登记的 IP 与端口"
-      description="在任务中心选择已登记的 IP:端口。Nginx 四层转发等端口请填入“跳过端口”，它们会被排除。当前只运行模拟任务，不连接目标。"/>
+      message="端口探测只针对已登记的单台主机"
+      description="在任务中心可选择常用 TCP 端口或自定义范围，并填写排除端口。资产中已标记跳过或隔离的端口会自动排除。开放端口只作候选；提交申请并经运维审批后，才会出现在漏洞扫描目标中。"/>
 
     {quarantines.length > 0 && <Card title="疑似四层转发隔离区（仅演示）">
       <Table rowKey={q=>q.assetId+'-'+q.port} dataSource={quarantines} size="small" pagination={false}
@@ -92,7 +104,7 @@ export const AssetsPage: React.FC = () => {
       <Input.Search placeholder="搜索地址、组或负责人" allowClear value={filter} onChange={e=>setFilter(e.target.value)} style={{width:220}}/>
       <Button type="primary" icon={<PlusOutlined/>} disabled={!canEdit} onClick={()=>setCreateOpen(true)}>登记资产</Button>
     </Space>}>
-      <Table<Asset> rowKey="id" dataSource={rows} loading={loading} scroll={{x:1000}} pagination={{pageSize:10}}
+      <Table<Asset> rowKey="id" dataSource={rows} loading={loading||taskLoading} scroll={{x:1500}} pagination={{pageSize:10}}
         columns={[
           {title:'资产地址',dataIndex:'address',render:(value:string)=><Text strong>{value}</Text>},
           {title:'类型',dataIndex:'kind',render:(v:string)=><Tag>{v==='host'?'主机':'镜像仓库'}</Tag>},
@@ -101,11 +113,22 @@ export const AssetsPage: React.FC = () => {
             ports?.length?<Space wrap>{ports.map(port=><Tag key={port} color="gold">{port} 已登记</Tag>)}</Space>:<Text type="secondary">未填写</Text>},
           {title:'端口分类 / 跳过标记',dataIndex:'ports',render:(ports:Asset['ports'])=>
             ports?.length?<Space wrap>{ports.map(p=><Tag key={p.port} color={p.kind==='WEB'?'green':'default'}>{p.port} {p.kind==='EXCLUDED_PROXY'?'跳过':p.kind}</Tag>)}</Space>:<Text type="secondary">无（不可扫）</Text>},
+          {title:'最近端口探测',render:(_:unknown,asset:Asset)=>{
+            const probe=tasks.find(task=>task.assetId===asset.id&&task.engines?.[0]==='port-probe');
+            if(!probe)return <Text type="secondary">尚未探测</Text>;
+            if(probe.status!=='COMPLETED')return <Tag color={probe.status==='FAILED'?'error':'processing'}>{probe.status==='RUNNING'?'探测中':probe.status==='PENDING'?'待领取':probe.status==='FAILED'?'失败':'等待时间窗'}</Tag>;
+            const candidates=(probe.portProbeResults??[]).map(result=>result.port);
+            return candidates.length?<Space wrap>{candidates.map(port=><Tag color="blue" key={port}>{port} 开放候选</Tag>)}</Space>:<Text type="secondary">所选范围内未发现开放端口</Text>;
+          }},
           {title:'登记时间',dataIndex:'createdAt',render:(value:string)=>new Date(value).toLocaleString()},
-          {title:'操作',render:(_:unknown,asset:Asset)=><Button type="link" disabled={!canEdit} onClick={()=>{
-            editForm.setFieldsValue({businessGroup:asset.businessGroup,owner:asset.owner,requestedPorts:asset.requestedPorts?.join(', ')??'',skippedPorts:asset.skippedPorts?.join(', ')??''});
-            setEditing(asset);
-          }}>编辑信息</Button>}
+          {title:'操作',render:(_:unknown,asset:Asset)=>{
+            const probe=tasks.find(task=>task.assetId===asset.id&&task.engines?.[0]==='port-probe'&&task.status==='COMPLETED');
+            const candidates=(probe?.portProbeResults??[]).map(result=>result.port).filter(port=>!(asset.requestedPorts??[]).includes(port)&&!(asset.skippedPorts??[]).includes(port)&&!(asset.quarantinedPorts??[]).includes(port)&&!(asset.ports??[]).some(item=>item.port===port));
+            return <Space wrap><Button type="link" disabled={!canEdit} onClick={()=>{
+              editForm.setFieldsValue({businessGroup:asset.businessGroup,owner:asset.owner,requestedPorts:asset.requestedPorts?.join(', ')??'',skippedPorts:asset.skippedPorts?.join(', ')??''});
+              setEditing(asset);
+            }}>编辑信息</Button>{candidates.map(port=><Button key={port} size="small" disabled={!canEdit||isDemoMode||requestingPort===`${asset.id}:${port}`} loading={requestingPort===`${asset.id}:${port}`} onClick={()=>void requestCandidate(asset,port)}>申请 {port}</Button>)}</Space>;
+          }}
         ]}/>
     </Card>
     <Modal title={isDemoMode?'演示：登记资产':'登记新资产'} open={createOpen}
