@@ -3,6 +3,7 @@ package executor
 import (
 	"bufio"
 	"context"
+	"errors"
 	"crypto/tls"
 	"fmt"
 	"html"
