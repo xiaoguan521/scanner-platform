@@ -3,8 +3,8 @@ package executor
 import (
 	"bufio"
 	"context"
-	"errors"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"html"
 	"io"
