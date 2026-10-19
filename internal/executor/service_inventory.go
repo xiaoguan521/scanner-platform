@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"crypto/tls"
-	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -134,8 +133,12 @@ func identifyService(ctx context.Context, host string, port int, timeout time.Du
 			applyHTTPInventory(&s, response)
 			return s
 		}
-		var netErr net.Error
-		if errors.Is(err, io.EOF) || strings.Contains(strings.ToLower(err.Error()), "connection reset") || (errors.As(err, &netErr) && netErr.Timeout()) || errors.Is(err, context.DeadlineExceeded) {
+		// An established port that repeatedly fails bounded identification is
+		// suspicious even if a timed-out socket reports "use of closed network
+		// connection" instead of a net.Error timeout. Treat all unsuccessful
+		// attempts without a recognized banner as inconclusive failures.
+		// Quarantine conservatively after the configured threshold.
+		if err != nil {
 			resets++
 		}
 	}
