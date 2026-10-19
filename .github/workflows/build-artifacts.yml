@@ -75,8 +75,6 @@ jobs:
             goarch: arm64
           - goos: windows
             goarch: amd64
-          - goos: windows
-            goarch: arm64
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -102,7 +100,7 @@ jobs:
             ext=".exe"
           fi
 
-          # These three binaries are Phase 0 scaffolds, not deployable clients.
+          # Build the platform services for the selected target.
           for command in server updater worker; do
             CGO_ENABLED=0 GOOS="$TARGET_GOOS" GOARCH="$TARGET_GOARCH" \
               go build -trimpath -ldflags="-s -w" \
@@ -116,22 +114,53 @@ jobs:
               -o "build_output/sec-portable$ext" ./cmd/portable
           fi
 
+      - name: Install SHA-256-pinned scanner engines
+        shell: bash
+        env:
+          TARGET_GOOS: ${{ matrix.goos }}
+          TARGET_GOARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          ext=""
+          if [[ "$TARGET_GOOS" == windows ]]; then
+            ext=".exe"
+          fi
+          python3 scripts/install_engines.py \
+            --platform "$TARGET_GOOS" \
+            --arch "$TARGET_GOARCH" \
+            --destination build_output/bin
+          test -s "build_output/bin/nuclei${ext}"
+          test -s "build_output/bin/trivy${ext}"
+          test -s build_output/bin/zap/zap-2.17.0.jar
+          test -s build_output/bin/nuclei.installed.json
+          test -s build_output/bin/trivy.installed.json
+          test -s build_output/bin/zap/zap.installed.json
+
       - name: Download reviewed frontend bundle
         uses: actions/download-artifact@v4
         with:
           name: frontend-dist
-          path: build_output/web
+          path: build_output/web/dist
 
       - name: Verify frontend bundle exists
         shell: bash
         run: |
           set -euo pipefail
-          test -s build_output/web/index.html
+          test -s build_output/web/dist/index.html
           shopt -s nullglob
-          scripts=(build_output/web/assets/*.js)
+          scripts=(build_output/web/dist/assets/*.js)
           test "${#scripts[@]}" -gt 0
-          # Static files are packaged for future integration. The Phase 0
-          # Go Server does not currently serve these files.
+          # sec-server serves web/dist relative to the package root.
+
+      - name: Include package quickstart and offline data directories
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp docs/offline-package.md build_output/README.md
+          mkdir -p build_output/docs build_output/tools
+          cp docs/engines.md docs/linux-server-scan.md build_output/docs/
+          cp scripts/collect_linux_inputs.py build_output/tools/
+          mkdir -p build_output/runtime/inputs build_output/vuln-data
 
       - name: Package artifacts and checksums
         shell: bash
@@ -165,7 +194,7 @@ jobs:
           retention-days: 14
 
   release:
-    name: Create Phase 0 Draft Release
+    name: Create Draft Release
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: [verify, frontend, build]
     runs-on: ubuntu-latest
@@ -187,8 +216,8 @@ jobs:
           shopt -s nullglob
           archives=(all_artifacts/scanner-platform-*.zip all_artifacts/scanner-platform-*.tar.gz)
           checksums=(all_artifacts/scanner-platform-*.sha256)
-          if [[ "${#archives[@]}" -ne 6 || "${#checksums[@]}" -ne 6 ]]; then
-            echo "Expected exactly six archives and checksum files" >&2
+          if [[ "${#archives[@]}" -ne 5 || "${#checksums[@]}" -ne 5 ]]; then
+            echo "Expected exactly five supported platform archives and checksum files" >&2
             exit 1
           fi
           (cd all_artifacts && sha256sum --check -- *.sha256)
@@ -205,10 +234,8 @@ jobs:
           draft: true
           prerelease: true
           body: |
-            Phase 0 / PoC artifacts only. Not production-ready.
-            Server, Updater and Worker are currently fail-closed scaffolds.
-            The portable client is included only after its entry point is implemented.
-            Each platform archive includes web/ static assets built in Server mode.
-            These static assets are not yet served by the Phase 0 Go Server.
-            User management/auth/RBAC and business APIs are not operational.
-            Review security validation and platform runtime tests before publication.
+            Early-development packages for local, single-host validation.
+            Each supported archive contains the Server, Updater, Worker, Server-mode web UI, and SHA-256-pinned Nuclei, Trivy, and ZAP engines. The archive also contains a quickstart README and checksum sidecar.
+            Trivy databases and rule releases are kept separate. Use sec-updater --prepare-engines --with-java-db on a network-connected preparation machine, then copy the complete vuln-data directory to an offline host. This prepares the built-in Nuclei HTTP baseline and Trivy vulnerability/Java databases; it does not install the full upstream Nuclei template library.
+            ZAP requires Java 17 or newer on PATH. The local Server, Worker, and Updater currently communicate over loopback; these packages are not a hardened multi-host production deployment.
+            Publish this draft only after reviewing the validation record and target-platform requirements.

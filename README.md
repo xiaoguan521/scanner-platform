@@ -10,6 +10,8 @@
 
 已接入固定版本 Nuclei、Trivy、ZAP：先运行 `make engines` 准备程序与主库，Java 检查再运行 `make engines-java`，然后 `make dev`。任务页可选只读 HTTP 基线、ZAP 被动分析、Trivy Linux 系统包快照/依赖清单/JAR 与 Go 部署文件/镜像归档，或原有模拟模式。操作与当前覆盖见 [引擎接入指南](docs/engines.md)，混合部署使用 [Linux 采集说明](docs/linux-server-scan.md)。仅完成本地夹具联调，真实服务器另行验证；规则尚未验签，Harbor、AI、便携版仍后置。
 
+需要直接下载平台程序和扫描引擎时，在 GitHub Actions 手动运行 `Build & Release Artifacts`，按平台下载压缩包；离线规则库与 Java 索引的准备和目录布局见[离线平台包说明](docs/offline-package.md)。
+
 ## 检查
 
 ```bash
