@@ -266,6 +266,9 @@ func (s *RuntimeStore) freezeReport(ctx context.Context, tx *sql.Tx, input repor
 	if input.Scope.AssetID != "" && len(snap.Assets) == 0 {
 		return snap, fmt.Errorf("%w: 资产不在所选报告范围", reporting.ErrInvalid)
 	}
+	if input.Scope.TaskID != "" && len(snap.Assets) == 0 {
+		return snap, fmt.Errorf("%w: 所选任务没有匹配当前资产或业务组的已登记目标", reporting.ErrInvalid)
+	}
 	for _, task := range tasks {
 		matched := input.Scope.AssetID == "" && input.Scope.BusinessGroup == ""
 		for _, chunk := range task.Chunks {
