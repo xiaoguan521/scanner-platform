@@ -1,0 +1,99 @@
+name: PostgreSQL Schema Migrations
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'internal/repo/migrations/postgres/**'
+      - 'internal/repo/migrations/README.md'
+      - 'scripts/init-postgres.sh'
+      - 'scripts/check-postgres-schema.sh'
+      - '.github/workflows/postgres-schema.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'internal/repo/migrations/postgres/**'
+      - 'internal/repo/migrations/README.md'
+      - 'scripts/init-postgres.sh'
+      - 'scripts/check-postgres-schema.sh'
+      - '.github/workflows/postgres-schema.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  postgres-migrations:
+    name: Fresh database + repeated migration check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: scanner_platform_ci
+          POSTGRES_USER: scanner_ci
+          POSTGRES_PASSWORD: ci-only-local-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U scanner_ci -d scanner_platform_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGDATABASE: scanner_platform_ci
+      PGUSER: scanner_ci
+      PGPASSWORD: ci-only-local-password
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install PostgreSQL client if missing
+        shell: bash
+        run: |
+          if ! command -v psql >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y postgresql-client
+          fi
+
+      - name: Apply all migrations to empty PostgreSQL
+        shell: bash
+        run: bash scripts/init-postgres.sh
+
+      - name: Verify all table names and journal entries
+        shell: bash
+        run: bash scripts/check-postgres-schema.sh
+
+      - name: Re-run migrations to confirm idempotent runner
+        shell: bash
+        run: |
+          bash scripts/init-postgres.sh
+          bash scripts/check-postgres-schema.sh
+
+      - name: Verify foreign keys and indexes are present
+        shell: bash
+        run: |
+          psql -X -v ON_ERROR_STOP=1 <<'SQL'
+          DO $$
+          DECLARE
+              foreign_keys INTEGER;
+              indexes INTEGER;
+          BEGIN
+              SELECT count(*) INTO foreign_keys
+                FROM pg_catalog.pg_constraint c
+                JOIN pg_catalog.pg_namespace n ON n.oid = c.connamespace
+               WHERE n.nspname = 'public' AND c.contype = 'f';
+              SELECT count(*) INTO indexes
+                FROM pg_catalog.pg_indexes
+               WHERE schemaname = 'public';
+              IF foreign_keys < 15 OR indexes < 25 THEN
+                  RAISE EXCEPTION 'Unexpected PostgreSQL schema coverage: % foreign keys, % indexes',
+                    foreign_keys, indexes;
+              END IF;
+          END $$;
+          SQL
