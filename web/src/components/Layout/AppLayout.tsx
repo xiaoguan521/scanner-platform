@@ -21,6 +21,7 @@ import {
   BulbFilled,
   SafetyCertificateOutlined,
   TeamOutlined,
+  FileTextOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAppTheme } from '../../context/ThemeContext';
@@ -64,6 +65,11 @@ export const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children })
       key: '/findings',
       icon: <BugOutlined />,
       label: '漏洞生命周期',
+    },
+    {
+      key: '/reports',
+      icon: <FileTextOutlined />,
+      label: '安全报告',
     },
     {
       key: '/nodes',

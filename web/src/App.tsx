@@ -9,6 +9,7 @@ import { TasksPage } from './pages/Tasks';
 import { FindingsPage } from './pages/Findings';
 import { NodesPage } from './pages/Nodes';
 import { UsersPage } from './pages/Users';
+import { ReportsPage } from './pages/Reports';
 import { AuthProvider, useAuth } from './auth/AuthProvider';
 import { isDemoMode } from './api/client';
 
@@ -24,6 +25,7 @@ const AuthenticatedRoutes: React.FC = () => {
             <Route path="/scopes" element={<ScopesPage />} />
             <Route path="/tasks" element={<TasksPage />} />
             <Route path="/findings" element={<FindingsPage />} />
+            <Route path="/reports" element={<ReportsPage />} />
             <Route path="/nodes" element={<NodesPage />} />
             <Route path="/users" element={isDemoMode || user?.role === "admin" ? <UsersPage /> : <Navigate to="/" replace />} />
             <Route path="*" element={<Navigate to="/" replace />} />

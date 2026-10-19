@@ -40,6 +40,8 @@ export interface Asset {
   requestedPorts?: number[]; // Registration request only; NOT an approved scan port
   quarantinedPorts?: number[];
   skippedPorts?: number[];
+  reachabilityStatus?: 'UNCHECKED'|'REACHABLE'|'NO_RESPONSE'|'CHECK_FAILED';
+  reachabilityCheckedAt?: string;
 }
 
 export interface TimeWindow {
@@ -110,7 +112,7 @@ export interface ScanTask {
   id: string;
   scopeId: string;
   scopeName: string;
-  engines: ('nuclei' | 'trivy' | 'zap' | 'synthetic' | 'port-probe')[];
+  engines: ('auto' | 'nuclei' | 'trivy' | 'zap' | 'synthetic' | 'port-probe')[];
   status: TaskStatus;
   hardDeadline: string;
   totalChunks: number;
@@ -127,6 +129,10 @@ export interface ScanTask {
   portProbeConfig?: PortProbeConfig;
   portProbePorts?: number[];
   portProbeResults?: PortProbeResult[];
+  vulnerabilityPorts?: number[];
+  serviceResults?: ServiceResult[];
+  systemScanStatus?: string;
+  customRuleCount?: number;
 }
 
 export interface PortProbeRange { start: number; end: number }
@@ -137,6 +143,7 @@ export interface PortProbeConfig {
   opsApproved?: boolean;
 }
 export interface PortProbeResult { port: number }
+export interface ServiceResult { port: number; scheme?: 'http'|'https'; kind: 'HTTP'|'OTHER' }
 
 export type FindingSeverity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO';
 
@@ -197,7 +204,7 @@ export interface RuleBundle {
 }
 
 export interface EngineStatus { name: string; version: string; installed: boolean; ready: boolean; message: string }
-export interface TaskInput { synthetic: boolean; engine?: 'nuclei'|'trivy'|'zap'|'synthetic'|'port-probe'; scheme?: 'http'|'https'; inputPath?: string; inputKind?: 'filesystem'|'image-archive'|'rootfs'|'artifact'; assetId?: string; portProbe?: PortProbeConfig; targets: string[]; timeWindows: TimeWindow[] }
+export interface TaskInput { synthetic: boolean; engine?: 'auto'|'nuclei'|'trivy'|'zap'|'synthetic'|'port-probe'; scheme?: 'http'|'https'; inputPath?: string; inputKind?: 'filesystem'|'image-archive'|'rootfs'|'artifact'; assetId?: string; portProbe?: PortProbeConfig; customRuleIds?: string[]; targets: string[]; timeWindows: TimeWindow[] }
 export interface Schedule extends TaskInput {
   id: string; name: string; nextRun: string; intervalMinutes: number; enabled: boolean;
   lastTaskId: string; lastError: string; createdBy: string;
@@ -205,4 +212,17 @@ export interface Schedule extends TaskInput {
 export interface RuleJob {
   id: string; kind: 'IMPORT'|'FETCH'|'ACTIVATE'; status: 'PENDING'|'RUNNING'|'COMPLETED'|'FAILED';
   version: string; message: string; createdAt: string; completedAt: string;
+}
+
+export interface CustomRule {
+  id: string;
+  name: string;
+  severity: 'info'|'low'|'medium'|'high'|'critical';
+  description: string;
+  matchType: 'word'|'regex'|'status';
+  part?: 'header'|'body';
+  values?: string[];
+  statusCodes?: number[];
+  enabled: boolean;
+  template?: string;
 }

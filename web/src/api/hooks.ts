@@ -31,7 +31,7 @@ export function useCollection<K extends keyof Resources>(name: K, demoFixtures: 
     });
     };
     load();
-    const timer = ['tasks','findings','nodes','rules','schedules','rule-jobs'].includes(name) ? window.setInterval(load, 1000) : undefined;
+    const timer = ['tasks','findings','nodes','rules','schedules','rule-jobs','custom-rules'].includes(name) ? window.setInterval(load, 1000) : undefined;
     return () => {
       controller.abort();
       if (timer !== undefined) window.clearInterval(timer);

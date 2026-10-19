@@ -1,4 +1,4 @@
-import type { Asset, AuthorizedScope, Finding, NodeInfo, PortQuarantine, RuleBundle, ScanTask, User, UserRole, PortRequest, TimeWindow, ApprovalDecision, Schedule, RuleJob } from '../types';
+import type { Asset, AuthorizedScope, Finding, NodeInfo, PortQuarantine, RuleBundle, ScanTask, User, UserRole, PortRequest, TimeWindow, ApprovalDecision, Schedule, RuleJob, CustomRule } from '../types';
 
 export const dataMode: 'demo' | 'server' = import.meta.env.VITE_DATA_MODE === 'server' ? 'server' : 'demo';
 export const isDemoMode = dataMode === 'demo';
@@ -26,6 +26,7 @@ export interface Resources {
   rules: RuleBundle;
   schedules: Schedule;
   'rule-jobs': RuleJob;
+  'custom-rules': CustomRule;
 }
 export class ApiRequestError extends Error {
   constructor(public readonly status: number, message: string) {
@@ -52,7 +53,7 @@ export async function requestJSON<T>(path: string, method = 'GET', body?: unknow
     try {
       const err: ApiErrorBody = await response.json();
       if (typeof err.message === 'string') {
-        const messages:Record<string,string>={invalid_user:'用户名、角色或密码不符合要求（密码 12–72 字节）',user_exists:'用户名已存在',invalid_asset:'请输入有效数字 IP、业务组、负责人和端口；跳过端口须属于目标端口',asset_exists:'资产已存在',invalid_port_request:'端口申请格式无效',port_request_conflict:'端口已申请、已跳过或处于隔离状态',forbidden:'当前账号无权执行此操作',invalid_approval:'审批记录或时间窗格式不正确',approval_conflict:'记录已审核、已过期或端口被标记跳过',db_error:'保存失败，请查看 Server 日志',already_initialized:'管理员已初始化，请直接登录'};
+      const messages:Record<string,string>={invalid_user:'用户名、角色或密码不符合要求（密码 12–72 字节）',user_exists:'用户名已存在',invalid_asset:'请输入有效数字 IP、业务组、负责人和端口；跳过端口须属于目标端口',asset_exists:'资产已存在',asset_in_use_remove_authorization_first:'资产仍有授权记录，请先撤销或删除关联授权',host_asset_required:'仅支持对已登记主机检查 Ping 可达性',reachability_check_failed:'可达性检测失败，请稍后重试',invalid_port_request:'端口申请格式无效',port_request_conflict:'端口已申请、已跳过或处于隔离状态',forbidden:'当前账号无权执行此操作',invalid_approval:'审批记录或时间窗格式不正确',approval_conflict:'记录已审核、已过期或端口被标记跳过',db_error:'保存失败，请查看 Server 日志',already_initialized:'管理员已初始化，请直接登录'};
         description=messages[err.error]??err.message;
       }
     } catch { /* Unknown error bodies stay generic. */ }
@@ -80,14 +81,32 @@ export const apiClient = {
   createAsset(input: {kind: Asset['kind']; address: string; businessGroup: string; owner: string; requestedPorts: number[]; skippedPorts?: number[]}) {
     return requestJSON<Asset>('/api/v1/assets', 'POST', input);
   },
-  updateAsset(id: string, input: {businessGroup: string; owner: string; requestedPorts: number[]; skippedPorts?: number[]}) {
+  updateAsset(id: string, input: {address:string;businessGroup: string; owner: string; requestedPorts: number[]; skippedPorts?: number[]}) {
     return requestJSON<Asset>('/api/v1/assets/' + encodeURIComponent(id), 'PATCH', input);
+  },
+  deleteAsset(id: string) {
+    return requestJSON<{status:string}>('/api/v1/assets/' + encodeURIComponent(id), 'DELETE');
+  },
+  checkAssetReachability(id: string) {
+    return requestJSON<{status:'REACHABLE'|'NO_RESPONSE'|'CHECK_FAILED';checkedAt:string}>('/api/v1/assets/' + encodeURIComponent(id) + '/reachability-check', 'POST', {});
   },
   requestAssetPort(id: string, port: number) {
     return requestJSON<{port:number;status:string}>('/api/v1/assets/' + encodeURIComponent(id) + '/port-requests', 'POST', {port});
   },
+  requestAssetPorts(id: string, ports: number[]) {
+    return requestJSON<{requested:number;status:string}>('/api/v1/assets/' + encodeURIComponent(id) + '/port-requests/batch', 'POST', {ports});
+  },
   requestScope(input: {assetId:string; timeWindows:TimeWindow[]; expiresAt:string}) {
     return requestJSON<AuthorizedScope>('/api/v1/scopes', 'POST', input);
+  },
+  updateScope(id:string,input:{assetId:string;timeWindows:TimeWindow[];expiresAt:string}) {
+    return requestJSON<AuthorizedScope>('/api/v1/scopes/' + encodeURIComponent(id), 'PUT', input);
+  },
+  deleteScope(id:string) {
+    return requestJSON<{status:string}>('/api/v1/scopes/' + encodeURIComponent(id), 'DELETE');
+  },
+  revokeScope(id:string) {
+    return requestJSON<AuthorizedScope>('/api/v1/scopes/' + encodeURIComponent(id) + '/revoke', 'POST', {});
   },
   reviewScope(id:string, decision:ApprovalDecision) {
     return requestJSON<AuthorizedScope>('/api/v1/scopes/' + encodeURIComponent(id) + '/review', 'POST', decision);

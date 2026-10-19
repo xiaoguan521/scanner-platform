@@ -37,6 +37,7 @@ export const ScopesPage: React.FC = () => {
   const canRequest = !isDemoMode && (user?.role === 'admin' || user?.role === 'security_engineer');
   const canReview = !isDemoMode && (user?.role === 'admin' || user?.role === 'ops_approver');
   const [requestOpen, setRequestOpen] = useState(false);
+  const [editingScope, setEditingScope] = useState<AuthorizedScope|null>(null);
   const [reviewTarget, setReviewTarget] = useState<ReviewTarget | null>(null);
   const [busy, setBusy] = useState(false);
   const [requestForm] = Form.useForm<ScopeForm>();
@@ -57,13 +58,17 @@ export const ScopesPage: React.FC = () => {
       const windows: TimeWindow[] = [{
         weekdays: values.weekdays, start: values.start, end: values.end, timeZone: values.timeZone,
       }];
-      const result = await apiClient.requestScope({
+      const input = {
         assetId: values.assetId, timeWindows: windows, expiresAt: expiry.toISOString(),
-      });
-      setScopes(prev => [result, ...prev]);
+      };
+      const result = editingScope
+        ? await apiClient.updateScope(editingScope.id,input)
+        : await apiClient.requestScope(input);
+      setScopes(prev => editingScope?prev.map(scope=>scope.id===result.id?result:scope):[result,...prev]);
       requestForm.resetFields();
       setRequestOpen(false);
-      message.success('范围申请已保存，等待另一位审批人审核');
+      setEditingScope(null);
+      message.success(editingScope?'修改已保存，授权已重置为待审核':'范围申请已保存，等待另一位审批人审核');
     } catch (e) {
       message.error(e instanceof Error ? e.message : '提交授权申请失败');
     } finally { setBusy(false); }
@@ -73,6 +78,33 @@ export const ScopesPage: React.FC = () => {
     reviewForm.setFieldsValue({ decision: 'APPROVE', approvalTicket: '', note: '', kind: 'WEB' });
     setReviewTarget(target);
   };
+  const editScope = (scope:AuthorizedScope) => {
+    const window=scope.timeWindows[0];
+    const expiry=new Date(scope.expiresAt);
+    requestForm.setFieldsValue({
+      assetId:scope.assetId??'',weekdays:window?.weekdays??[],start:window?.start??'09:00',end:window?.end??'18:00',
+      timeZone:window?.timeZone??'Asia/Shanghai',
+      expiresAt:Number.isFinite(expiry.getTime())?new Date(expiry.getTime()-expiry.getTimezoneOffset()*60000).toISOString().slice(0,16):'',
+    });
+    setEditingScope(scope);
+    setRequestOpen(true);
+  };
+  const deleteScope = (scope:AuthorizedScope) => Modal.confirm({
+    title:'删除待审核授权',content:'该授权记录会从列表移除。已批准的授权必须先撤销，系统会保留审批审计记录。',
+    okText:'删除',okButtonProps:{danger:true},cancelText:'取消',
+    onOk:async()=>{
+      try {await apiClient.deleteScope(scope.id);setScopes(prev=>prev.filter(item=>item.id!==scope.id));message.success('授权记录已删除');}
+      catch(cause){message.error(cause instanceof Error?cause.message:'删除失败');throw cause;}
+    },
+  });
+  const revokeScope = (scope:AuthorizedScope) => Modal.confirm({
+    title:'撤销已批准授权',content:`撤销后 ${scope.cidrOrHost} 将不再处于授权状态，历史审批记录会保留。`,
+    okText:'撤销授权',okButtonProps:{danger:true},cancelText:'取消',
+    onOk:async()=>{
+      try {const updated=await apiClient.revokeScope(scope.id);setScopes(prev=>prev.map(item=>item.id===updated.id?updated:item));message.success('授权已撤销');}
+      catch(cause){message.error(cause instanceof Error?cause.message:'撤销失败');throw cause;}
+    },
+  });
   const submitReview = async (decision: ApprovalDecision) => {
     if (!canReview || !reviewTarget) return;
     setBusy(true);
@@ -130,6 +162,15 @@ export const ScopesPage: React.FC = () => {
               {renderDecision(scopeStatus(scope), {kind:'scope',id:scope.id,requestedBy:scope.requestedBy})}
               {scopeStatus(scope) === 'APPROVED' && !scope.isActive && <Tag>已过期</Tag>}
             </Space> },
+          { title:'操作',width:200,fixed:'right',render:(_:unknown,scope:AuthorizedScope)=>{
+            const status=scopeStatus(scope);
+            return <Space wrap>
+              <Button size="small" disabled={!canRequest||status==='REJECTED'||status==='REVOKED'} onClick={()=>editScope(scope)}>修改</Button>
+              {status==='APPROVED'
+                ? <Button size="small" danger disabled={!canRequest&&!canReview} onClick={()=>revokeScope(scope)}>撤销</Button>
+                : <Button size="small" danger disabled={!canRequest} onClick={()=>deleteScope(scope)}>删除</Button>}
+            </Space>;
+          }},
         ]} />
     </Card>
     <Card title="资产端口申请审批" extra={<Text type="secondary">已标记跳过的端口不会派发</Text>}>
@@ -146,8 +187,9 @@ export const ScopesPage: React.FC = () => {
           {title:'备注',dataIndex:'reviewNote'},
         ]}/>
     </Card>
-    <Modal title="申请扫描授权（单个主机 IP）" open={requestOpen}
-      onCancel={()=>setRequestOpen(false)} onOk={()=>requestForm.submit()} okButtonProps={{loading:busy}}>
+    <Modal title={editingScope?'修改授权范围':'申请扫描授权（单个主机 IP）'} open={requestOpen}
+      onCancel={()=>{setRequestOpen(false);setEditingScope(null);requestForm.resetFields();}} onOk={()=>requestForm.submit()} okButtonProps={{loading:busy}}>
+      {editingScope?.status==='APPROVED'&&<Alert type="warning" showIcon style={{marginBottom:14}} message="保存修改会立即清除原审批，更新后的授权需要重新审核。"/>}
       <Form<ScopeForm> form={requestForm} layout="vertical" onFinish={requestScope}
         initialValues={{weekdays:[1,2,3,4,5],start:'09:00',end:'18:00',timeZone:'Asia/Shanghai'}}>
         <Form.Item name="assetId" label="从资产台账选择主机" rules={[{required:true}]}>
