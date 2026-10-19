@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"regexp"
+	"scanner-platform/internal/inventory"
 	"sort"
 	"strings"
 	"time"
@@ -23,6 +24,21 @@ var (
 )
 
 type Asset struct {
+	Name          string `json:"name,omitempty"`
+	IsCore        bool   `json:"isCore"`
+	Department    string `json:"department,omitempty"`
+	Phone         string `json:"phone,omitempty"`
+	MAC           string `json:"mac,omitempty"`
+	OSName        string `json:"osName,omitempty"`
+	OSFamily      string `json:"osFamily,omitempty"`
+	DeviceType    string `json:"deviceType,omitempty"`
+	DeviceSubtype string `json:"deviceSubtype,omitempty"`
+	Vendor        string `json:"vendor,omitempty"`
+	Model         string `json:"model,omitempty"`
+
+	Services     []inventory.Service    `json:"services"`
+	LoginEntries []inventory.LoginEntry `json:"loginEntries"`
+
 	ID                    string `json:"id"`
 	Kind                  string `json:"kind"`
 	Address               string `json:"address"`
@@ -43,6 +59,18 @@ type Port struct {
 	Source string `json:"source"`
 }
 type Input struct {
+	Name          string `json:"name,omitempty"`
+	IsCore        bool   `json:"isCore"`
+	Department    string `json:"department,omitempty"`
+	Phone         string `json:"phone,omitempty"`
+	MAC           string `json:"mac,omitempty"`
+	OSName        string `json:"osName,omitempty"`
+	OSFamily      string `json:"osFamily,omitempty"`
+	DeviceType    string `json:"deviceType,omitempty"`
+	DeviceSubtype string `json:"deviceSubtype,omitempty"`
+	Vendor        string `json:"vendor,omitempty"`
+	Model         string `json:"model,omitempty"`
+
 	Kind           string `json:"kind"`
 	Address        string `json:"address"`
 	BusinessGroup  string `json:"businessGroup"`
@@ -51,6 +79,18 @@ type Input struct {
 	SkippedPorts   []int  `json:"skippedPorts"`
 }
 type Edit struct {
+	Name          string `json:"name,omitempty"`
+	IsCore        bool   `json:"isCore"`
+	Department    string `json:"department,omitempty"`
+	Phone         string `json:"phone,omitempty"`
+	MAC           string `json:"mac,omitempty"`
+	OSName        string `json:"osName,omitempty"`
+	OSFamily      string `json:"osFamily,omitempty"`
+	DeviceType    string `json:"deviceType,omitempty"`
+	DeviceSubtype string `json:"deviceSubtype,omitempty"`
+	Vendor        string `json:"vendor,omitempty"`
+	Model         string `json:"model,omitempty"`
+
 	Address        string `json:"address"`
 	BusinessGroup  string `json:"businessGroup"`
 	Owner          string `json:"owner"`
@@ -72,7 +112,7 @@ type Store struct {
 }
 
 const (
-	maxPorts            = 50
+	maxPorts            = 65535
 	MaxPortRequestBatch = 1024
 )
 
@@ -120,6 +160,9 @@ func NewWithPinger(db *sql.DB, pinger Pinger) (*Store, error) {
     address TEXT NOT NULL,resolved_ip TEXT,business_group TEXT NOT NULL,
     owner TEXT NOT NULL,created_at TEXT NOT NULL,
     UNIQUE(kind,address))`,
+		`CREATE TABLE IF NOT EXISTS asset_profiles(asset_id TEXT PRIMARY KEY REFERENCES assets(id) ON DELETE CASCADE,data TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS asset_services(asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,port INTEGER NOT NULL,data TEXT NOT NULL,PRIMARY KEY(asset_id,port))`,
+		`CREATE TABLE IF NOT EXISTS asset_login_entries(asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,entry_key TEXT NOT NULL,data TEXT NOT NULL,PRIMARY KEY(asset_id,entry_key))`,
 		`CREATE TABLE IF NOT EXISTS asset_port_requests (
     asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
     port INTEGER NOT NULL CHECK(port BETWEEN 1 AND 65535),
@@ -183,6 +226,9 @@ func canonicalPorts(ports []int) ([]int, error) {
 	return out, nil
 }
 func normalize(in Input) (Input, error) {
+	if !validProfile(in) {
+		return Input{}, ErrInvalid
+	}
 	in.Address = strings.TrimSpace(in.Address)
 	in.BusinessGroup = strings.TrimSpace(in.BusinessGroup)
 	in.Owner = strings.TrimSpace(in.Owner)
@@ -214,14 +260,8 @@ func normalize(in Input) (Input, error) {
 	if err != nil {
 		return Input{}, err
 	}
-	for _, port := range in.SkippedPorts {
-		found := false
-		for _, requested := range ports {
-			found = found || port == requested
-		}
-		if !found || in.Kind != "host" {
-			return Input{}, ErrInvalid
-		}
+	if len(in.SkippedPorts) > 0 && in.Kind != "host" {
+		return Input{}, ErrInvalid
 	}
 	return in, nil
 }
@@ -283,8 +323,15 @@ const columns = `id,kind,address,resolved_ip,business_group,owner,created_at,
 COALESCE((SELECT status FROM asset_reachability r WHERE r.asset_id=assets.id),'UNCHECKED'),
 COALESCE((SELECT checked_at FROM asset_reachability r WHERE r.asset_id=assets.id),'')`
 
-func (s *Store) List(ctx context.Context) ([]Asset, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT "+columns+" FROM assets ORDER BY created_at DESC,id")
+func (s *Store) List(ctx context.Context) ([]Asset, error) { return ListSnapshot(ctx, s.db) }
+
+type SnapshotQuerier interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+// ListSnapshot reads the complete registry through the caller's transaction.
+func ListSnapshot(ctx context.Context, q SnapshotQuerier) ([]Asset, error) {
+	rows, err := q.QueryContext(ctx, "SELECT "+columns+" FROM assets ORDER BY created_at DESC,id")
 	if err != nil {
 		return nil, fmt.Errorf("query assets: %w", err)
 	}
@@ -301,7 +348,7 @@ func (s *Store) List(ctx context.Context) ([]Asset, error) {
 		return nil, err
 	}
 	for i := range result {
-		ports, err := s.db.QueryContext(ctx, "SELECT port FROM asset_port_requests WHERE asset_id=? ORDER BY port", result[i].ID)
+		ports, err := q.QueryContext(ctx, "SELECT port FROM asset_port_requests WHERE asset_id=? ORDER BY port", result[i].ID)
 		if err != nil {
 			return nil, err
 		}
@@ -321,7 +368,7 @@ func (s *Store) List(ctx context.Context) ([]Asset, error) {
 	}
 
 	for i := range result {
-		approved, err := s.db.QueryContext(ctx, `SELECT p.port,p.kind,p.source FROM asset_ports p
+		approved, err := q.QueryContext(ctx, `SELECT p.port,p.kind,p.source FROM asset_ports p
         WHERE p.asset_id=? AND NOT EXISTS(
           SELECT 1 FROM port_quarantine q
            WHERE q.asset_id=p.asset_id AND q.port=p.port AND q.status='ACTIVE'
@@ -345,7 +392,7 @@ func (s *Store) List(ctx context.Context) ([]Asset, error) {
 		if err != nil {
 			return nil, err
 		}
-		quarantine, err := s.db.QueryContext(ctx, "SELECT port FROM port_quarantine WHERE asset_id=? AND status='ACTIVE' ORDER BY port", result[i].ID)
+		quarantine, err := q.QueryContext(ctx, "SELECT port FROM port_quarantine WHERE asset_id=? AND status='ACTIVE' ORDER BY port", result[i].ID)
 		if err != nil {
 			return nil, err
 		}
@@ -362,6 +409,9 @@ func (s *Store) List(ctx context.Context) ([]Asset, error) {
 		if err != nil {
 			return nil, err
 		}
+	}
+	if err := loadProfiles(ctx, q, result); err != nil {
+		return nil, err
 	}
 	return result, nil
 }
@@ -398,15 +448,20 @@ func (s *Store) Create(ctx context.Context, actor string, in Input) (Asset, erro
 	if err := storeSkipped(ctx, tx, id, in.SkippedPorts); err != nil {
 		return Asset{}, err
 	}
+	if err := saveProfile(ctx, tx, id, in); err != nil {
+		return Asset{}, err
+	}
 	if err := auditTx(ctx, tx, actor, "create_asset", id); err != nil {
 		return Asset{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return Asset{}, err
 	}
-	return Asset{ID: id, Kind: in.Kind, Address: in.Address, ResolvedIP: resolved,
+	result := Asset{ID: id, Kind: in.Kind, Address: in.Address, ResolvedIP: resolved,
 		BusinessGroup: in.BusinessGroup, Owner: in.Owner, CreatedAt: createdAt,
-		Ports: skippedPortRecords(in.SkippedPorts), RequestedPorts: in.RequestedPorts, QuarantinedPorts: []int{}, SkippedPorts: in.SkippedPorts}, nil
+		Ports: skippedPortRecords(in.SkippedPorts), RequestedPorts: in.RequestedPorts, QuarantinedPorts: []int{}, SkippedPorts: in.SkippedPorts, Services: []inventory.Service{}, LoginEntries: []inventory.LoginEntry{}}
+	applyProfile(&result, in)
+	return result, nil
 }
 func skippedPortRecords(ports []int) []Port {
 	out := []Port{}
@@ -416,6 +471,9 @@ func skippedPortRecords(ports []int) []Port {
 	return out
 }
 func (s *Store) Update(ctx context.Context, actor, id string, edit Edit) (Asset, error) {
+	if !validProfile(edit) {
+		return Asset{}, ErrInvalid
+	}
 	if strings.TrimSpace(actor) == "" || strings.TrimSpace(id) == "" {
 		return Asset{}, ErrInvalid
 	}
@@ -460,6 +518,11 @@ func (s *Store) Update(ctx context.Context, actor, id string, edit Edit) (Asset,
 		return Asset{}, err
 	}
 	if addressChanged {
+		for _, table := range []string{"asset_services", "asset_login_entries", "port_quarantine"} {
+			if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE asset_id=?", id); err != nil {
+				return Asset{}, err
+			}
+		}
 		var hasScopeTable int
 		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='authorized_scopes'").Scan(&hasScopeTable); err != nil {
 			return Asset{}, err
@@ -491,12 +554,16 @@ func (s *Store) Update(ctx context.Context, actor, id string, edit Edit) (Asset,
 	if err := storeSkipped(ctx, tx, id, normalized.SkippedPorts); err != nil {
 		return Asset{}, err
 	}
+	if err := saveProfile(ctx, tx, id, edit); err != nil {
+		return Asset{}, err
+	}
 	if err := auditTx(ctx, tx, actor, "update_asset", id); err != nil {
 		return Asset{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return Asset{}, err
 	}
+	applyProfile(&a, edit)
 	a.BusinessGroup = edit.BusinessGroup
 	a.Owner = edit.Owner
 	a.Address = normalized.Address
@@ -660,7 +727,7 @@ func (s *Store) Delete(ctx context.Context, actor, id string) error {
 	if err := auditTx(ctx, tx, actor, "delete_asset", id); err != nil {
 		return err
 	}
-	for _, table := range []string{"asset_reachability", "port_quarantine", "asset_ports", "asset_port_reviews", "asset_port_request_authors", "asset_port_requests"} {
+	for _, table := range []string{"asset_profiles", "asset_services", "asset_login_entries", "asset_reachability", "port_quarantine", "asset_ports", "asset_port_reviews", "asset_port_request_authors", "asset_port_requests"} {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE asset_id=?", id); err != nil {
 			return err
 		}

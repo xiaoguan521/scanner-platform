@@ -2,11 +2,11 @@
 openapi: 3.0.3
 info:
   title: Scanner Platform local business API
-  version: 0.6.0
+  version: 0.7.0
   description: 'Same-origin local development API. UI mutations require X-Requested-With:
     XMLHttpRequest and admin/security_engineer unless stated otherwise. Accounts use
     HttpOnly session cookies. Worker/Updater endpoints are loopback-only local development
-    protocols. All task execution is synthetic; no targets are contacted. Rule integrity
+    protocols. Synthetic tasks never contact targets. Explicitly authorized numeric targets can run bounded read-only checks. Worker report JSON is limited to 32 MiB; report snapshot 32 MiB, artifact 64 MiB. Rule integrity
     validation is not signature or engine compatibility validation.'
 servers:
 - url: "/"
@@ -1274,6 +1274,7 @@ paths:
   "/api/v1/worker/report":
     post:
       summary: Local-only worker/report
+      description: JSON body limit 32 MiB; at most 2000 normalized findings.
       responses:
         '200':
           description: Local operation result
@@ -1383,6 +1384,266 @@ paths:
                   items:
                     "$ref": "#/components/schemas/EngineStatus"
               required: []
+  "/api/v1/detection-capabilities":
+    get:
+      summary: "Detection states; disabled is not a zero count"
+      security: [{sessionCookie: []}]
+      responses:
+        "200":
+          description: "Detection states; disabled is not a zero count"
+          content:
+            application/json:
+              schema: {"type": "object", "properties": {"items": {"type": "array", "items": {"$ref": "#/components/schemas/DetectionCapability"}}, "total": {"type": "integer"}}, "required": ["items", "total"]}
+        "400": {description: Invalid input}
+        "403": {description: Insufficient role or invalid same-origin mutation header}
+  "/api/v1/vulnerability-categories":
+    get:
+      summary: "Platform taxonomy mapped to CWE"
+      security: [{sessionCookie: []}]
+      responses:
+        "200":
+          description: "Platform taxonomy mapped to CWE"
+          content:
+            application/json:
+              schema: {"type": "object", "properties": {"items": {"type": "array", "items": {"$ref": "#/components/schemas/VulnerabilityCategory"}}, "total": {"type": "integer"}}, "required": ["items", "total"]}
+        "400": {description: Invalid input}
+        "403": {description: Insufficient role or invalid same-origin mutation header}
+  "/api/v1/scan-policy":
+    get:
+      summary: "Read system port policy"
+      security: [{sessionCookie: []}]
+      responses:
+        "200":
+          description: "Read system port policy"
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/ScanPolicy"}
+        "400": {description: Invalid input}
+        "403": {description: Insufficient role or invalid same-origin mutation header}
+    put:
+      summary: "Admin updates system policy"
+      security: [{sessionCookie: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"$ref": "#/components/schemas/ScanPolicy"}
+      responses:
+        "200":
+          description: "Admin updates system policy"
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/ScanPolicy"}
+        "400": {description: Invalid input}
+        "403": {description: Insufficient role or invalid same-origin mutation header}
+  "/api/v1/knowledge":
+    get:
+      summary: "List normalized imported vulnerability knowledge"
+      security: [{sessionCookie: []}]
+      responses:
+        "200":
+          description: "List normalized imported vulnerability knowledge"
+          content:
+            application/json:
+              schema: {"type": "object", "properties": {"items": {"type": "array", "items": {"$ref": "#/components/schemas/KnowledgeEntry"}}, "total": {"type": "integer"}}, "required": ["items", "total"]}
+        "400": {description: Invalid input}
+        "403": {description: Insufficient role or invalid same-origin mutation header}
+    post:
+      summary: "Save normalized knowledge; no external fetch"
+      security: [{sessionCookie: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"$ref": "#/components/schemas/KnowledgeEntry"}
+      responses:
+        "201":
+          description: "Save normalized knowledge; no external fetch"
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/KnowledgeEntry"}
+        "400": {description: Invalid input}
+        "403": {description: Insufficient role or invalid same-origin mutation header}
+  "/api/v1/knowledge/{id}":
+    put:
+      summary: "Update normalized knowledge"
+      security: [{sessionCookie: []}]
+      parameters: [{in: path, name: id, required: true, schema: {type: string}}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"$ref": "#/components/schemas/KnowledgeEntry"}
+      responses:
+        "200":
+          description: "Update normalized knowledge"
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/KnowledgeEntry"}
+        "400": {description: Invalid input}
+        "403": {description: Insufficient role or invalid same-origin mutation header}
+    delete:
+      summary: "Delete knowledge entry"
+      security: [{sessionCookie: []}]
+      parameters: [{in: path, name: id, required: true, schema: {type: string}}]
+      responses:
+        "200":
+          description: "Delete knowledge entry"
+        "400": {description: Invalid input}
+        "403": {description: Insufficient role or invalid same-origin mutation header}
+  "/api/v1/knowledge/import":
+    post:
+      summary: "Import 1-5000 normalized JSON entries; 10 MiB body"
+      security: [{sessionCookie: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"type": "object", "required": ["items"], "properties": {"items": {"type": "array", "minItems": 1, "maxItems": 5000, "items": {"$ref": "#/components/schemas/KnowledgeEntry"}}}}
+      responses:
+        "200":
+          description: "Import 1-5000 normalized JSON entries; 10 MiB body"
+        "400": {description: Invalid input}
+        "403": {description: Insufficient role or invalid same-origin mutation header}
+  "/api/v1/tasks/{id}/findings":
+    get:
+      summary: "List persistent observations belonging to this task"
+      security: [{sessionCookie: []}]
+      parameters: [{in: path, name: id, required: true, schema: {type: string}}]
+      responses:
+        "200":
+          description: "List persistent observations belonging to this task"
+          content:
+            application/json:
+              schema: {"type": "object", "properties": {"items": {"type": "array", "items": {"$ref": "#/components/schemas/Finding"}}, "total": {"type": "integer"}}, "required": ["items", "total"]}
+        "400": {description: Invalid input}
+        "403": {description: Insufficient role or invalid same-origin mutation header}
+  "/api/v1/port-quarantines/release":
+    post:
+      summary: "Admin releases quarantine after manual review"
+      security: [{sessionCookie: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"type": "object", "required": ["assetId", "port", "reason"], "properties": {"assetId": {"type": "string"}, "port": {"type": "integer", "minimum": 1, "maximum": 65535}, "reason": {"type": "string"}}}
+      responses:
+        "200":
+          description: "Admin releases quarantine after manual review"
+        "400": {description: Invalid input}
+        "403": {description: Insufficient role or invalid same-origin mutation header}
+  "/api/v1/report-templates":
+    get:
+      summary: "List report templates"
+      security: [{sessionCookie: []}]
+      responses:
+        "200":
+          description: "List report templates"
+          content:
+            application/json:
+              schema: {"type": "object", "properties": {"items": {"type": "array", "items": {"$ref": "#/components/schemas/ReportTemplate"}}, "total": {"type": "integer"}}, "required": ["items", "total"]}
+        "400": {description: Invalid input}
+        "403": {description: Insufficient role or invalid same-origin mutation header}
+  "/api/v1/report-templates/{id}":
+    get:
+      summary: "Get report template"
+      security: [{sessionCookie: []}]
+      parameters: [{in: path, name: id, required: true, schema: {type: string}}]
+      responses:
+        "200":
+          description: "Get report template"
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/ReportTemplate"}
+        "400": {description: Invalid input}
+        "403": {description: Insufficient role or invalid same-origin mutation header}
+    put:
+      summary: "Save template; 2 MiB body"
+      security: [{sessionCookie: []}]
+      parameters: [{in: path, name: id, required: true, schema: {type: string}}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"$ref": "#/components/schemas/ReportTemplate"}
+      responses:
+        "200":
+          description: "Save template; 2 MiB body"
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/ReportTemplate"}
+        "400": {description: Invalid input}
+        "403": {description: Insufficient role or invalid same-origin mutation header}
+  "/api/v1/reports":
+    get:
+      summary: "List report jobs"
+      security: [{sessionCookie: []}]
+      responses:
+        "200":
+          description: "List report jobs"
+          content:
+            application/json:
+              schema: {"type": "object", "properties": {"items": {"type": "array", "items": {"$ref": "#/components/schemas/ReportJob"}}, "total": {"type": "integer"}}, "required": ["items", "total"]}
+        "400": {description: Invalid input}
+        "403": {description: Insufficient role or invalid same-origin mutation header}
+    post:
+      summary: "Freeze snapshot and enqueue offline generation"
+      security: [{sessionCookie: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"$ref": "#/components/schemas/ReportRequest"}
+      responses:
+        "202":
+          description: "Freeze snapshot and enqueue offline generation"
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/ReportJob"}
+        "400": {description: Invalid input}
+        "403": {description: Insufficient role or invalid same-origin mutation header}
+  "/api/v1/reports/{id}":
+    get:
+      summary: "Get generation state"
+      security: [{sessionCookie: []}]
+      parameters: [{in: path, name: id, required: true, schema: {type: string}}]
+      responses:
+        "200":
+          description: "Get generation state"
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/ReportJob"}
+        "400": {description: Invalid input}
+        "403": {description: Insufficient role or invalid same-origin mutation header}
+  "/api/v1/reports/{id}/retry":
+    post:
+      summary: "Retry FAILED report using its original snapshot"
+      security: [{sessionCookie: []}]
+      parameters: [{in: path, name: id, required: true, schema: {type: string}}]
+      responses:
+        "202":
+          description: "Retry FAILED report using its original snapshot"
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/ReportJob"}
+        "400": {description: Invalid input}
+        "403": {description: Insufficient role or invalid same-origin mutation header}
+  "/api/v1/reports/{id}/download":
+    get:
+      summary: "Download READY report; HTML, XLSX or DOCX"
+      security: [{sessionCookie: []}]
+      parameters: [{in: path, name: id, required: true, schema: {type: string}}]
+      responses:
+        "200":
+          description: "Download READY report; HTML, XLSX or DOCX"
+          content:
+            text/html: {schema: {type: string}}
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: {schema: {type: string, format: binary}}
+            application/vnd.openxmlformats-officedocument.wordprocessingml.document: {schema: {type: string, format: binary}}
+        "400": {description: Invalid input}
+        "403": {description: Insufficient role or invalid same-origin mutation header}
+        "404": {description: Report or template not found}
+        "409": {description: Report is not READY or retry requires FAILED}
 components:
   securitySchemes:
     sessionCookie:
@@ -1622,6 +1883,17 @@ components:
           uniqueItems: true
           description: Subset of explicitly registered ports; never dispatched to
             Worker.
+        name: {"type": "string"}
+        department: {"type": "string"}
+        phone: {"type": "string"}
+        mac: {"type": "string"}
+        osName: {"type": "string"}
+        osFamily: {"type": "string"}
+        deviceType: {"type": "string"}
+        deviceSubtype: {"type": "string"}
+        vendor: {"type": "string"}
+        model: {"type": "string"}
+        isCore: {"type": "boolean"}
     EditAssetRequest:
       type: object
       required:
@@ -1657,6 +1929,17 @@ components:
           uniqueItems: true
           description: Subset of explicitly registered ports; never dispatched to
             Worker.
+        name: {"type": "string"}
+        department: {"type": "string"}
+        phone: {"type": "string"}
+        mac: {"type": "string"}
+        osName: {"type": "string"}
+        osFamily: {"type": "string"}
+        deviceType: {"type": "string"}
+        deviceSubtype: {"type": "string"}
+        vendor: {"type": "string"}
+        model: {"type": "string"}
+        isCore: {"type": "boolean"}
     AssetPort:
       type: object
       required:
@@ -1777,6 +2060,19 @@ components:
           uniqueItems: true
           description: Subset of explicitly registered ports; never dispatched to
             Worker.
+        name: {"type": "string"}
+        department: {"type": "string"}
+        phone: {"type": "string"}
+        mac: {"type": "string"}
+        osName: {"type": "string"}
+        osFamily: {"type": "string"}
+        deviceType: {"type": "string"}
+        deviceSubtype: {"type": "string"}
+        vendor: {"type": "string"}
+        model: {"type": "string"}
+        isCore: {"type": "boolean"}
+        services: {"type": "array", "items": {"$ref": "#/components/schemas/ServiceResult"}}
+        loginEntries: {"type": "array", "items": {"$ref": "#/components/schemas/LoginEntry"}}
     ScopeApplication:
       type: object
       required:
@@ -2067,6 +2363,10 @@ components:
           description: Fixed Worker result status for optional local SSH package collection; never contains credentials or raw remote output.
         error:
           type: string
+        effectiveExclusions: {"type": "array", "items": {"$ref": "#/components/schemas/PortRange"}}
+        quarantinedPorts: {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 65535}, "maxItems": 65535}
+        assetProfile: {"$ref": "#/components/schemas/AssetProfile"}
+        vulnerabilityPorts: {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 65535}, "maxItems": 65535}
     Finding:
       type: object
       required:
@@ -2106,6 +2406,7 @@ components:
           - trivy
           - synthetic
           - zap
+          - knowledge
         templateOrCve:
           type: string
         target:
@@ -2156,6 +2457,19 @@ components:
           type: string
           description: Immutable Trivy image identity; used instead of archive filename
             for deduplication.
+        assetId: {"type": "string"}
+        vulnCategory: {"type": "string"}
+        impact: {"type": "string"}
+        solution: {"type": "string"}
+        evidence: {"type": "string"}
+        component: {"type": "string"}
+        contentLanguage: {"type": "string"}
+        riskType: {"type": "string", "enum": ["system", "web", "login_entry", "weak_credential"], "description": "weak_credential is reserved and rejected by current ingestion; detection disabled."}
+        detectMethod: {"type": "string", "enum": ["principle", "version", "configuration", "unknown"]}
+        confidence: {"type": "string", "enum": ["high", "medium", "low", "unknown"]}
+        cvssScore: {"type": "number", "minimum": 0, "maximum": 10}
+        identifiers: {"type": "object", "additionalProperties": {"type": "array", "items": {"type": "string"}}}
+        references: {"type": "array", "items": {"type": "string"}}
     NodeInfo:
       type: object
       required:
@@ -2279,6 +2593,8 @@ components:
           - common
           - custom
           - common-and-custom
+          - registered
+          - full
         ranges:
           type: array
           maxItems: 128
@@ -2292,6 +2608,13 @@ components:
         opsApproved:
           type: boolean
           description: Caller confirms operational approval and exclusion of known TCP proxy ports.
+        intensity: {"type": "string", "enum": ["gentle", "standard", "aggressive"], "description": "Default standard; full defaults gentle. Concurrency/rate/timeout: 8/20s/1500ms, 32/100s/1000ms, 64/250s/700ms."}
+        fullConfirmed: {"type": "boolean", "description": "Required for full TCP range selection; user confirmation is audited."}
+        commonPorts: {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 65535}, "maxItems": 65535}
+        registeredPorts: {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 65535}, "maxItems": 65535}
+        identificationMaxAttempts: {"type": "integer", "minimum": 1, "maximum": 3}
+        quarantineThreshold: {"type": "integer", "minimum": 1, "maximum": 3}
+        identificationBudget: {"type": "integer", "minimum": 0, "maximum": 196605}
     PortProbeResult:
       type: object
       required:
@@ -2322,6 +2645,25 @@ components:
           enum:
           - HTTP
           - OTHER
+        protocol: {"type": "string"}
+        state: {"type": "string"}
+        serviceName: {"type": "string"}
+        software: {"type": "string"}
+        version: {"type": "string"}
+        middleware: {"type": "string"}
+        language: {"type": "string"}
+        framework: {"type": "string"}
+        database: {"type": "string"}
+        application: {"type": "string"}
+        url: {"type": "string"}
+        title: {"type": "string"}
+        quarantineReason: {"type": "string"}
+        tls: {"type": "boolean"}
+        excluded: {"type": "boolean"}
+        quarantined: {"type": "boolean"}
+        firstSeen: {"type": "string", "format": "date-time"}
+        lastSeen: {"type": "string", "format": "date-time"}
+        loginEntries: {"type": "array", "items": {"$ref": "#/components/schemas/LoginEntry"}}
     TaskInput:
       type: object
       properties:
@@ -2506,6 +2848,20 @@ components:
           type: string
           description: Immutable Trivy image identity; used instead of archive filename
             for deduplication.
+        assetId: {"type": "string"}
+        vulnCategory: {"type": "string"}
+        impact: {"type": "string"}
+        solution: {"type": "string"}
+        evidence: {"type": "string"}
+        component: {"type": "string"}
+        contentLanguage: {"type": "string"}
+        riskType: {"type": "string", "enum": ["system", "web", "login_entry", "weak_credential"], "description": "weak_credential is reserved and rejected by current ingestion; detection disabled."}
+        detectMethod: {"type": "string", "enum": ["principle", "version", "configuration", "unknown"]}
+        confidence: {"type": "string", "enum": ["high", "medium", "low", "unknown"]}
+        cvssScore: {"type": "number", "minimum": 0, "maximum": 10}
+        identifiers: {"type": "object", "additionalProperties": {"type": "array", "items": {"type": "string"}}}
+        references: {"type": "array", "items": {"type": "string"}}
+        port: {"type": "integer", "minimum": 1, "maximum": 65535}
     WorkerReport:
       type: object
       required:
@@ -2540,3 +2896,116 @@ components:
           maxItems: 65535
           items:
             "$ref": "#/components/schemas/PortProbeResult"
+        serviceResults: {"type": "array", "items": {"$ref": "#/components/schemas/ServiceResult"}}
+        systemScanStatus: {"type": "string"}
+        assetProfile: {"$ref": "#/components/schemas/AssetProfile"}
+    AssetProfile:
+      type: object
+      properties:
+        osName: {"type": "string"}
+        osFamily: {"type": "string"}
+        deviceType: {"type": "string"}
+        deviceSubtype: {"type": "string"}
+        vendor: {"type": "string"}
+        model: {"type": "string"}
+    LoginEntry:
+      type: object
+      properties:
+        type: {"type": "string"}
+        name: {"type": "string"}
+        port: {"type": "integer", "minimum": 1, "maximum": 65535}
+        url: {"type": "string"}
+        https: {"type": "boolean"}
+        captcha: {"type": "boolean", "nullable": true}
+        antiBruteForce: {"type": "boolean", "nullable": true}
+        evidence: {"type": "string"}
+    DetectionCapability:
+      type: object
+      properties:
+        id: {"type": "string"}
+        name: {"type": "string"}
+        status: {"type": "string"}
+        message: {"type": "string"}
+    VulnerabilityCategory:
+      type: object
+      properties:
+        id: {"type": "string"}
+        name: {"type": "string"}
+        cwe: {"type": "string"}
+    ScanPolicy:
+      type: object
+      properties:
+        commonPorts: {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 65535}, "maxItems": 65535}
+        exclusions: {"type": "array", "items": {"$ref": "#/components/schemas/PortRange"}}
+        quarantineThreshold: {"type": "integer", "minimum": 1, "maximum": 3}
+        discoveryAttempts: {"type": "integer", "minimum": 1, "maximum": 3}
+    VersionRange:
+      type: object
+      properties:
+        introduced: {"type": "string"}
+        fixed: {"type": "string"}
+        lastAffected: {"type": "string"}
+    KnowledgeEntry:
+      type: object
+      required: ["id", "title", "component", "source"]
+      properties:
+        id: {"type": "string"}
+        title: {"type": "string"}
+        description: {"type": "string"}
+        impact: {"type": "string"}
+        solution: {"type": "string"}
+        category: {"type": "string"}
+        component: {"type": "string"}
+        source: {"type": "string"}
+        updatedAt: {"type": "string"}
+        language: {"type": "string"}
+        identifiers: {"type": "object", "additionalProperties": {"type": "array", "items": {"type": "string"}}}
+        references: {"type": "array", "items": {"type": "string"}}
+        cvssScore: {"type": "number", "minimum": 0, "maximum": 10}
+        affectedRanges: {"type": "array", "items": {"$ref": "#/components/schemas/VersionRange"}}
+    ReportScope:
+      type: object
+      properties:
+        taskId: {"type": "string"}
+        assetId: {"type": "string"}
+        businessGroup: {"type": "string"}
+        from: {"type": "string"}
+        to: {"type": "string"}
+    ReportRequest:
+      type: object
+      required: ["format", "scope"]
+      properties:
+        templateId: {"type": "string"}
+        format: {"type": "string", "enum": ["html", "xlsx", "docx"]}
+        scope: {"$ref": "#/components/schemas/ReportScope"}
+    ReportTemplate:
+      type: object
+      required: ["id", "name"]
+      properties:
+        id: {"type": "string"}
+        name: {"type": "string"}
+        company: {"type": "string"}
+        logo: {"type": "string"}
+        header: {"type": "string"}
+        footer: {"type": "string"}
+        ratingText: {"type": "string"}
+        advice: {"type": "string"}
+        sections: {"type": "object", "additionalProperties": {"type": "boolean"}}
+    ReportJob:
+      type: object
+      properties:
+        id: {"type": "string"}
+        name: {"type": "string"}
+        templateId: {"type": "string"}
+        format: {"type": "string"}
+        fileName: {"type": "string"}
+        createdBy: {"type": "string"}
+        snapshotId: {"type": "string"}
+        error: {"type": "string"}
+        createdAt: {"type": "string", "format": "date-time"}
+        scope: {"$ref": "#/components/schemas/ReportScope"}
+        status: {"type": "string", "enum": ["QUEUED", "GENERATING", "READY", "FAILED"]}
+        progress: {"type": "integer", "minimum": 0, "maximum": 100}
+        fileSize: {"type": "integer", "format": "int64"}
+        snapshotVersion: {"type": "integer"}
+        attempts: {"type": "integer"}

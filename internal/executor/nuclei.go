@@ -183,7 +183,7 @@ func (r *Runner) nuclei(ctx context.Context, task taskflow.Task, dir string) ([]
 	}
 	var output bytes.Buffer
 	errorFile := filepath.Join(dir, "requests.errors")
-	if err := runProcess(ctx, r.binary("nuclei"), engineflags.NucleiArgs(input, destination, proxy.URL(), errorFile, r.Rate, r.Timeout), dir, &output); err != nil {
+	if err := runProcess(ctx, r.binary("nuclei"), engineflags.NucleiArgs(input, destination, proxy.URL(), errorFile, httpRequestRate(ctx, r.Rate), r.Timeout), dir, &output); err != nil {
 		return nil, err
 	}
 	if info, err := os.Stat(errorFile); err == nil && info.Size() > 0 {
@@ -199,7 +199,28 @@ func (r *Runner) nuclei(ctx context.Context, task taskflow.Task, dir string) ([]
 	if blocked > 0 {
 		return nil, fmt.Errorf("engine attempted a target outside explicit list")
 	}
-	return ParseNuclei(output.Bytes(), targets)
+	parsed, err := ParseNuclei(output.Bytes(), targets)
+	if err != nil {
+		return nil, err
+	}
+	checks, err := checkWebConfiguration(ctx, task.Scheme, targets, r.Rate, r.Timeout)
+	if err != nil {
+		return nil, err
+	}
+	keys := map[string]bool{}
+	for _, check := range checks {
+		keys[check.TemplateID+"\x00"+check.Target+"\x00"+check.MatchedPath] = true
+	}
+	out := make([]taskflow.Detection, 0, len(parsed)+len(checks))
+	for _, finding := range parsed {
+		if finding.TemplateID == "baseline-nosniff" || finding.TemplateID == "baseline-csp" || finding.TemplateID == "baseline-frame-options" {
+			continue
+		}
+		if !keys[finding.TemplateID+"\x00"+finding.Target+"\x00"+finding.MatchedPath] {
+			out = append(out, finding)
+		}
+	}
+	return append(out, checks...), nil
 }
 
 func ParseNuclei(data []byte, targets []string) ([]taskflow.Detection, error) {

@@ -192,6 +192,40 @@ def main():
         api.call('POST','/api/v1/rules/fetch',{'url':'http://rules.example.com/bundle.zip','expectedSha256':'0'*64},expect=400)
         viewer.call('POST','/api/v1/rules/20261016.01/activate',{'rollback':True},expect=403)
         checkpoint('offline ZIP import, Updater-only writes, activation, failed-hash rejection and explicit rollback')
+        capabilities=api.call('GET','/api/v1/detection-capabilities')['items']
+        assert next(c for c in capabilities if c['id']=='weak_credential')['status']=='disabled'
+        policy=api.call('GET','/api/v1/scan-policy')
+        policy['exclusions']=[{'start':81,'end':82}]
+        api.call('PUT','/api/v1/scan-policy',policy)
+        viewer.call('PUT','/api/v1/scan-policy',policy,expect=403)
+        entry={'id':'EXAMPLE-LOCAL-001','title':'示例知识条目','component':'example-component',
+               'description':'仅用于本地业务回归','impact':'示例影响','solution':'示例建议',
+               'references':['https://example.org/advisory'],'source':'示例公开公告摘要','language':'zh-CN',
+               'cvssScore':7.5,'affectedRanges':[{'introduced':'1.0','fixed':'2.0'}]}
+        api.call('POST','/api/v1/knowledge',entry,expect=201)
+        assert api.call('GET','/api/v1/knowledge')['total']==1
+        api.call('PUT','/api/v1/knowledge/'+entry['id'],{**entry,'title':'已更新的示例条目'})
+        api.call('DELETE','/api/v1/knowledge/'+entry['id'])
+        assert api.call('GET','/api/v1/knowledge')['total']==0
+        checkpoint('detection capability status, administrator scan policy and offline knowledge CRUD')
+        report=api.call('POST','/api/v1/reports',{'format':'html','scope':{'taskId':task['id']}},expect=202)
+        def report_ready(report_id):
+            item=api.call('GET','/api/v1/reports/'+report_id)
+            assert item['status']!='FAILED',item
+            return item if item['status']=='READY' else None
+        until(lambda:report_ready(report['id']))
+        html=api.call('GET','/api/v1/reports/'+report['id']+'/download')
+        assert report['snapshotId'].encode() in html and '本次未启用该检测项'.encode() in html
+        for output_format in ['xlsx','docx']:
+            other=api.call('POST','/api/v1/reports/'+report['id']+'/formats',{'format':output_format},expect=202)
+            assert other['snapshotId']==report['snapshotId']
+            until(lambda:report_ready(other['id']))
+            data=api.call('GET','/api/v1/reports/'+other['id']+'/download')
+            with zipfile.ZipFile(io.BytesIO(data)) as output:
+                assert output.testzip() is None
+                if output_format=='xlsx':assert len([name for name in output.namelist() if name.startswith('xl/worksheets/sheet') and name.endswith('.xml')])==8
+        viewer.call('POST','/api/v1/reports',{'format':'html'},expect=403)
+        checkpoint('background reports, authenticated downloads and same-snapshot HTML/Excel/Word exports')
         assert len(api.call('GET','/api/v1/nodes')['items'])==2
         processes['worker'].terminate();processes['worker'].wait(timeout=8)
         until(lambda:any(n['kind']=='worker' and n['status']=='OFFLINE' for n in api.call('GET','/api/v1/nodes')['items']),timeout=15)
@@ -202,6 +236,7 @@ def main():
         assert task_state(task['id'])['status']=='COMPLETED'
         assert len(api.call('GET','/api/v1/rules')['items'])==2
         assert api.call('GET','/api/v1/schedules')['total']==1
+        assert api.call('GET','/api/v1/reports')['total']==3
         with sqlite3.connect('file:'+str(db)+'?mode=ro',uri=True) as connection:
             assert connection.execute('SELECT count(*) FROM audit_logs').fetchone()[0]>=15
         api.call('POST','/api/v1/auth/logout');api.call('GET','/api/v1/auth/me',expect=401)

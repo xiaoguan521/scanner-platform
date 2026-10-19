@@ -81,6 +81,13 @@ func (p *scopeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "target outside explicit IP:port list", 403)
 		return
 	}
+	if err := takeHTTPRequest(r.Context(), canonical); err != nil {
+		p.mu.Lock()
+		p.failed++
+		p.mu.Unlock()
+		http.Error(w, "request budget exhausted", 429)
+		return
+	}
 	if r.Method == http.MethodConnect {
 		remote, err := (&net.Dialer{Timeout: 10 * time.Second}).DialContext(r.Context(), "tcp", canonical)
 		if err != nil {

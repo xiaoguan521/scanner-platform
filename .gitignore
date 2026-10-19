@@ -53,4 +53,10 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# 演示输出与报告产物
+/demo/
+*.docx
+*.xlsx
+
+
 

@@ -3,7 +3,7 @@ package engineflags
 import "fmt"
 
 func NucleiArgs(targetsFile, templates, proxy, errorFile string, rate, timeout int) []string {
-	return []string{"-l", targetsFile, "-t", templates, "-pt", "http", "-ept", "code,headless,javascript,dns,tcp,ssl,file,websocket,whois,workflow", "-dr", "-duc", "-ni", "-nh", "-no-stdin", "-jsonl", "-silent", "-omit-raw", "-omit-template", "-rl", fmt.Sprint(rate), "-c", "1", "-bs", "1", "-mhe", "3", "-retries", "0", "-timeout", fmt.Sprint(timeout), "-rsr", "2097152", "-p", proxy, "-pi", "-elog", errorFile}
+	return []string{"-l", targetsFile, "-t", templates, "-pt", "http", "-ept", "code,headless,javascript,dns,tcp,ssl,file,websocket,whois,workflow", "-dr", "-fhr", "-duc", "-ni", "-nh", "-no-stdin", "-jsonl", "-silent", "-omit-raw", "-omit-template", "-rl", fmt.Sprint(rate), "-c", "1", "-bs", "1", "-mhe", "3", "-retries", "0", "-timeout", fmt.Sprint(timeout), "-rsr", "2097152", "-p", proxy, "-pi", "-elog", errorFile}
 }
 
 func TrivyArgs(kind, input, cache, output string) []string {

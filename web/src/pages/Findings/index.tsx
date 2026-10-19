@@ -10,6 +10,7 @@ import {
   Typography,
   Alert,
   Tooltip,
+  Checkbox,
   message,
 } from 'antd';
 import { SafetyCertificateOutlined } from '@ant-design/icons';
@@ -21,6 +22,7 @@ import { updateFinding } from '../../api/runtime';
 import { useCollection } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
 
+import { riskLabels, methodLabels, confidenceLabels, isVerifiedFinding, findingCounts } from './presentation';
 const { Text } = Typography;
 
 export const FindingsPage: React.FC = () => {
@@ -29,10 +31,19 @@ export const FindingsPage: React.FC = () => {
   const { data: findings, setData: setFindings, loading, error } = useCollection('findings', mockFindings);
   const [severityFilter, setSeverityFilter] = useState<string>('ALL');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
+  const [methodFilter,setMethodFilter]=useState('ALL');
+  const [confidenceFilter,setConfidenceFilter]=useState('ALL');
+  const [riskFilter,setRiskFilter]=useState('ALL');
+  const [onlyVerified,setOnlyVerified]=useState(false);
+  const counts=findingCounts(findings);
   const [query, setQuery] = useState('');
   const normalizedQuery = query.trim().toLowerCase();
 
   const filteredFindings = findings.filter((f) => {
+    if(methodFilter!=='ALL'&&(f.detectMethod??'unknown')!==methodFilter)return false;
+    if(confidenceFilter!=='ALL'&&(f.confidence??'unknown')!==confidenceFilter)return false;
+    if(riskFilter!=='ALL'&&(f.riskType??'unknown')!==riskFilter)return false;
+    if(onlyVerified&&!isVerifiedFinding(f))return false;
     if (severityFilter !== 'ALL' && f.severity !== severityFilter) return false;
     if (statusFilter !== 'ALL' && f.status !== statusFilter) return false;
     if (normalizedQuery && ![f.target, f.package ?? '', f.templateOrCve, f.title].some(value => value.toLowerCase().includes(normalizedQuery))) return false;
@@ -87,6 +98,14 @@ export const FindingsPage: React.FC = () => {
         icon={<SafetyCertificateOutlined />}
       />
 
+      <Card><Space wrap><Tag color="red">漏洞总数 {counts.vulnerabilities}</Tag><Tag color="blue">登录入口 {counts.loginEntries}</Tag><Tag>未核实类型 {counts.unknown}</Tag><Tag color="orange">版本推断 {counts.version}</Tag><Tag color="green">已验证 {counts.verified}</Tag><Tag>弱口令：本次未启用该检测项</Tag></Space></Card>
+      <Space wrap>
+        <Select aria-label="检测方式筛选" value={methodFilter} onChange={setMethodFilter} style={{width:210}} options={[{value:'ALL',label:'全部检测方式'},...Object.entries(methodLabels).map(([value,label])=>({value,label}))]}/>
+        <Select aria-label="置信度筛选" value={confidenceFilter} onChange={setConfidenceFilter} style={{width:180}} options={[{value:'ALL',label:'全部置信度'},...Object.entries(confidenceLabels).map(([value,label])=>({value,label}))]}/>
+        <Select aria-label="风险类型筛选" value={riskFilter} onChange={setRiskFilter} style={{width:190}} options={[{value:'ALL',label:'全部类型'},...Object.entries(riskLabels).map(([value,label])=>({value,label}))]}/>
+        <Checkbox checked={onlyVerified} onChange={e=>setOnlyVerified(e.target.checked)}>仅已验证（原理验证 / 配置检查）</Checkbox>
+      </Space>
+      <Alert showIcon type="info" message="版本推断没有实际验证漏洞。未标注检测方式的历史结果显示为未核实；扫描完整性不等同于原理验证。"/>
       <Input aria-label="按目标、组件或 CVE 筛选" placeholder="按目标、服务器别名、组件或 CVE 筛选" allowClear value={query} onChange={event => setQuery(event.target.value)} style={{maxWidth:480}} />
 
       <Card
@@ -129,8 +148,9 @@ export const FindingsPage: React.FC = () => {
           rowKey="id"
           pagination={{showTotal:total=>`共 ${total} 项`}}
           scroll={{x:1500}}
-          expandable={{expandedRowRender:r=><Space direction="vertical"><Text>{r.description||'暂无补充描述'}</Text><Text>匹配路径：{r.matchedPath||'—'}</Text>{r.package&&<Text>组件：{r.package}；安装版本：{r.installedVersion||'—'}；修复版本：{r.fixedVersion||'暂无'}</Text>}</Space>}}
+          expandable={{expandedRowRender:r=><Space direction="vertical"><Text>{r.description||'暂无补充描述'}</Text><Text>检测方式：{methodLabels[r.detectMethod??'unknown']} · {confidenceLabels[r.confidence??'unknown']}</Text><Text>风险类型：{riskLabels[r.riskType??'unknown']} · 分类：{r.vulnCategory||'未分类'} · CVSS：{r.cvssScore??'未提供'}</Text><Text>影响：{r.impact||'待补充'}</Text><Text style={{whiteSpace:'pre-wrap'}}>修复建议：{r.solution||'待补充'}</Text><Text style={{whiteSpace:'pre-wrap'}}>举证：{r.evidence||'待补充'}</Text>{r.detectMethod==='version'&&<Alert type="warning" showIcon message="该结果基于组件版本推断，建议登录主机核查补丁或使用主机本地扫描。"/>}<Text>外部编号：{Object.entries(r.identifiers??{}).map(([key,values])=>`${key}: ${values.join(', ')}`).join('；')||'未提供'}</Text><Text>参考资料：{r.references?.join('；')||'未提供'}</Text>{r.contentLanguage&&r.contentLanguage!=='zh-CN'&&r.contentLanguage!=='zh'&&<Tag color="orange">内容为原文，待中文化</Tag>}<Text>匹配路径：{r.matchedPath||'—'}</Text>{r.package&&<Text>组件：{r.package}；安装版本：{r.installedVersion||'—'}；修复版本：{r.fixedVersion||'暂无'}</Text>}</Space>}}
           columns={[
+            {title:'类型 / 检测依据',width:200,render:(_,r)=><Space direction="vertical" size={3}><Tag>{riskLabels[r.riskType??'unknown']}</Tag><Tag color={isVerifiedFinding(r)?'green':r.detectMethod==='version'?'orange':'default'}>{methodLabels[r.detectMethod??'unknown']}</Tag><Tag>{confidenceLabels[r.confidence??'unknown']}</Tag></Space>},
             {
               title: '等级',
               dataIndex: 'severity',

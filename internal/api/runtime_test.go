@@ -130,7 +130,7 @@ func TestRuntimeAcceptsFullRangePortProbePlan(t *testing.T) {
 			t.Fatalf("unexpected effective ports: %v", task.PortProbePorts)
 		}
 	}
-	fullRange := send(`{"synthetic":false,"engine":"port-probe","assetId":"` + asset.ID + `","portProbe":{"preset":"custom","ranges":[{"start":1,"end":65535}],"exclusions":[{"start":443,"end":443}],"opsApproved":true},"targets":[],"timeWindows":[]}`)
+	fullRange := send(`{"synthetic":false,"engine":"port-probe","assetId":"` + asset.ID + `","portProbe":{"preset":"custom","ranges":[{"start":1,"end":65535}],"exclusions":[{"start":443,"end":443}],"opsApproved":true,"fullConfirmed":true},"targets":[],"timeWindows":[]}`)
 	if fullRange.Code != http.StatusCreated {
 		t.Fatalf("full TCP port range rejected: %d %s", fullRange.Code, fullRange.Body.String())
 	}

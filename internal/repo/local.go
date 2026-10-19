@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"scanner-platform/internal/inventory"
 	"scanner-platform/internal/portprobe"
 	"scanner-platform/internal/scheduler"
 	"scanner-platform/internal/taskflow"
@@ -28,18 +29,20 @@ type targetOwner struct {
 	Owner string `json:"owner"`
 }
 type taskDetails struct {
-	Input        taskflow.TaskInput         `json:"input"`
-	Skipped      []string                   `json:"skipped"`
-	Owners       map[string]targetOwner     `json:"owners"`
-	ProbePorts   []int                      `json:"probePorts,omitempty"`
-	ProbeResults []taskflow.PortProbeResult `json:"probeResults,omitempty"`
-	VulnPorts    []int                      `json:"vulnerabilityPorts,omitempty"`
-	CustomRules  [][]byte                   `json:"customRules,omitempty"`
-	Services     []taskflow.ServiceResult   `json:"services,omitempty"`
-	SystemStatus string                     `json:"systemScanStatus,omitempty"`
-	Deadline     string                     `json:"deadline"`
-	RuleVersion  string                     `json:"ruleVersion"`
-	Error        string                     `json:"error,omitempty"`
+	EffectiveExclusions []portprobe.Range          `json:"effectiveExclusions,omitempty"`
+	AssetProfile        inventory.Profile          `json:"assetProfile,omitempty"`
+	Input               taskflow.TaskInput         `json:"input"`
+	Skipped             []string                   `json:"skipped"`
+	Owners              map[string]targetOwner     `json:"owners"`
+	ProbePorts          []int                      `json:"probePorts,omitempty"`
+	ProbeResults        []taskflow.PortProbeResult `json:"probeResults,omitempty"`
+	VulnPorts           []int                      `json:"vulnerabilityPorts,omitempty"`
+	CustomRules         [][]byte                   `json:"customRules,omitempty"`
+	Services            []taskflow.ServiceResult   `json:"services,omitempty"`
+	SystemStatus        string                     `json:"systemScanStatus,omitempty"`
+	Deadline            string                     `json:"deadline"`
+	RuleVersion         string                     `json:"ruleVersion"`
+	Error               string                     `json:"error,omitempty"`
 }
 
 func (s *RuntimeStore) initLocal(ctx context.Context) error {
@@ -129,6 +132,10 @@ func resolveTargets(ctx context.Context, tx *sql.Tx, in taskflow.TaskInput) ([]s
 	if len(in.Targets) == 0 || len(in.Targets) > 100 {
 		return nil, detail, ErrInvalidTask
 	}
+	policy, err := policyIn(ctx, tx)
+	if err != nil {
+		return nil, detail, err
+	}
 	targets := []string{}
 	canonical := []string{}
 	seen := map[string]bool{}
@@ -153,6 +160,11 @@ func resolveTargets(ctx context.Context, tx *sql.Tx, in taskflow.TaskInput) ([]s
    (SELECT count(*) FROM port_quarantine WHERE asset_id=? AND port=? AND status='ACTIVE')`, id, port, id, port).Scan(&skip)
 		if err != nil {
 			return nil, detail, err
+		}
+		for _, r := range policy.Exclusions {
+			if port >= r.Start && port <= r.End {
+				skip++
+			}
 		}
 		canonical = append(canonical, target)
 		if skip > 0 {
@@ -181,7 +193,7 @@ func resolveTargets(ctx context.Context, tx *sql.Tx, in taskflow.TaskInput) ([]s
 }
 
 func emptyPortProbeConfig(config portprobe.Config) bool {
-	return config.Preset == "" && len(config.Ranges) == 0 && len(config.Exclusions) == 0 && !config.OpsApproved
+	return config.Preset == "" && len(config.Ranges) == 0 && len(config.Exclusions) == 0 && !config.OpsApproved && config.Intensity == "" && !config.FullConfirmed && len(config.CommonPorts) == 0 && len(config.RegisteredPorts) == 0
 }
 
 func resolvePortProbe(ctx context.Context, tx *sql.Tx, in taskflow.TaskInput, detail taskDetails) ([]string, taskDetails, error) {
@@ -191,9 +203,38 @@ func resolvePortProbe(ctx context.Context, tx *sql.Tx, in taskflow.TaskInput, de
 	if in.PortProbe.Preset == "" {
 		in.PortProbe.Preset = portprobe.PresetCommon
 	}
-	ports, err := portprobe.SelectPorts(in.PortProbe)
+	policy, err := policyIn(ctx, tx)
 	if err != nil {
-		return nil, detail, ErrInvalidTask
+		return nil, detail, err
+	}
+	requestedConfig := in.PortProbe
+	in.PortProbe.CommonPorts = policy.CommonPorts
+	in.PortProbe.IdentificationMaxAttempts = policy.DiscoveryAttempts
+	in.PortProbe.QuarantineThreshold = policy.QuarantineThreshold
+	in.PortProbe.RegisteredPorts = nil
+	registered, err := tx.QueryContext(ctx, "SELECT port FROM asset_ports WHERE asset_id=? AND kind!='EXCLUDED_PROXY' UNION SELECT port FROM asset_services WHERE asset_id=?", in.AssetID, in.AssetID)
+	if err != nil {
+		return nil, detail, err
+	}
+	for registered.Next() {
+		var port int
+		if err = registered.Scan(&port); err != nil {
+			registered.Close()
+			return nil, detail, err
+		}
+		in.PortProbe.RegisteredPorts = append(in.PortProbe.RegisteredPorts, port)
+	}
+	err = registered.Err()
+	registered.Close()
+	if err != nil {
+		return nil, detail, err
+	}
+	ports, err := portprobe.SelectPorts(in.PortProbe)
+	if in.PortProbe.Intensity == "" && (in.PortProbe.Preset == portprobe.PresetFull || len(ports)+countUniqueExclusions(in.PortProbe.Exclusions) == 65535) {
+		in.PortProbe.Intensity = portprobe.IntensityGentle
+	}
+	if err != nil {
+		return nil, detail, fmt.Errorf("%w: %v", ErrInvalidTask, err)
 	}
 	var address string
 	var kind string
@@ -221,6 +262,13 @@ UNION SELECT port FROM port_quarantine WHERE asset_id=? AND status='ACTIVE'`, in
 		selected[port] = true
 	}
 	automaticExclusions := make(map[int]bool)
+	for _, r := range policy.Exclusions {
+		for p := r.Start; p <= r.End; p++ {
+			if selected[p] {
+				automaticExclusions[p] = true
+			}
+		}
+	}
 	for rows.Next() {
 		var port int
 		if err := rows.Scan(&port); err != nil {
@@ -229,7 +277,7 @@ UNION SELECT port FROM port_quarantine WHERE asset_id=? AND status='ACTIVE'`, in
 		}
 		if selected[port] {
 			automaticExclusions[port] = true
-			detail.Skipped = append(detail.Skipped, net.JoinHostPort(address, strconv.Itoa(port)))
+
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -238,6 +286,9 @@ UNION SELECT port FROM port_quarantine WHERE asset_id=? AND status='ACTIVE'`, in
 	}
 	if err := rows.Close(); err != nil {
 		return nil, detail, err
+	}
+	for p := range automaticExclusions {
+		detail.Skipped = append(detail.Skipped, net.JoinHostPort(address, strconv.Itoa(p)))
 	}
 	effectivePorts := make([]int, 0, len(ports)-len(automaticExclusions))
 	for _, port := range ports {
@@ -250,6 +301,16 @@ UNION SELECT port FROM port_quarantine WHERE asset_id=? AND status='ACTIVE'`, in
 	}
 	// Keep the requested plan for display and persist the exact resolved list
 	// separately so the Worker cannot expand or reinterpret the configured ranges.
+	allExcluded := make(map[int]bool, len(automaticExclusions))
+	for p := range automaticExclusions {
+		allExcluded[p] = true
+	}
+	for _, r := range requestedConfig.Exclusions {
+		for p := r.Start; p <= r.End; p++ {
+			allExcluded[p] = true
+		}
+	}
+	detail.EffectiveExclusions = compactPortRanges(allExcluded)
 	detail.ProbePorts = effectivePorts
 	in.Targets = []string{address}
 	detail.Input = in
@@ -347,7 +408,7 @@ func createLocalTask(ctx context.Context, tx *sql.Tx, in taskflow.TaskInput, act
 	if err != nil {
 		return taskflow.Task{}, err
 	}
-	if err := logLocal(ctx, tx, actor, "create_task", "task", id, ""); err != nil {
+	if err := logLocal(ctx, tx, actor, "create_task", "task", id, string(data)); err != nil {
 		return taskflow.Task{}, err
 	}
 	return readRuntimeTask(tx.QueryRowContext(ctx, `SELECT `+taskColumns+` FROM scan_tasks WHERE id=?`, id))

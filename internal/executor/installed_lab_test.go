@@ -39,8 +39,19 @@ func TestInstalledEnginesOnLoopbackFixture(t *testing.T) {
 	var requests atomic.Int32
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
-		if r.Method != "GET" || r.URL.Path != "/" {
-			t.Error("non-baseline request")
+		if r.Method == "OPTIONS" && r.URL.Path == "/" {
+			w.Header().Set("Allow", "GET, HEAD, OPTIONS")
+			w.WriteHeader(204)
+			return
+		}
+		if r.Method != "GET" || (r.URL.Path != "/" && r.URL.Path != "/actuator/env" && r.URL.Path != "/server-status") {
+			t.Error("request outside fixed read-only allowlist")
+			w.WriteHeader(400)
+			return
+		}
+		if r.URL.Path != "/" {
+			w.WriteHeader(404)
+			return
 		}
 		w.Header().Set("Content-Type", "text/html")
 		w.Header().Set("Server", "local-fixture")
@@ -77,7 +88,7 @@ func TestInstalledEnginesOnLoopbackFixture(t *testing.T) {
 			t.Logf("%s produced %d findings on loopback fixture", engine, len(detections))
 		})
 	}
-	t.Logf("fixture received %d root GET requests", requests.Load())
+	t.Logf("fixture received %d bounded read-only requests", requests.Load())
 }
 
 func TestInstalledTrivyOnLocalDependencyFixture(t *testing.T) {

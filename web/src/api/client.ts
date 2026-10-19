@@ -1,4 +1,4 @@
-import type { Asset, AuthorizedScope, Finding, NodeInfo, PortQuarantine, RuleBundle, ScanTask, User, UserRole, PortRequest, TimeWindow, ApprovalDecision, Schedule, RuleJob, CustomRule } from '../types';
+import type { Asset, AuthorizedScope, Finding, NodeInfo, PortQuarantine, RuleBundle, ScanTask, User, UserRole, PortRequest, TimeWindow, ApprovalDecision, Schedule, RuleJob, CustomRule, AssetProfile, KnowledgeEntry, DetectionCapability, VulnerabilityCategory, ScanPolicy } from '../types';
 
 export const dataMode: 'demo' | 'server' = import.meta.env.VITE_DATA_MODE === 'server' ? 'server' : 'demo';
 export const isDemoMode = dataMode === 'demo';
@@ -27,6 +27,9 @@ export interface Resources {
   schedules: Schedule;
   'rule-jobs': RuleJob;
   'custom-rules': CustomRule;
+  knowledge: KnowledgeEntry;
+  'detection-capabilities': DetectionCapability;
+  'vulnerability-categories': VulnerabilityCategory;
 }
 export class ApiRequestError extends Error {
   constructor(public readonly status: number, message: string) {
@@ -62,6 +65,9 @@ export async function requestJSON<T>(path: string, method = 'GET', body?: unknow
   return response.json() as Promise<T>;
 }
 export const apiClient = {
+  scanPolicy() { return requestJSON<ScanPolicy>('/api/v1/scan-policy'); },
+  saveScanPolicy(input:ScanPolicy) { return requestJSON<ScanPolicy>('/api/v1/scan-policy','PUT',input); },
+  releaseQuarantine(assetId:string,port:number,reason:string) { return requestJSON('/api/v1/port-quarantines/release','POST',{assetId,port,reason}); },
   systemStatus(signal?: AbortSignal) { return requestJSON<SystemStatus>('/api/v1/system/status', 'GET', undefined, signal); },
   capabilities(signal?: AbortSignal) { return requestJSON<Capabilities>('/api/v1/system/capabilities', 'GET', undefined, signal); },
   collection<K extends keyof Resources>(name: K, signal?: AbortSignal) {
@@ -78,10 +84,10 @@ export const apiClient = {
   updateUser(id: string, role: UserRole, isActive: boolean) {
     return requestJSON<User>('/api/v1/users/' + encodeURIComponent(id), 'PATCH', {role,isActive});
   },
-  createAsset(input: {kind: Asset['kind']; address: string; businessGroup: string; owner: string; requestedPorts: number[]; skippedPorts?: number[]}) {
+  createAsset(input: AssetProfile & {kind: Asset['kind']; address: string; businessGroup: string; owner: string; requestedPorts: number[]; skippedPorts?: number[]}) {
     return requestJSON<Asset>('/api/v1/assets', 'POST', input);
   },
-  updateAsset(id: string, input: {address:string;businessGroup: string; owner: string; requestedPorts: number[]; skippedPorts?: number[]}) {
+  updateAsset(id: string, input: AssetProfile & {address:string;businessGroup: string; owner: string; requestedPorts: number[]; skippedPorts?: number[]}) {
     return requestJSON<Asset>('/api/v1/assets/' + encodeURIComponent(id), 'PATCH', input);
   },
   deleteAsset(id: string) {

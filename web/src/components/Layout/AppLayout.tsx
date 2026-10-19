@@ -22,6 +22,7 @@ import {
   SafetyCertificateOutlined,
   TeamOutlined,
   FileTextOutlined,
+  BookOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAppTheme } from '../../context/ThemeContext';
@@ -71,6 +72,7 @@ export const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children })
       icon: <FileTextOutlined />,
       label: '安全报告',
     },
+    {key:'/knowledge',icon:<BookOutlined />,label:'漏洞知识库'},
     {
       key: '/nodes',
       icon: <ClusterOutlined />,

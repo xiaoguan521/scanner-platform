@@ -8,6 +8,7 @@ import { activateRules, createCustomRule, deleteCustomRule, fetchRules, importRu
 import { mockNodes, mockRuleBundles } from '../../mock/data';
 import type { CustomRule, NodeInfo, RuleBundle, RuleJob } from '../../types';
 
+import { ScanPolicySettings } from './ScanPolicySettings';
 type CustomRuleForm={id:string;name:string;severity:CustomRule['severity'];description:string;matchType:CustomRule['matchType'];part:'header'|'body';valuesText:string;statusCodesText:string;enabled:boolean};
 
 export const NodesPage:React.FC=()=>{
@@ -26,6 +27,7 @@ export const NodesPage:React.FC=()=>{
   return <div style={{display:'flex',flexDirection:'column',gap:16}}>
     <CollectionNotice loading={loading||customRulesLoading} error={error||bundleError||jobError||customRulesError}/>
     <Alert type="info" showIcon message="本地节点与规则包" description="Worker 和 Updater 通过本机 API 工作，只有 Updater 写入规则目录。导入检查 ZIP 路径、manifest 和文件 SHA-256；当前未验签；真实任务在执行前校验固定规则版本。引擎程序由 make engines 安装，只有明确创建的真实任务才会连接目标。"/>
+    <ScanPolicySettings/>
     <Card title="节点心跳"><Table<NodeInfo> dataSource={nodes} rowKey="id" pagination={false} scroll={{x:850}} columns={[
       {title:'节点',dataIndex:'id'},{title:'类型',dataIndex:'kind'},
       {title:'状态',dataIndex:'status',render:(v:string)=><Tag color={v==='OFFLINE'?'default':'green'}>{v==='BUSY'?'处理中':v==='ONLINE'?'在线':'离线'}</Tag>},

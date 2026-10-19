@@ -1,0 +1,3 @@
+export interface ReportScope { taskId?: string; assetId?: string; businessGroup?: string; from?: string; to?: string }
+export interface ReportTemplate { id: string; name: string; company: string; logo?: string; header: string; footer: string; ratingText: string; advice: string; sections: Record<string, boolean> }
+export interface ReportJob { id: string; name: string; templateId: string; format: 'html' | 'xlsx' | 'docx'; scope: ReportScope; status: 'QUEUED' | 'GENERATING' | 'READY' | 'FAILED'; progress: number; fileName: string; fileSize: number; createdBy: string; createdAt: string; snapshotVersion: number; snapshotId: string; error?: string; attempts: number }

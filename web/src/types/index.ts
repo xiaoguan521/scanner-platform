@@ -28,7 +28,10 @@ export interface PortQuarantine {
   reviewedAt?: string;
 }
 
-export interface Asset {
+export interface LoginEntry { type: 'system'|'web'; name: string; port: number; url?: string; https: boolean; captcha?: boolean|null; antiBruteForce?: boolean|null; evidence?: string }
+export interface AssetService { port: number; scheme?: string; kind?: 'HTTP'|'OTHER'; protocol?: string; state?: string; serviceName?: string; software?: string; version?: string; middleware?: string; language?: string; framework?: string; database?: string; application?: string; url?: string; title?: string; tls?: boolean; firstSeen?: string; lastSeen?: string; excluded?: boolean; quarantined?: boolean; quarantineReason?: string; loginEntries?: LoginEntry[] }
+export interface AssetProfile { name?: string; isCore?: boolean; department?: string; phone?: string; mac?: string; osName?: string; osFamily?: string; deviceType?: string; deviceSubtype?: string; vendor?: string; model?: string }
+export interface Asset extends AssetProfile {
   id: string;
   kind: 'host' | 'image_repo';
   address: string;
@@ -37,6 +40,8 @@ export interface Asset {
   owner: string;
   createdAt: string;
   ports: AssetPort[];
+  services?: AssetService[];
+  loginEntries?: LoginEntry[];
   requestedPorts?: number[]; // Registration request only; NOT an approved scan port
   quarantinedPorts?: number[];
   skippedPorts?: number[];
@@ -127,6 +132,9 @@ export interface ScanTask {
   scheme?: string; inputPath?: string; inputKind?: string; error?: string;
   assetId?: string;
   portProbeConfig?: PortProbeConfig;
+  effectiveExclusions?: PortProbeRange[];
+  quarantinedPorts?: number[];
+  assetProfile?: AssetProfile;
   portProbePorts?: number[];
   portProbeResults?: PortProbeResult[];
   vulnerabilityPorts?: number[];
@@ -137,13 +145,17 @@ export interface ScanTask {
 
 export interface PortProbeRange { start: number; end: number }
 export interface PortProbeConfig {
-  preset: 'common'|'custom'|'common-and-custom';
+  preset: 'common'|'custom'|'common-and-custom'|'registered'|'full';
+  intensity?: 'gentle'|'standard'|'aggressive';
+  fullConfirmed?: boolean;
+  commonPorts?: number[];
+  registeredPorts?: number[];
   ranges?: PortProbeRange[];
   exclusions?: PortProbeRange[];
   opsApproved?: boolean;
 }
 export interface PortProbeResult { port: number }
-export interface ServiceResult { port: number; scheme?: 'http'|'https'; kind: 'HTTP'|'OTHER' }
+export interface ServiceResult extends AssetService { kind: 'HTTP'|'OTHER' }
 
 export type FindingSeverity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO';
 
@@ -155,12 +167,18 @@ export type FindingStatus =
   | 'FALSE_POSITIVE'
   | 'ACCEPTED_RISK';
 
+export type RiskType = 'system'|'web'|'weak_credential'|'login_entry';
+export type DetectMethod = 'principle'|'version'|'configuration';
+export type Confidence = 'high'|'medium'|'low';
 export interface Finding {
+  assetId?: string; taskId?: string; riskType?: RiskType; detectMethod?: DetectMethod; confidence?: Confidence;
+  cvssScore?: number; vulnCategory?: string; identifiers?: Record<string,string[]>;
+  impact?: string; solution?: string; references?: string[]; evidence?: string; component?: string; contentLanguage?: string;
   id: string;
   fingerprint: string;
   severity: FindingSeverity;
   title: string;
-  engine: 'nuclei' | 'trivy' | 'zap' | 'synthetic';
+  engine: 'nuclei' | 'trivy' | 'zap' | 'synthetic' | 'knowledge';
   templateOrCve: string;
   target: string;
   port?: number;
@@ -226,3 +244,8 @@ export interface CustomRule {
   enabled: boolean;
   template?: string;
 }
+
+export interface ScanPolicy { commonPorts: number[]; exclusions: PortProbeRange[]; quarantineThreshold: number; discoveryAttempts: number }
+export interface DetectionCapability { id: string; name: string; status: 'enabled'|'disabled'|'unavailable'; message: string }
+export interface VulnerabilityCategory { id: string; name: string; cwe?: string }
+export interface KnowledgeEntry { id: string; title: string; description: string; impact: string; solution: string; references: string[]; cvssScore?: number; category: string; identifiers: Record<string,string[]>; component: string; affectedRanges: {introduced?:string;fixed?:string;lastAffected?:string}[]; source: string; updatedAt: string; language: string }

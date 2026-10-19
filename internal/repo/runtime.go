@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"scanner-platform/internal/assets"
+	"scanner-platform/internal/findings"
 	"scanner-platform/internal/scheduler"
 	"scanner-platform/internal/taskflow"
 
@@ -85,6 +86,12 @@ func NewRuntime(db *sql.DB) (*RuntimeStore, error) {
 	}
 	if err := store.initLocal(ctx); err != nil {
 		return nil, fmt.Errorf("initialize local task features: %w", err)
+	}
+	if err := store.initProduct(ctx); err != nil {
+		return nil, err
+	}
+	if err := store.InitReports(ctx); err != nil {
+		return nil, err
 	}
 	return store, nil
 }
@@ -176,6 +183,13 @@ func readRuntimeTask(row rowScanner) (taskflow.Task, error) {
 	task.VulnerabilityPorts = detail.VulnPorts
 	task.ServiceResults = detail.Services
 	task.SystemScanStatus = detail.SystemStatus
+	task.AssetProfile = detail.AssetProfile
+	task.EffectiveExclusions = detail.EffectiveExclusions
+	for _, service := range detail.Services {
+		if service.Quarantined {
+			task.QuarantinedPorts = append(task.QuarantinedPorts, service.Port)
+		}
+	}
 	task.CustomTemplates = make([]json.RawMessage, 0, len(detail.CustomRules))
 	for _, template := range detail.CustomRules {
 		task.CustomTemplates = append(task.CustomTemplates, json.RawMessage(template))
@@ -265,6 +279,28 @@ func (s *RuntimeStore) claimRuntimeTask(ctx context.Context, worker string) (*ta
 			}
 			if err != nil {
 				return nil, err
+			}
+			if len(detail.ProbePorts) > 0 {
+				old := map[int]bool{}
+				for _, p := range detail.ProbePorts {
+					old[p] = true
+				}
+				narrowed := []int{}
+				for _, p := range fresh.ProbePorts {
+					if old[p] {
+						narrowed = append(narrowed, p)
+					}
+				}
+				if len(narrowed) == 0 {
+					if _, err := tx.ExecContext(ctx, "UPDATE scan_tasks SET status='CANCELED' WHERE id=?", id); err != nil {
+						return nil, err
+					}
+					continue
+				}
+				fresh.ProbePorts = narrowed
+				if detail.Input.Engine == "auto" {
+					fresh.VulnPorts = append([]int{}, narrowed...)
+				}
 			}
 			fresh.RuleVersion = detail.RuleVersion
 			fresh.CustomRules = detail.CustomRules
@@ -370,12 +406,21 @@ func (s *RuntimeStore) CompleteRuntimeTask(ctx context.Context, report taskflow.
 	owner := detail.Owners[report.Target]
 	finding.BusinessGroup = owner.Group
 	finding.Owner = owner.Owner
+	finding = findings.Upgrade(finding)
+	assetID, _, ownerErr := resolveOwner(ctx, tx, finding.Target)
+	if ownerErr != nil {
+		return ownerErr
+	}
+	finding.AssetID = assetID
 	data, err := json.Marshal(finding)
 	if err != nil {
 		return fmt.Errorf("encode finding: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO security_findings(id,task_id,data) VALUES (?,?,?)`, finding.ID, task.ID, string(data)); err != nil {
 		return fmt.Errorf("save finding: %w", err)
+	}
+	if err := observation(ctx, tx, finding); err != nil {
+		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE scan_tasks SET status='COMPLETED',finished_at=? WHERE id=?`, now.Format(time.RFC3339Nano), task.ID); err != nil {
 		return fmt.Errorf("complete task: %w", err)
@@ -402,7 +447,7 @@ func (s *RuntimeStore) ListRuntimeFindings(ctx context.Context) ([]taskflow.Find
 		if err := json.Unmarshal([]byte(data), &finding); err != nil {
 			return nil, fmt.Errorf("decode finding: %w", err)
 		}
-		items = append(items, finding)
+		items = append(items, findings.Upgrade(finding))
 	}
 	return items, rows.Err()
 }

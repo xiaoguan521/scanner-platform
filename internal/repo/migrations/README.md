@@ -9,8 +9,9 @@ These files implement the schema in [architecture-v3.2.md §7](../../../docs/arc
 | `postgres/0001_core.sql` | users, user_sessions, assets, asset_port_requests, asset_port_request_authors, asset_ports, port_quarantine, asset_port_reviews, authorized_scopes, audit_logs | 10 |
 | `postgres/0002_scanning.sql` | nodes, scan_tasks, scan_task_chunks, security_findings, finding_events | 5 |
 | `postgres/0003_rules_sbom.sql` | rule_bundles, artifact_sboms | 2 |
+| `postgres/0004_report_inventory.sql` | asset_profiles, asset_services, asset_login_entries, asset_reachability, product_settings, vulnerability_knowledge, task_finding_observations, report_templates, report_snapshots, report_jobs | 10 |
 
-There are **17 business tables** plus the internal `schema_migrations` journal. All SQL scripts use a transaction, include constraints/indexes and record their version. No users, tokens, rules, targets or example data are seeded.
+There are **27 business tables** plus the internal `schema_migrations` journal. All SQL scripts use a transaction, include constraints/indexes and record their version. No users, tokens, rules, targets or example data are seeded.
 
 ## How to initialize a NEW dedicated database (after review)
 
@@ -25,15 +26,16 @@ export PGUSER=scanner_migrator
 bash scripts/init-postgres.sh
 ```
 
-The runner refuses a non-empty public schema with no migration journal, applies versions in order, skips already-recorded versions and aborts on the first SQL error. It does **not** create the PostgreSQL database itself. To run manually, use `psql -X -v ON_ERROR_STOP=1 -f internal/repo/migrations/postgres/0001_core.sql`, then 0002 and 0003. Run one migrator at a time. Never edit an applied migration: add a higher-numbered file. After applying, use the read-only inventory script `bash scripts/check-postgres-schema.sh` to check all 18 tables and the three recorded migrations. This verification is planned for tomorrow, not performed today.
+The runner refuses a non-empty public schema with no migration journal, applies versions in order, skips already-recorded versions and aborts on the first SQL error. It does **not** create the PostgreSQL database itself. To run manually, use `psql -X -v ON_ERROR_STOP=1 -f internal/repo/migrations/postgres/0001_core.sql`, then 0002, 0003 and 0004. Run one migrator at a time. Never edit an applied migration: add a higher-numbered file. After applying, use the read-only inventory script `bash scripts/check-postgres-schema.sh` to check all 28 tables and the four recorded migrations. PostgreSQL execution has not been performed in this change.
 
 ## Important schema differences and boundaries
 
 - These are **PostgreSQL-only** DDL scripts; the Go application **still connects to SQLite**. PostgreSQL `pgx` adapters, migrations-on-startup and production connection settings are not implemented here.
 - IDs and serialized JSON remain `TEXT` for compatibility with the architecture's SQLite model. PostgreSQL event timestamps use `TIMESTAMPTZ`, while SQLite currently writes RFC3339 text. **Session expiry is an exception**: `user_sessions.expires_at` uses Unix seconds (`BIGINT`), matching the Go account store.
-- The initial authorization flow accepts only a registered **numeric host IP**, not unrestricted CIDRs. Approved scopes/ports are administrative records, *not* Worker leases, firewall exceptions or authority to scan.
+- The runtime accepts explicitly selected **numeric host IPs**, not CIDRs or domain expansion. The selected port strategy authorizes bounded read-only discovery/checks on that target; per-port approval is no longer a gate. Legacy scope/port approvals remain administrative records, not Worker leases or firewall exceptions.
 - `authorized_scopes.isActive` is calculated from `status` and `expires_at`; it is not stored. `approved_by` uses an empty string while PENDING to match the current application.
 - The local SQLite runtime now shares the account/asset schema; an earlier synthetic assets table is preserved as `assets_legacy_runtime` during upgrade. Its synthetic task/finding tables and local schedules/rule queues are still different from this PostgreSQL baseline. A real PostgreSQL Repository and migration plan remain unimplemented.
+- Inventory, service, login, policy, knowledge and report records in 0004 use TEXT JSON. Report snapshots are versioned; task observations are separate from current finding lifecycle rows. Existing PostgreSQL finding JSON is `evidence_json`, while RuntimeStore uses a `data` column: the baseline is not a drop-in runtime adapter.
 - Rule pinning and SBOM historical version fields have no cascading rule-version foreign key because GC and retention are explicit Server/Updater decisions.
 
 **Verification is deferred:** These drafts have not been executed against PostgreSQL, and their indexes, foreign keys, migration re-runs and PostgreSQL Repository compatibility have not been tested. Review on a disposable database before enabling in any environment; never apply them blindly to an existing populated database.

@@ -39,7 +39,7 @@ func NewRuntimeHandler(store *repo.RuntimeStore, fallback http.Handler, uiDir st
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		runtimeJSON(w, http.StatusOK, map[string]string{"state": "ready", "mode": "local"})
 	})
-	capabilities := []string{"database", "task-dispatch", "synthetic-worker", "web-ui", "authentication", "user-management", "asset-registry", "approval-reviews", "schedules", "rule-import", "rule-activation", "nuclei-http-baseline", "trivy-offline", "zap-passive", "bounded-tcp-port-probe"}
+	capabilities := []string{"database", "task-dispatch", "synthetic-worker", "web-ui", "authentication", "user-management", "asset-registry", "approval-reviews", "schedules", "rule-import", "rule-activation", "nuclei-http-baseline", "trivy-offline", "zap-passive", "bounded-tcp-port-probe", "asset-inventory", "version-matching", "async-reports", "detection-metadata"}
 	unavailable := []string{"engine-validation", "rule-signatures", "harbor"}
 	mux.HandleFunc("GET /api/v1/system/status", func(w http.ResponseWriter, r *http.Request) {
 		runtimeJSON(w, http.StatusOK, Status{
@@ -72,6 +72,20 @@ func NewRuntimeHandler(store *repo.RuntimeStore, fallback http.Handler, uiDir st
 		}
 		return "local-test"
 	}
+	admin := func(handler http.HandlerFunc) http.HandlerFunc {
+		return ui(true, func(w http.ResponseWriter, r *http.Request) {
+			if len(accounts) > 0 {
+				u, _ := accounts[0].Session(r.Context(), sessionToken(r))
+				if u.Role != "admin" {
+					bad(w, 403, "admin_required")
+					return
+				}
+			}
+			handler(w, r)
+		})
+	}
+	registerProductHandlers(mux, store, ui, admin, actor)
+	registerReportHandlers(mux, store, ui, actor)
 	registerLocalHandlers(mux, store, ui, actor)
 	registerRuleHandlers(mux, store, ui, actor)
 	mux.HandleFunc("GET /api/v1/tasks", ui(false, func(w http.ResponseWriter, r *http.Request) {

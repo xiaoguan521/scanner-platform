@@ -110,6 +110,7 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 	var portProbeResults []PortProbeResult
 	var serviceResults []ServiceResult
 	var systemScanStatus string
+	assetProfile := task.AssetProfile
 	if task.Synthetic {
 		err = waitFor(workCtx, w.Delay)
 	} else if len(task.Engines) == 1 && task.Engines[0] == "port-probe" {
@@ -125,6 +126,7 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 			var result AutoResult
 			result, err = w.AutoScan(workCtx, task)
 			detections, portProbeResults, serviceResults, systemScanStatus = result.Findings, result.Ports, result.Services, result.SystemStatus
+			assetProfile = result.AssetProfile
 		}
 	} else if w.Execute == nil {
 		err = fmt.Errorf("scanning engines are not configured")
@@ -142,6 +144,7 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 			report.PortProbeResults = portProbeResults
 			report.ServiceResults = serviceResults
 			report.SystemScanStatus = systemScanStatus
+			report.AssetProfile = assetProfile
 		}
 	}
 	if err != nil {

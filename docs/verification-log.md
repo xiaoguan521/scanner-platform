@@ -93,3 +93,13 @@
 - 分工记录：本轮最初方案复核因高阶模型容量限制改由 GPT-5.6 Sol 只读执行；开发修复使用 GPT-6.1 Sol，独立验收使用 GPT-6 Sol 与 GPT-6 Luna。后续默认分工已按 Sol/Luna 调整，见 `AGENTS.md`。
 - 混合目录覆盖修复后，GPT-6 Sol 独立复现并核对根目录、`artifacts/`、`dependencies/` 中同名 JAR/锁文件的全部字节及 SHA-256 清单；Python 11 项和完整本机引擎夹具均通过。证据目录位于本机私有临时目录，未写入仓库。
 - GPT-6 Luna 独立运行 `LAB_ENV=isolated go test -tags=lab ./... -run '^$'`，全部包编译通过且未运行测试；同时确认所有 `PrepareDefault` 调用使用新签名，并复核 Go ELF 必须逐个显式选择的说明与命令行帮助。
+
+## 2026-10-19：报告能力、资产画像与契约同步
+
+- 依据 `report-capability-plan.md` 的已确认决策,同步 AGENTS、架构和产品方案:在明确授权目标内允许有界端口发现、服务识别与只读检查,不再逐端口申请审批;当前仍仅支持数字 IP,不声称域名 Server 固定解析已经实现。排除/隔离优先、无主机扩展、无口令猜测与默认口令尝试。方案 2.4 修正为 ICMP 未响应仅表示未知,继续 TCP 检测。
+- SQLite 画像/服务/入口、发现元数据、知识库/策略、任务观察与报告快照/队列已接入;PostgreSQL 只新增 0004、保留已应用迁移,JSON 保持 TEXT。四迁移共 27 张业务表加 journal;静态脚本表名/版本核对与 `bash -n scripts/check-postgres-schema.sh` 通过。未连接 PostgreSQL 执行迁移,PG RuntimeStore adapter 尚未实现。
+- OpenAPI 同步新路由与资产/任务/发现/报告类型,Worker 回报上限 32 MiB、报告快照 32 MiB、文件 64 MiB。Ruby YAML 解析与全部 schema `$ref` 核对通过,当前 54 个路径、46 个 schema;这不是生产节点鉴权/TLS验收。
+- 文档/契约开发代理实际运行 `go test -race ./internal/reporting ./internal/repo` 和 `go test -race ./internal/findings ./internal/portprobe ./internal/executor`,全部通过;`git diff --check` 通过。报告覆盖 CVSS 边界、登录入口分计、稳定指纹去重、三格式公共内容/八章八表、TOP 截断、公式文本、冻结模板和任务历史观察、失败重试与恢复。端口/识别/配置检查使用假拨号器及回环服务,未对真实业务目标扫描。
+- 知识库仅支持公开来源整理的规范 JSON 与自建中文内容,不自动导入 OSV 原始格式,不自动接入 CNNVD/CNVD。通用组件识别与版本推断不能证明 CentOS/麒麟、国产数据库或所有厂商产品覆盖。HTTP 预检/代理/原生检查共享端点请求预算及强度限速;TLS 隧道模板仍需模板白名单与引擎限速共同约束。
+- 使用路径见 `docs/product/report-usage.md`,R1–R6、HTML/Word 八章、Excel 八表清单见 `docs/product/report-checklist.md`。真实隔离靶机和排除端口抓包、Word/Excel 原生软件视觉排版、PostgreSQL 实例、大规模内存/耗时与具体厂商覆盖均待环境验证。本轮未读取或提交参考报告的真实地址、资产、结果。
+- 本轮约定方案 GPT-6 Sol、开发 GPT-6.1 Sol、独立验证 GPT-6 Luna;上述文档/契约开发检查由 GPT-6.1 Sol 实际执行。独立验证与最终全仓库门禁结果由协调代理另行记录,不以开发报告代替独立验收。

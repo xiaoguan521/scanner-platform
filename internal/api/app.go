@@ -76,7 +76,7 @@ func readJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 		bad(w, http.StatusUnsupportedMediaType, "json_required")
 		return false
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {

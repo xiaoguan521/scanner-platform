@@ -10,8 +10,11 @@ import (
 	"strings"
 	"time"
 
+	"net"
+	"scanner-platform/internal/findings"
 	"scanner-platform/internal/portprobe"
 	"scanner-platform/internal/taskflow"
+	"strconv"
 )
 
 // Upgrade the early single-finding-per-task schema without dropping its data.
@@ -42,6 +45,9 @@ func (s *RuntimeStore) migrateFindings(ctx context.Context) error {
 }
 
 func validDetection(d taskflow.Detection, task taskflow.Task, openResults []taskflow.PortProbeResult) bool {
+	if !findings.ValidMetadata(d) {
+		return false
+	}
 	if len(task.Engines) != 1 || len(d.TemplateID) == 0 || len(d.TemplateID) > 200 || len(d.Title) == 0 || len(d.Title) > 500 || len(d.Description) > 4000 || len(d.MatchedPath) > 1000 || len(d.Package) > 300 || len(d.InstalledVersion) > 200 || len(d.FixedVersion) > 1000 || len(d.ArtifactID) > 200 {
 		return false
 	}
@@ -104,30 +110,23 @@ func validPortProbeResults(results []taskflow.PortProbeResult, task taskflow.Tas
 }
 
 func validServiceResults(results []taskflow.ServiceResult, task taskflow.Task, open []taskflow.PortProbeResult) bool {
-	if task.Engines[0] != "auto" || len(results) != len(open) || len(results) > 256 {
+	if task.Engines[0] != "auto" || len(results) != len(open) || len(results) > 65535 {
 		return false
 	}
+	allowed := map[int]bool{}
+	opened := map[int]bool{}
 	seen := map[int]bool{}
-	for _, result := range results {
-		if result.Port < 1 || seen[result.Port] || result.Kind != "HTTP" && result.Kind != "OTHER" || result.Kind == "HTTP" && result.Scheme != "http" && result.Scheme != "https" || result.Kind == "OTHER" && result.Scheme != "" {
-			return false
-		}
-		allowed, openPort := false, false
-		for _, port := range task.VulnerabilityPorts {
-			allowed = allowed || port == result.Port
-		}
-		for _, port := range open {
-			openPort = openPort || port.Port == result.Port
-		}
-		if !allowed || !openPort {
-			return false
-		}
-		seen[result.Port] = true
+	for _, p := range task.VulnerabilityPorts {
+		allowed[p] = true
 	}
-	for _, port := range open {
-		if !seen[port.Port] {
+	for _, p := range open {
+		opened[p.Port] = true
+	}
+	for _, service := range results {
+		if !allowed[service.Port] || !opened[service.Port] || seen[service.Port] || !validService(service, task.Chunks[0].Targets[0]) {
 			return false
 		}
+		seen[service.Port] = true
 	}
 	return true
 }
@@ -145,7 +144,7 @@ func validSystemScanStatus(value string) bool {
 }
 
 func (s *RuntimeStore) completeEngineTask(ctx context.Context, report taskflow.Report) error {
-	if len(report.Findings) > 2000 || len(report.Error) > 500 {
+	if len(report.Findings) > 100000 || len(report.Error) > 500 {
 		return ErrInvalidTask
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -176,7 +175,20 @@ func (s *RuntimeStore) completeEngineTask(ctx context.Context, report taskflow.R
 	} else if len(report.PortProbeResults) != 0 || len(report.ServiceResults) != 0 {
 		return ErrInvalidTask
 	}
+	if !validAssetProfile(report.AssetProfile) {
+		return ErrInvalidTask
+	}
+	quarantined := map[int]bool{}
+	for _, service := range report.ServiceResults {
+		if service.Quarantined {
+			quarantined[service.Port] = true
+		}
+	}
 	for _, d := range report.Findings {
+		_, port, _, _ := canonicalTarget(d.Target)
+		if quarantined[port] {
+			return ErrInvalidTask
+		}
 		if !validDetection(d, task, report.PortProbeResults) {
 			return ErrInvalidTask
 		}
@@ -222,6 +234,7 @@ func (s *RuntimeStore) completeEngineTask(ctx context.Context, report taskflow.R
 			detail.ProbeResults = append([]taskflow.PortProbeResult{}, report.PortProbeResults...)
 			detail.Services = append([]taskflow.ServiceResult{}, report.ServiceResults...)
 			detail.SystemStatus = report.SystemScanStatus
+			detail.AssetProfile = report.AssetProfile
 			encoded, err := json.Marshal(detail)
 			if err != nil {
 				return err
@@ -230,7 +243,52 @@ func (s *RuntimeStore) completeEngineTask(ctx context.Context, report taskflow.R
 				return err
 			}
 		}
+		if err := recordInventory(ctx, tx, task, report); err != nil {
+			return err
+		}
+		knowledge, err := listKnowledge(ctx, tx)
+		if err != nil {
+			return err
+		}
+		for _, service := range report.ServiceResults {
+			if service.Quarantined || service.Excluded || service.Software == "" || service.Version == "" {
+				continue
+			}
+			for _, k := range knowledge {
+				if d, ok := findings.Match(k, service.Software, service.Version, net.JoinHostPort(task.Chunks[0].Targets[0], strconv.Itoa(service.Port))); ok {
+					report.Findings = append(report.Findings, d)
+				}
+			}
+		}
 		for _, d := range report.Findings {
+			d = findings.Normalize(d)
+			for _, k := range knowledge {
+				matched := k.ID == d.TemplateID
+				for _, ids := range k.Identifiers {
+					for _, id := range ids {
+						matched = matched || id == d.TemplateID
+					}
+				}
+				if matched {
+					if k.Language == "zh-CN" {
+						d.Title = k.Title
+						d.Description = k.Description
+					}
+					d.Impact = k.Impact
+					d.Solution = k.Solution
+					d.References = k.References
+					d.Identifiers = k.Identifiers
+					d.ContentLanguage = k.Language
+					if k.CVSSScore != nil {
+						d.CVSSScore = k.CVSSScore
+					}
+					if k.Category != "" {
+						d.VulnCategory = k.Category
+					}
+					d = findings.Normalize(d)
+					break
+				}
+			}
 			identity := d.Target
 			matchedPath := d.MatchedPath
 			if d.Engine == "trivy" && (task.InputKind == "rootfs" || autoTask) {
@@ -252,8 +310,14 @@ func (s *RuntimeStore) completeEngineTask(ctx context.Context, report taskflow.R
 			digest := sha256.Sum256(stable)
 			fingerprint := hex.EncodeToString(digest[:])
 			id := "finding-" + fingerprint
-			owner := detail.Owners[d.Target]
-			f := taskflow.Finding{ID: id, TaskID: task.ID, Fingerprint: fingerprint, Severity: d.Severity, Title: d.Title, Engine: d.Engine, TemplateOrCVE: d.TemplateID, Target: d.Target, Status: "OPEN", FirstSeen: now, LastSeen: now, BusinessGroup: owner.Group, Owner: owner.Owner, VerifiedInRun: true, MatchedPath: d.MatchedPath, Package: d.Package, InstalledVersion: d.InstalledVersion, FixedVersion: d.FixedVersion, ArtifactID: d.ArtifactID, Description: d.Description}
+			assetID, owner, ownerErr := resolveOwner(ctx, tx, d.Target)
+			if ownerErr != nil {
+				return ownerErr
+			}
+			if assetID == "" {
+				owner = detail.Owners[d.Target]
+			}
+			f := taskflow.Finding{AssetID: assetID, RiskType: d.RiskType, DetectMethod: d.DetectMethod, Confidence: d.Confidence, CVSSScore: d.CVSSScore, VulnCategory: d.VulnCategory, Identifiers: d.Identifiers, Impact: d.Impact, Solution: d.Solution, References: d.References, Evidence: d.Evidence, Port: d.Port, Component: d.Component, ContentLanguage: d.ContentLanguage, ID: id, TaskID: task.ID, Fingerprint: fingerprint, Severity: d.Severity, Title: d.Title, Engine: d.Engine, TemplateOrCVE: d.TemplateID, Target: d.Target, Status: "OPEN", FirstSeen: now, LastSeen: now, BusinessGroup: owner.Group, Owner: owner.Owner, VerifiedInRun: true, MatchedPath: d.MatchedPath, Package: d.Package, InstalledVersion: d.InstalledVersion, FixedVersion: d.FixedVersion, ArtifactID: d.ArtifactID, Description: d.Description}
 			var oldData string
 			if err := tx.QueryRowContext(ctx, "SELECT data FROM security_findings WHERE id=?", id).Scan(&oldData); err == nil {
 				var old taskflow.Finding
@@ -267,6 +331,9 @@ func (s *RuntimeStore) completeEngineTask(ctx context.Context, report taskflow.R
 			} else if err != sql.ErrNoRows {
 				return err
 			}
+			if err := observation(ctx, tx, f); err != nil {
+				return err
+			}
 			data, _ := json.Marshal(f)
 			if _, err := tx.ExecContext(ctx, `INSERT INTO security_findings(id,task_id,data) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET task_id=excluded.task_id,data=excluded.data`, id, task.ID, string(data)); err != nil {
 				return fmt.Errorf("save engine finding: %w", err)
@@ -277,7 +344,10 @@ func (s *RuntimeStore) completeEngineTask(ctx context.Context, report taskflow.R
 	if _, err := tx.ExecContext(ctx, `UPDATE scan_tasks SET status=?,finished_at=?,details=json_set(details,'$.error',?) WHERE id=?`, report.Status, now.Format(time.RFC3339Nano), report.Error, task.ID); err != nil {
 		return err
 	}
-	if err := logLocal(ctx, tx, report.WorkerID, "report_engine_task", "task", task.ID, report.Status); err != nil {
+	if err := logLocal(ctx, tx, report.WorkerID, "report_engine_task", "task", task.ID, func() string {
+		data, _ := json.Marshal(map[string]any{"status": report.Status, "ip": task.Chunks[0].Targets, "effectivePorts": task.PortProbePorts, "excluded": task.EffectiveExclusions, "quarantined": task.QuarantinedPorts})
+		return string(data)
+	}()); err != nil {
 		return err
 	}
 	return tx.Commit()

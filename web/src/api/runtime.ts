@@ -1,5 +1,5 @@
 import { requestJSON } from './client';
-import type { ScanTask, TaskInput, Schedule, Finding, RuleJob, CustomRule } from '../types';
+import type { ScanTask, TaskInput, Schedule, Finding, RuleJob, CustomRule, KnowledgeEntry } from '../types';
 
 export const createTask = (input:TaskInput) => requestJSON<ScanTask>('/api/v1/tasks','POST',input);
 export const cancelTask = (id:string) => requestJSON('/api/v1/tasks/'+encodeURIComponent(id)+'/cancel','POST');
@@ -20,3 +20,8 @@ export async function importRules(file:File):Promise<RuleJob> {
   if(!response.ok) throw new Error('上传失败，请检查登录状态、权限及 ZIP 大小');
   return response.json() as Promise<RuleJob>;
 }
+
+export const createKnowledge = (input:KnowledgeEntry) => requestJSON<KnowledgeEntry>('/api/v1/knowledge','POST',input);
+export const updateKnowledge = (id:string,input:KnowledgeEntry) => requestJSON<KnowledgeEntry>('/api/v1/knowledge/'+encodeURIComponent(id),'PUT',input);
+export const deleteKnowledge = (id:string) => requestJSON('/api/v1/knowledge/'+encodeURIComponent(id),'DELETE');
+export const importKnowledge = (items:KnowledgeEntry[]) => requestJSON<{imported:number}>('/api/v1/knowledge/import','POST',{items});

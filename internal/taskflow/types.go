@@ -3,6 +3,7 @@ package taskflow
 
 import (
 	"encoding/json"
+	"scanner-platform/internal/inventory"
 	"scanner-platform/internal/portprobe"
 	"scanner-platform/internal/scheduler"
 	"time"
@@ -51,7 +52,7 @@ const (
 	SystemScanCompleted        = "已通过 SSH 临时采集并完成本地系统包检查"
 )
 
-const MaxReportBytes = 4 << 20
+const MaxReportBytes = 32 << 20
 
 // ExecutionError exposes a deliberate, static user-facing explanation. Do not
 // construct UserMessage from engine output, paths, credentials or raw requests.
@@ -73,34 +74,37 @@ type Chunk struct {
 }
 
 type Task struct {
-	ID                 string             `json:"id"`
-	ScopeID            string             `json:"scopeId"`
-	ScopeName          string             `json:"scopeName"`
-	Engines            []string           `json:"engines"`
-	Status             string             `json:"status"`
-	HardDeadline       string             `json:"hardDeadline"`
-	TotalChunks        int                `json:"totalChunks"`
-	CompletedChunks    int                `json:"completedChunks"`
-	TargetCount        int                `json:"targetCount"`
-	CreatedAt          time.Time          `json:"createdAt"`
-	Chunks             []Chunk            `json:"chunks"`
-	Synthetic          bool               `json:"synthetic"`
-	SkippedTargets     []string           `json:"skippedTargets"`
-	TimeWindows        []scheduler.Window `json:"timeWindows"`
-	RuleVersion        string             `json:"ruleVersion"`
-	InputPath          string             `json:"inputPath,omitempty"`
-	InputKind          string             `json:"inputKind,omitempty"`
-	Scheme             string             `json:"scheme,omitempty"`
-	AssetID            string             `json:"assetId,omitempty"`
-	PortProbeConfig    portprobe.Config   `json:"portProbeConfig,omitempty"`
-	PortProbePorts     []int              `json:"portProbePorts,omitempty"`
-	PortProbeResults   []PortProbeResult  `json:"portProbeResults,omitempty"`
-	VulnerabilityPorts []int              `json:"vulnerabilityPorts,omitempty"`
-	CustomTemplates    []json.RawMessage  `json:"customTemplates,omitempty"`
-	CustomRuleCount    int                `json:"customRuleCount,omitempty"`
-	ServiceResults     []ServiceResult    `json:"serviceResults,omitempty"`
-	SystemScanStatus   string             `json:"systemScanStatus,omitempty"`
-	Error              string             `json:"error,omitempty"`
+	EffectiveExclusions []portprobe.Range  `json:"effectiveExclusions,omitempty"`
+	QuarantinedPorts    []int              `json:"quarantinedPorts,omitempty"`
+	ID                  string             `json:"id"`
+	ScopeID             string             `json:"scopeId"`
+	ScopeName           string             `json:"scopeName"`
+	Engines             []string           `json:"engines"`
+	Status              string             `json:"status"`
+	HardDeadline        string             `json:"hardDeadline"`
+	TotalChunks         int                `json:"totalChunks"`
+	CompletedChunks     int                `json:"completedChunks"`
+	TargetCount         int                `json:"targetCount"`
+	CreatedAt           time.Time          `json:"createdAt"`
+	Chunks              []Chunk            `json:"chunks"`
+	Synthetic           bool               `json:"synthetic"`
+	SkippedTargets      []string           `json:"skippedTargets"`
+	TimeWindows         []scheduler.Window `json:"timeWindows"`
+	RuleVersion         string             `json:"ruleVersion"`
+	InputPath           string             `json:"inputPath,omitempty"`
+	InputKind           string             `json:"inputKind,omitempty"`
+	Scheme              string             `json:"scheme,omitempty"`
+	AssetID             string             `json:"assetId,omitempty"`
+	PortProbeConfig     portprobe.Config   `json:"portProbeConfig,omitempty"`
+	PortProbePorts      []int              `json:"portProbePorts,omitempty"`
+	PortProbeResults    []PortProbeResult  `json:"portProbeResults,omitempty"`
+	VulnerabilityPorts  []int              `json:"vulnerabilityPorts,omitempty"`
+	CustomTemplates     []json.RawMessage  `json:"customTemplates,omitempty"`
+	CustomRuleCount     int                `json:"customRuleCount,omitempty"`
+	ServiceResults      []ServiceResult    `json:"serviceResults,omitempty"`
+	SystemScanStatus    string             `json:"systemScanStatus,omitempty"`
+	AssetProfile        inventory.Profile  `json:"assetProfile,omitempty"`
+	Error               string             `json:"error,omitempty"`
 }
 
 // PortProbeResult records only a successful TCP connection. It contains no
@@ -111,51 +115,75 @@ type PortProbeResult struct {
 
 // ServiceResult is limited to a bounded HTTP response check on an explicitly
 // approved open port; it does not retain response content or arbitrary banners.
-type ServiceResult struct {
-	Port   int    `json:"port"`
-	Scheme string `json:"scheme,omitempty"`
-	Kind   string `json:"kind"`
-}
+type ServiceResult = inventory.Service
 
 type Finding struct {
-	ID                string    `json:"id"`
-	TaskID            string    `json:"taskId"`
-	Fingerprint       string    `json:"fingerprint"`
-	Severity          string    `json:"severity"`
-	Title             string    `json:"title"`
-	Engine            string    `json:"engine"`
-	TemplateOrCVE     string    `json:"templateOrCve"`
-	Target            string    `json:"target"`
-	Status            string    `json:"status"`
-	FirstSeen         time.Time `json:"firstSeen"`
-	LastSeen          time.Time `json:"lastSeen"`
-	ConsecutiveMisses int       `json:"consecutiveMisses"`
-	BusinessGroup     string    `json:"businessGroup"`
-	Owner             string    `json:"owner"`
-	VerifiedInRun     bool      `json:"verifiedInRun"`
-	Synthetic         bool      `json:"synthetic"`
-	MatchedPath       string    `json:"matchedPath,omitempty"`
-	Package           string    `json:"package,omitempty"`
-	InstalledVersion  string    `json:"installedVersion,omitempty"`
-	FixedVersion      string    `json:"fixedVersion,omitempty"`
-	ArtifactID        string    `json:"artifactId,omitempty"`
-	Description       string    `json:"description,omitempty"`
+	AssetID           string              `json:"assetId,omitempty"`
+	ID                string              `json:"id"`
+	TaskID            string              `json:"taskId"`
+	Fingerprint       string              `json:"fingerprint"`
+	Severity          string              `json:"severity"`
+	Title             string              `json:"title"`
+	Engine            string              `json:"engine"`
+	TemplateOrCVE     string              `json:"templateOrCve"`
+	Target            string              `json:"target"`
+	Status            string              `json:"status"`
+	FirstSeen         time.Time           `json:"firstSeen"`
+	LastSeen          time.Time           `json:"lastSeen"`
+	ConsecutiveMisses int                 `json:"consecutiveMisses"`
+	BusinessGroup     string              `json:"businessGroup"`
+	Owner             string              `json:"owner"`
+	VerifiedInRun     bool                `json:"verifiedInRun"`
+	Synthetic         bool                `json:"synthetic"`
+	MatchedPath       string              `json:"matchedPath,omitempty"`
+	Package           string              `json:"package,omitempty"`
+	InstalledVersion  string              `json:"installedVersion,omitempty"`
+	FixedVersion      string              `json:"fixedVersion,omitempty"`
+	ArtifactID        string              `json:"artifactId,omitempty"`
+	Description       string              `json:"description,omitempty"`
+	RiskType          string              `json:"riskType,omitempty"`
+	DetectMethod      string              `json:"detectMethod,omitempty"`
+	Confidence        string              `json:"confidence,omitempty"`
+	CVSSScore         *float64            `json:"cvssScore,omitempty"`
+	VulnCategory      string              `json:"vulnCategory,omitempty"`
+	Identifiers       map[string][]string `json:"identifiers,omitempty"`
+	Impact            string              `json:"impact,omitempty"`
+	Solution          string              `json:"solution,omitempty"`
+	References        []string            `json:"references,omitempty"`
+	Evidence          string              `json:"evidence,omitempty"`
+	Port              int                 `json:"port,omitempty"`
+	Component         string              `json:"component,omitempty"`
+	ContentLanguage   string              `json:"contentLanguage,omitempty"`
 }
 
 // Detection is normalized engine output. Raw requests, responses and credentials
 // are intentionally absent from the persisted result protocol.
 type Detection struct {
-	Engine           string `json:"engine"`
-	TemplateID       string `json:"templateId"`
-	Target           string `json:"target"`
-	Title            string `json:"title"`
-	Severity         string `json:"severity"`
-	MatchedPath      string `json:"matchedPath,omitempty"`
-	Package          string `json:"package,omitempty"`
-	InstalledVersion string `json:"installedVersion,omitempty"`
-	FixedVersion     string `json:"fixedVersion,omitempty"`
-	ArtifactID       string `json:"artifactId,omitempty"`
-	Description      string `json:"description,omitempty"`
+	AssetID          string              `json:"assetId,omitempty"`
+	Engine           string              `json:"engine"`
+	TemplateID       string              `json:"templateId"`
+	Target           string              `json:"target"`
+	Title            string              `json:"title"`
+	Severity         string              `json:"severity"`
+	MatchedPath      string              `json:"matchedPath,omitempty"`
+	Package          string              `json:"package,omitempty"`
+	InstalledVersion string              `json:"installedVersion,omitempty"`
+	FixedVersion     string              `json:"fixedVersion,omitempty"`
+	ArtifactID       string              `json:"artifactId,omitempty"`
+	Description      string              `json:"description,omitempty"`
+	RiskType         string              `json:"riskType,omitempty"`
+	DetectMethod     string              `json:"detectMethod,omitempty"`
+	Confidence       string              `json:"confidence,omitempty"`
+	CVSSScore        *float64            `json:"cvssScore,omitempty"`
+	VulnCategory     string              `json:"vulnCategory,omitempty"`
+	Identifiers      map[string][]string `json:"identifiers,omitempty"`
+	Impact           string              `json:"impact,omitempty"`
+	Solution         string              `json:"solution,omitempty"`
+	References       []string            `json:"references,omitempty"`
+	Evidence         string              `json:"evidence,omitempty"`
+	Port             int                 `json:"port,omitempty"`
+	Component        string              `json:"component,omitempty"`
+	ContentLanguage  string              `json:"contentLanguage,omitempty"`
 }
 
 type Report struct {
@@ -169,6 +197,7 @@ type Report struct {
 	PortProbeResults []PortProbeResult `json:"portProbeResults,omitempty"`
 	ServiceResults   []ServiceResult   `json:"serviceResults,omitempty"`
 	SystemScanStatus string            `json:"systemScanStatus,omitempty"`
+	AssetProfile     inventory.Profile `json:"assetProfile,omitempty"`
 }
 
 type AutoResult struct {
@@ -176,6 +205,7 @@ type AutoResult struct {
 	Ports        []PortProbeResult
 	Services     []ServiceResult
 	SystemStatus string
+	AssetProfile inventory.Profile
 }
 
 // EngineStatus is based on local binary and data checks, not a successful scan.

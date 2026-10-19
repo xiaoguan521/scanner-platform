@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"scanner-platform/internal/executor/engineflags"
@@ -263,12 +264,18 @@ func parseTrivy(data []byte, target string, requireOS bool) ([]taskflow.Detectio
 			Class           string `json:"Class"`
 			Target          string `json:"Target"`
 			Vulnerabilities []struct {
-				ID        string `json:"VulnerabilityID"`
-				Name      string `json:"PkgName"`
-				Installed string `json:"InstalledVersion"`
-				Fixed     string `json:"FixedVersion"`
-				Title     string `json:"Title"`
-				Severity  string `json:"Severity"`
+				ID          string   `json:"VulnerabilityID"`
+				Name        string   `json:"PkgName"`
+				Installed   string   `json:"InstalledVersion"`
+				Fixed       string   `json:"FixedVersion"`
+				Title       string   `json:"Title"`
+				Severity    string   `json:"Severity"`
+				Description string   `json:"Description"`
+				References  []string `json:"References"`
+				CVSS        map[string]struct {
+					V3Score *float64 `json:"V3Score"`
+					V2Score *float64 `json:"V2Score"`
+				} `json:"CVSS"`
 			} `json:"Vulnerabilities"`
 		} `json:"Results"`
 	}
@@ -300,11 +307,40 @@ func parseTrivy(data []byte, target string, requireOS bool) ([]taskflow.Detectio
 			if title == "" {
 				title = v.ID + " in " + v.Name
 			}
-			description := ""
+			description := safeText(v.Description, 3000)
 			if report.Metadata.OS.EOSL {
-				description = "系统版本已超出上游常规维护期；漏洞结果和修复版本受公告源覆盖限制，未检出不表示系统无漏洞。"
+				description += "\n系统版本已超出上游常规维护期；漏洞结果和修复版本受公告源覆盖限制，未检出不表示系统无漏洞。"
 			}
-			out = append(out, taskflow.Detection{Engine: "trivy", TemplateID: safeText(v.ID, 200), Target: target, Title: safeText(title, 500), Severity: severity(v.Severity), MatchedPath: safeText(filepath.ToSlash(result.Target), 1000), Package: safeText(v.Name, 300), InstalledVersion: safeText(v.Installed, 200), FixedVersion: safeText(v.Fixed, 1000), ArtifactID: report.Metadata.ImageID, Description: description})
+			var score *float64
+			vendors := make([]string, 0, len(v.CVSS))
+			for vendor := range v.CVSS {
+				vendors = append(vendors, vendor)
+			}
+			sort.Strings(vendors)
+			for _, vendor := range vendors {
+				item := v.CVSS[vendor]
+				candidate := item.V3Score
+				if candidate == nil {
+					candidate = item.V2Score
+				}
+				if candidate != nil && *candidate >= 0 && *candidate <= 10 {
+					score = candidate
+					if vendor == "nvd" {
+						break
+					}
+				}
+			}
+			refs := []string{}
+			for _, ref := range v.References {
+				if len(refs) < 20 {
+					refs = append(refs, safeText(ref, 2000))
+				}
+			}
+			solution := ""
+			if v.Fixed != "" {
+				solution = "结合发行版或软件厂商公告，升级至引擎报告的修复版本：" + safeText(v.Fixed, 1000)
+			}
+			out = append(out, taskflow.Detection{RiskType: "system", DetectMethod: "version", Confidence: "medium", CVSSScore: score, References: refs, Solution: solution, Component: safeText(v.Name+":"+v.Installed, 300), VulnCategory: "软件版本漏洞", Evidence: safeText(v.Name+":"+v.Installed, 300) + "；根据漏洞库匹配，未进行原理验证。", ContentLanguage: "original", Engine: "trivy", TemplateID: safeText(v.ID, 200), Target: target, Title: safeText(title, 500), Severity: severity(v.Severity), MatchedPath: safeText(filepath.ToSlash(result.Target), 1000), Package: safeText(v.Name, 300), InstalledVersion: safeText(v.Installed, 200), FixedVersion: safeText(v.Fixed, 1000), ArtifactID: report.Metadata.ImageID, Description: description})
 			if len(out) > 2000 {
 				return nil, fmt.Errorf("too many findings; split the input")
 			}

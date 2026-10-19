@@ -47,6 +47,7 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 	dbPath := flags.String("db", filepath.Join("runtime", "platform.db"), "SQLite database path")
 	uiDir := flags.String("ui-dir", filepath.Join("web", "dist"), "Built web UI directory")
 	seed := flags.Bool("seed-demo", false, "Create a single synthetic startup task")
+	reportDir := flags.String("report-dir", "", "Private generated report directory (defaults beside the SQLite database)")
 	flags.Bool("dev-ui", false, "Compatibility alias for the unified local Server")
 	status := flags.Bool("status", false, "Show local runtime capabilities")
 	if err := flags.Parse(args); err != nil {
@@ -96,6 +97,10 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 	defer store.Close()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if *reportDir == "" {
+		*reportDir = filepath.Join(filepath.Dir(absoluteDB), "reports")
+	}
+	go store.RunReports(ctx, *reportDir)
 	// Synthetic tasks have no external side effects and may safely restart after a local restart.
 	if _, err := accounts.SQLDB().ExecContext(ctx, `UPDATE scan_tasks SET status='PENDING',worker_id='' WHERE status='RUNNING' AND COALESCE(json_extract(details,'$.input.engine'),'') IN ('','synthetic')`); err != nil {
 		fmt.Fprintln(stderr, err)

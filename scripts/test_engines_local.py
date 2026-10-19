@@ -95,13 +95,22 @@ def main():
     class Fixture(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
             requests.append(self.path)
-            assert self.path == '/'
+            assert self.path in ['/', '/actuator/env', '/server-status?auto']
+            if self.path != '/':
+                self.send_response(404); self.end_headers(); return
             body = b'<html><title>Local fixture</title><body>baseline fixture</body></html>'
             self.send_response(200)
             self.send_header('Content-Type', 'text/html')
             self.send_header('Content-Length', str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+
+        def do_OPTIONS(self):
+            requests.append(self.path)
+            assert self.path == '/'
+            self.send_response(204)
+            self.send_header('Allow', 'GET, HEAD, OPTIONS')
+            self.end_headers()
 
         def log_message(self, *args):
             pass
@@ -146,9 +155,13 @@ def main():
                          '--runtime-dir', str(directory / 'worker'), '--inputs-dir', str(directory / 'inputs')])
         until(lambda: any(r['isCurrent'] for r in api.call('GET', '/api/v1/rules')['items']), timeout=60)
         target = f'127.0.0.1:{fixture.server_port}'
-        api.call('POST', '/api/v1/assets', {'kind': 'host', 'address': '127.0.0.1',
+        asset = api.call('POST', '/api/v1/assets', {'kind': 'host', 'address': '127.0.0.1',
                   'requestedPorts': [fixture.server_port, 1], 'skippedPorts': [1],
                   'businessGroup': 'Local fixture', 'owner': 'Example owner'}, expect=201)
+        api.call('POST','/api/v1/users',{'username':'localops','password':PASSWORD,'role':'ops_approver'},expect=201)
+        ops=API(base);ops.login('localops')
+        ops.call('POST',f'/api/v1/port-requests/{asset["id"]}/{fixture.server_port}/review',
+                 {'decision':'APPROVE','approvalTicket':'LOCAL-ENGINE-FIXTURE','note':'Isolated loopback fixture','kind':'WEB'})
         counts = {}
         for engine in ['nuclei', 'zap']:
             before = len(requests)

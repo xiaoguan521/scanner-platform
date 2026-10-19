@@ -138,6 +138,7 @@ func (r *Runner) Execute(ctx context.Context, task taskflow.Task) ([]taskflow.De
 	if r.Timeout == 0 {
 		r.Timeout = 10
 	}
+	ctx = withHTTPBudget(ctx, r.Rate, 160)
 	switch task.Engines[0] {
 	case "nuclei":
 		return r.nuclei(ctx, task, dir)
@@ -162,7 +163,7 @@ func (r *Runner) ProbePorts(ctx context.Context, task taskflow.Task) ([]taskflow
 	if !validProbePortPlan(task.PortProbeConfig, task.PortProbePorts) {
 		return nil, fmt.Errorf("invalid TCP port probe task")
 	}
-	open, err := portprobe.Scan(ctx, task.Chunks[0].Targets[0], task.PortProbePorts)
+	open, err := portprobe.ScanConfigured(ctx, task.Chunks[0].Targets[0], task.PortProbePorts, task.PortProbeConfig)
 	if err != nil {
 		return nil, err
 	}

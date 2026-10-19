@@ -66,7 +66,7 @@ func TestOversizedEngineResultReportsFailureInsteadOfLeavingTaskRunning(t *testi
 	}))
 	defer server.Close()
 	worker := Worker{ServerURL: server.URL, ID: "worker", Client: server.Client(), Execute: func(context.Context, Task) ([]Detection, error) {
-		results := make([]Detection, 1200)
+		results := make([]Detection, MaxReportBytes/4000+1)
 		for i := range results {
 			results[i] = Detection{Engine: "trivy", Target: "fixture", TemplateID: "fixture", Title: "Fixture", Description: strings.Repeat("x", 4000)}
 		}
@@ -76,7 +76,7 @@ func TestOversizedEngineResultReportsFailureInsteadOfLeavingTaskRunning(t *testi
 		t.Fatal(err)
 	}
 	if received.Status != "FAILED" || len(received.Findings) != 0 || received.Error == "" {
-		t.Fatalf("oversized result did not report a bounded failure: %+v", received)
+		t.Fatalf("oversized result did not report a bounded failure: status=%s findings=%d", received.Status, len(received.Findings))
 	}
 }
 

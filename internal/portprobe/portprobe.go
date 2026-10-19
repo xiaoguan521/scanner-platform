@@ -21,6 +21,11 @@ var (
 const (
 	PresetCommon          = "common"
 	PresetCustom          = "custom"
+	PresetRegistered      = "registered"
+	PresetFull            = "full"
+	IntensityGentle       = "gentle"
+	IntensityStandard     = "standard"
+	IntensityAggressive   = "aggressive"
 	PresetCommonAndCustom = "common-and-custom"
 	MaxPorts              = 65535
 	MaxRanges             = 128
@@ -34,19 +39,26 @@ type Range struct {
 }
 
 type Config struct {
-	Preset      string  `json:"preset"`
-	Ranges      []Range `json:"ranges,omitempty"`
-	Exclusions  []Range `json:"exclusions,omitempty"`
-	OpsApproved bool    `json:"opsApproved,omitempty"`
+	Preset                    string  `json:"preset"`
+	Ranges                    []Range `json:"ranges,omitempty"`
+	Exclusions                []Range `json:"exclusions,omitempty"`
+	OpsApproved               bool    `json:"opsApproved,omitempty"`
+	CommonPorts               []int   `json:"commonPorts,omitempty"`
+	RegisteredPorts           []int   `json:"registeredPorts,omitempty"`
+	Intensity                 string  `json:"intensity,omitempty"`
+	FullConfirmed             bool    `json:"fullConfirmed,omitempty"`
+	IdentificationMaxAttempts int     `json:"identificationMaxAttempts,omitempty"`
+	QuarantineThreshold       int     `json:"quarantineThreshold,omitempty"`
+	IdentificationBudget      int     `json:"identificationBudget,omitempty"`
 }
 
 // CommonPorts is a curated TCP list for the platform's common Linux web,
 // middleware, and database services. The returned slice is a copy.
 func CommonPorts() []int {
 	return []int{
-		22, 80, 443, 1521, 2181, 2888, 3000, 3306, 3888, 5000,
-		5236, 5258, 5432, 5672, 6379, 7001, 8000, 8001, 8080, 8081,
-		8088, 8443, 8848, 9000, 9090, 9092, 9443, 15672, 9848, 9849,
+		21, 22, 23, 25, 53, 80, 110, 135, 139, 143, 389, 443, 445, 465, 587, 636, 993, 995, 1433, 1521, 2181, 2888, 3000, 3306, 3888, 5000,
+		5222, 5236, 5258, 5432, 5672, 6379, 6443, 7001, 7002, 7070, 7474, 7687, 7777, 8000, 8001, 8080, 8081,
+		8088, 8090, 8118, 8161, 8200, 8443, 8848, 9000, 9042, 9080, 9090, 9092, 9200, 9300, 9443, 10000, 11211, 15672, 18080, 18888, 27017, 28017, 50000, 9848, 9849,
 		54321,
 	}
 }
@@ -61,21 +73,55 @@ func SelectPorts(config Config) ([]int, error) {
 	if len(config.Ranges) > MaxRanges || len(config.Exclusions) > MaxRanges {
 		return nil, ErrInvalidConfig
 	}
+	if _, err := PolicyFor(config); err != nil {
+		return nil, err
+	}
+	if config.IdentificationMaxAttempts < 0 || config.IdentificationMaxAttempts > 3 || config.QuarantineThreshold < 0 || config.QuarantineThreshold > 3 || config.IdentificationBudget < 0 || config.IdentificationBudget > MaxPorts*3 {
+		return nil, ErrInvalidConfig
+	}
+	common := CommonPorts()
+	if len(config.CommonPorts) > 0 {
+		common = config.CommonPorts
+	}
+	for _, list := range [][]int{common, config.RegisteredPorts} {
+		if len(list) > MaxPorts {
+			return nil, ErrInvalidConfig
+		}
+		for _, p := range list {
+			if p < 1 || p > 65535 {
+				return nil, ErrInvalidConfig
+			}
+		}
+	}
 	selected := make(map[int]struct{}, MaxPorts)
 	switch preset {
 	case PresetCommon:
 		if len(config.Ranges) != 0 {
 			return nil, ErrInvalidConfig
 		}
-		for _, port := range CommonPorts() {
+		for _, port := range common {
 			selected[port] = struct{}{}
+		}
+	case PresetRegistered:
+		if len(config.Ranges) != 0 || len(config.RegisteredPorts) == 0 {
+			return nil, ErrInvalidConfig
+		}
+		for _, p := range config.RegisteredPorts {
+			selected[p] = struct{}{}
+		}
+	case PresetFull:
+		if len(config.Ranges) != 0 {
+			return nil, ErrInvalidConfig
+		}
+		for p := 1; p <= MaxPorts; p++ {
+			selected[p] = struct{}{}
 		}
 	case PresetCustom, PresetCommonAndCustom:
 		if len(config.Ranges) == 0 {
 			return nil, ErrInvalidConfig
 		}
 		if preset == PresetCommonAndCustom {
-			for _, port := range CommonPorts() {
+			for _, port := range common {
 				selected[port] = struct{}{}
 			}
 		}
@@ -91,6 +137,9 @@ func SelectPorts(config Config) ([]int, error) {
 			}
 		}
 	default:
+		return nil, ErrInvalidConfig
+	}
+	if len(selected) == MaxPorts && !config.FullConfirmed {
 		return nil, ErrInvalidConfig
 	}
 	if len(selected) == 0 || len(selected) > MaxPorts {
@@ -128,10 +177,14 @@ type dialer interface {
 // Scan validates a numeric IP and probes the provided TCP port list by
 // connecting and immediately closing. It never sends protocol data.
 func Scan(ctx context.Context, target string, ports []int) ([]int, error) {
-	return scanWithDialer(ctx, target, ports, &net.Dialer{})
+	return scanWithPolicy(ctx, target, ports, &net.Dialer{}, Policy{Concurrency: ProbeConcurrency, Timeout: ProbeTimeout})
 }
 
 func scanWithDialer(ctx context.Context, target string, ports []int, d dialer) ([]int, error) {
+	return scanWithPolicy(ctx, target, ports, d, Policy{Concurrency: ProbeConcurrency, Timeout: ProbeTimeout})
+}
+
+func scanWithPolicy(ctx context.Context, target string, ports []int, d dialer, policy Policy) ([]int, error) {
 	address, err := netip.ParseAddr(target)
 	if err != nil || address.Zone() != "" || address.IsUnspecified() || address.IsMulticast() || len(ports) == 0 || len(ports) > MaxPorts || d == nil {
 		return nil, ErrInvalidTarget
@@ -150,7 +203,7 @@ func scanWithDialer(ctx context.Context, target string, ports []int, d dialer) (
 		return nil, err
 	}
 	address = address.Unmap()
-	workers := ProbeConcurrency
+	workers := policy.Concurrency
 	if len(ports) < workers {
 		workers = len(ports)
 	}
@@ -162,7 +215,7 @@ func scanWithDialer(ctx context.Context, target string, ports []int, d dialer) (
 		go func() {
 			defer done.Done()
 			for port := range jobs {
-				probeCtx, cancel := context.WithTimeout(ctx, ProbeTimeout)
+				probeCtx, cancel := context.WithTimeout(ctx, policy.Timeout)
 				conn, err := d.DialContext(probeCtx, "tcp", net.JoinHostPort(address.String(), strconv.Itoa(port)))
 				cancel()
 				if conn != nil {
@@ -174,7 +227,21 @@ func scanWithDialer(ctx context.Context, target string, ports []int, d dialer) (
 			}
 		}()
 	}
+	var ticker *time.Ticker
+	if policy.Rate > 0 {
+		ticker = time.NewTicker(time.Second / time.Duration(policy.Rate))
+		defer ticker.Stop()
+	}
 	for _, port := range ports {
+		if ticker != nil {
+			select {
+			case <-ticker.C:
+			case <-ctx.Done():
+				close(jobs)
+				done.Wait()
+				return nil, ctx.Err()
+			}
+		}
 		select {
 		case jobs <- port:
 		case <-ctx.Done():
@@ -195,4 +262,51 @@ func scanWithDialer(ctx context.Context, target string, ports []int, d dialer) (
 	}
 	sort.Ints(result)
 	return result, nil
+}
+
+// Policy is a bounded per-target connection policy.
+type Policy struct {
+	Concurrency int
+	Rate        int
+	Timeout     time.Duration
+}
+
+func PolicyFor(config Config) (Policy, error) {
+	intensity := config.Intensity
+	if intensity == "" {
+		intensity = IntensityStandard
+		if config.Preset == PresetFull {
+			intensity = IntensityGentle
+		}
+	}
+	switch intensity {
+	case IntensityGentle:
+		return Policy{8, 20, 1500 * time.Millisecond}, nil
+	case IntensityStandard:
+		return Policy{32, 100, 1000 * time.Millisecond}, nil
+	case IntensityAggressive:
+		return Policy{64, 250, 700 * time.Millisecond}, nil
+	default:
+		return Policy{}, ErrInvalidConfig
+	}
+}
+func ScanConfigured(ctx context.Context, target string, ports []int, config Config) ([]int, error) {
+	policy, err := PolicyFor(config)
+	if err != nil {
+		return nil, err
+	}
+	selected, err := SelectPorts(config)
+	if err != nil {
+		return nil, err
+	}
+	allowed := make(map[int]bool, len(selected))
+	for _, p := range selected {
+		allowed[p] = true
+	}
+	for _, p := range ports {
+		if !allowed[p] {
+			return nil, ErrInvalidConfig
+		}
+	}
+	return scanWithPolicy(ctx, target, ports, &net.Dialer{}, policy)
 }

@@ -13,6 +13,7 @@ import { isDemoMode } from '../../api/client';
 import { useCollection } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
 
+import { findingCounts, isVulnerability } from '../Findings/presentation';
 const { Text } = Typography;
 
 export const DashboardPage: React.FC = () => {
@@ -21,16 +22,14 @@ export const DashboardPage: React.FC = () => {
   const { data: tasks, loading: tasksLoading, error: tasksError } = useCollection('tasks', mockTasks);
   const { data: ruleBundles, loading: rulesLoading, error: rulesError } = useCollection('rules', mockRuleBundles);
   const currentRule = ruleBundles.find((r) => r.isCurrent);
-  const criticalCount = findings.filter((f) => f.severity === 'CRITICAL' && f.status === 'OPEN').length;
-  const highCount = findings.filter((f) => f.severity === 'HIGH' && f.status === 'OPEN').length;
-  const totalFindings = findings.length;
+  const vulnerabilities=findings.filter(isVulnerability);
+  const counts=findingCounts(findings);
+  const criticalCount = vulnerabilities.filter((f) => f.severity === 'CRITICAL' && f.status === 'OPEN').length;
+  const highCount = vulnerabilities.filter((f) => f.severity === 'HIGH' && f.status === 'OPEN').length;
+  const totalFindings = vulnerabilities.length;
 
-  const topRiskGroups = isDemoMode ? [
-    { key: '1', group: '金融支付核心', riskScore: 92, openVulns: 2, owner: '张三' },
-    { key: '2', group: '用户与鉴权中台', riskScore: 68, openVulns: 1, owner: '李四' },
-    { key: '3', group: '大数据分析平台', riskScore: 35, openVulns: 0, owner: '赵六' },
-  ] : Array.from(new Set(findings.map(f=>f.businessGroup).filter(Boolean))).map((group,index)=>{
-    const items=findings.filter(f=>f.businessGroup===group&&!['FALSE_POSITIVE','FIXED'].includes(f.status));
+  const topRiskGroups = Array.from(new Set(vulnerabilities.map(f=>f.businessGroup).filter(Boolean))).map((group,index)=>{
+    const items=vulnerabilities.filter(f=>f.businessGroup===group&&!['FALSE_POSITIVE','FIXED'].includes(f.status));
     return {key:String(index+1),group,riskScore:Math.min(100,items.reduce((sum,f)=>sum+({CRITICAL:30,HIGH:20,MEDIUM:10,LOW:3,INFO:1}[f.severity]),0)),openVulns:items.length,owner:items[0]?.owner||'—'};
   }).sort((a,b)=>b.riskScore-a.riskScore).slice(0,5);
 
@@ -46,6 +45,7 @@ export const DashboardPage: React.FC = () => {
         icon={<SafetyOutlined />}
       />
 
+      <Card title="检测结果口径"><Space wrap><Tag color="red">漏洞总数 {counts.vulnerabilities}</Tag><Tag color="blue">登录入口 {counts.loginEntries}</Tag><Tag>历史类型未核实 {counts.unknown}</Tag><Tag color="orange">版本推断 {counts.version}</Tag><Tag color="green">已验证 {counts.verified}</Tag><Tag>弱口令：本次未启用该检测项</Tag></Space><Typography.Paragraph type="secondary" style={{marginTop:12,marginBottom:0}}>漏洞总数仅含系统漏洞与 Web 漏洞。登录入口单独统计；缺少类型的历史记录不纳入漏洞总数。已验证指原理验证或确定性配置检查。</Typography.Paragraph></Card>
       {/* 关键统计卡片 */}
       <Row gutter={[16, 16]}>
         <Col xs={24} sm={12} lg={6}>
@@ -152,9 +152,9 @@ export const DashboardPage: React.FC = () => {
                   <Text type="danger" strong>
                     严重 (Critical)
                   </Text>
-                  <span>{findings.filter((f) => f.severity === 'CRITICAL').length} / {totalFindings}</span>
+                  <span>{vulnerabilities.filter((f) => f.severity === 'CRITICAL').length} / {totalFindings}</span>
                 </div>
-                <Progress percent={totalFindings ? Math.round(findings.filter((f) => f.severity === 'CRITICAL').length / totalFindings * 100) : 0} strokeColor="#ff4d4f" showInfo={false} />
+                <Progress percent={totalFindings ? Math.round(vulnerabilities.filter((f) => f.severity === 'CRITICAL').length / totalFindings * 100) : 0} strokeColor="#ff4d4f" showInfo={false} />
               </div>
 
               <div>
@@ -162,9 +162,9 @@ export const DashboardPage: React.FC = () => {
                   <Text style={{ color: '#fa8c16' }} strong>
                     高危 (High)
                   </Text>
-                  <span>{findings.filter((f) => f.severity === 'HIGH').length} / {totalFindings}</span>
+                  <span>{vulnerabilities.filter((f) => f.severity === 'HIGH').length} / {totalFindings}</span>
                 </div>
-                <Progress percent={totalFindings ? Math.round(findings.filter((f) => f.severity === 'HIGH').length / totalFindings * 100) : 0} strokeColor="#fa8c16" showInfo={false} />
+                <Progress percent={totalFindings ? Math.round(vulnerabilities.filter((f) => f.severity === 'HIGH').length / totalFindings * 100) : 0} strokeColor="#fa8c16" showInfo={false} />
               </div>
 
               <div>
@@ -172,9 +172,9 @@ export const DashboardPage: React.FC = () => {
                   <Text style={{ color: '#faad14' }} strong>
                     中危 (Medium)
                   </Text>
-                  <span>{findings.filter((f) => f.severity === 'MEDIUM').length} / {totalFindings}</span>
+                  <span>{vulnerabilities.filter((f) => f.severity === 'MEDIUM').length} / {totalFindings}</span>
                 </div>
-                <Progress percent={totalFindings ? Math.round(findings.filter((f) => f.severity === 'MEDIUM').length / totalFindings * 100) : 0} strokeColor="#faad14" showInfo={false} />
+                <Progress percent={totalFindings ? Math.round(vulnerabilities.filter((f) => f.severity === 'MEDIUM').length / totalFindings * 100) : 0} strokeColor="#faad14" showInfo={false} />
               </div>
 
               <div>
@@ -182,11 +182,11 @@ export const DashboardPage: React.FC = () => {
                   <Text style={{ color: '#1677ff' }} strong>
                     低危 (Low)
                   </Text>
-                  <span>{findings.filter((f) => f.severity === 'LOW').length} / {totalFindings}</span>
+                  <span>{vulnerabilities.filter((f) => f.severity === 'LOW').length} / {totalFindings}</span>
                 </div>
-                <Progress percent={totalFindings ? Math.round(findings.filter((f) => f.severity === 'LOW').length / totalFindings * 100) : 0} strokeColor="#1677ff" showInfo={false} />
+                <Progress percent={totalFindings ? Math.round(vulnerabilities.filter((f) => f.severity === 'LOW').length / totalFindings * 100) : 0} strokeColor="#1677ff" showInfo={false} />
               </div>
-              <div><Text>信息 (Info)：{findings.filter(f=>f.severity==='INFO').length} / {totalFindings}</Text><Progress percent={totalFindings?Math.round(findings.filter(f=>f.severity==='INFO').length/totalFindings*100):0} showInfo={false}/></div>
+              <div><Text>信息 (Info)：{vulnerabilities.filter(f=>f.severity==='INFO').length} / {totalFindings}</Text><Progress percent={totalFindings?Math.round(vulnerabilities.filter(f=>f.severity==='INFO').length/totalFindings*100):0} showInfo={false}/></div>
             </div>
           </Card>
         </Col>

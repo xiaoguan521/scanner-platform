@@ -46,7 +46,7 @@ func TestSelectPortsRejectsInvalidOrOversizedConfiguration(t *testing.T) {
 }
 
 func TestSelectPortsAllowsFullTCPPortRange(t *testing.T) {
-	ports, err := SelectPorts(Config{Preset: PresetCustom, Ranges: []Range{{Start: 1, End: 65535}}})
+	ports, err := SelectPorts(Config{Preset: PresetCustom, Ranges: []Range{{Start: 1, End: 65535}}, FullConfirmed: true})
 	if err != nil || len(ports) != 65535 || ports[0] != 1 || ports[len(ports)-1] != 65535 {
 		t.Fatalf("full port range count=%d first/last=%v err=%v", len(ports), ports, err)
 	}
@@ -180,4 +180,49 @@ func contains(values []int, want int) bool {
 		}
 	}
 	return false
+}
+
+func TestPoliciesConfirmationAndConfigurablePorts(t *testing.T) {
+	for _, config := range []Config{{Preset: PresetFull}, {Preset: PresetCustom, Ranges: []Range{{1, 32767}, {32768, 65535}}}, {Preset: PresetFull, Exclusions: []Range{{80, 80}}}} {
+		if _, err := SelectPorts(config); !errors.Is(err, ErrInvalidConfig) {
+			t.Fatalf("full scan without confirmation accepted: %+v", config)
+		}
+	}
+	ports, err := SelectPorts(Config{Preset: PresetRegistered, RegisteredPorts: []int{18888, 80, 80}, Exclusions: []Range{{80, 80}}})
+	if err != nil || !reflect.DeepEqual(ports, []int{18888}) {
+		t.Fatal(ports, err)
+	}
+	ports, err = SelectPorts(Config{Preset: PresetCommon, CommonPorts: []int{22, 8118}})
+	if err != nil || !reflect.DeepEqual(ports, []int{22, 8118}) {
+		t.Fatal(ports, err)
+	}
+	for _, config := range []Config{{Intensity: "unbounded"}, {CommonPorts: []int{0}}, {Preset: PresetRegistered}, {IdentificationMaxAttempts: 4}, {QuarantineThreshold: 4}} {
+		if _, err := SelectPorts(config); err == nil {
+			t.Fatalf("invalid policy accepted: %+v", config)
+		}
+	}
+	gentle, _ := PolicyFor(Config{Preset: PresetFull})
+	standard, _ := PolicyFor(Config{})
+	aggressive, _ := PolicyFor(Config{Intensity: IntensityAggressive})
+	if gentle.Concurrency >= standard.Concurrency || standard.Concurrency >= aggressive.Concurrency || gentle.Rate >= standard.Rate || standard.Rate >= aggressive.Rate || gentle.Timeout <= aggressive.Timeout {
+		t.Fatal(gentle, standard, aggressive)
+	}
+}
+
+func FuzzSelectPorts(f *testing.F) {
+	f.Add(1, 65535, true)
+	f.Add(80, 81, false)
+	f.Fuzz(func(t *testing.T, start, end int, confirm bool) {
+		ports, err := SelectPorts(Config{Preset: PresetCustom, Ranges: []Range{{start, end}}, FullConfirmed: confirm})
+		if err == nil {
+			if len(ports) == 0 || len(ports) > MaxPorts {
+				t.Fatal("unbounded selection")
+			}
+			for i, p := range ports {
+				if p < 1 || p > 65535 || i > 0 && p <= ports[i-1] {
+					t.Fatal("invalid selected port")
+				}
+			}
+		}
+	})
 }

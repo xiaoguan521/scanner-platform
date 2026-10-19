@@ -43,6 +43,9 @@ func fetchRootLimit(ctx context.Context, raw string, timeout int, maxBody int64)
 	if _, err := numericTarget(u.Host); err != nil {
 		return capturedResponse{}, err
 	}
+	if err := takeHTTPRequest(ctx, u.Host); err != nil {
+		return capturedResponse{}, err
+	}
 	transport := &http.Transport{Proxy: nil, TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, DialContext: (&net.Dialer{Timeout: time.Duration(timeout) * time.Second}).DialContext} // Scanner accepts self-signed test services; no credentials are sent.
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: time.Duration(timeout) * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
@@ -156,6 +159,9 @@ func ParseZAP(data []byte, targets []string) ([]taskflow.Detection, error) {
 				Name        string `json:"name"`
 				Risk        string `json:"riskcode"`
 				Description string `json:"desc"`
+				Solution    string `json:"solution"`
+				Reference   string `json:"reference"`
+				CWE         string `json:"cweid"`
 				Instances   []struct {
 					URI string `json:"uri"`
 				} `json:"instances"`
@@ -200,7 +206,12 @@ func ParseZAP(data []byte, targets []string) ([]taskflow.Detection, error) {
 					path = "/"
 				}
 				description := regexp.MustCompile(`<[^>]+>`).ReplaceAllString(alert.Description, " ")
-				out = append(out, taskflow.Detection{Engine: "zap", TemplateID: alert.ID, Target: target, Title: safeText(alert.Name, 500), Severity: risk, MatchedPath: path, Description: safeText(strings.TrimSpace(description), 4000)})
+				out = append(out, taskflow.Detection{RiskType: "web", DetectMethod: "configuration", Confidence: "high", Solution: safeText(regexp.MustCompile(`<[^>]+>`).ReplaceAllString(alert.Solution, " "), 4000), References: []string{safeText(regexp.MustCompile(`<[^>]+>`).ReplaceAllString(alert.Reference, " "), 2000)}, VulnCategory: func() string {
+					if alert.CWE != "" {
+						return "CWE-" + safeText(alert.CWE, 30)
+					}
+					return "配置不当"
+				}(), Evidence: "被动检查指定页面的 HTTP 响应；未执行登录或利用。", ContentLanguage: "original", Engine: "zap", TemplateID: alert.ID, Target: target, Title: safeText(alert.Name, 500), Severity: risk, MatchedPath: path, Description: safeText(strings.TrimSpace(description), 4000)})
 				if len(out) > 2000 {
 					return nil, fmt.Errorf("too many findings")
 				}
