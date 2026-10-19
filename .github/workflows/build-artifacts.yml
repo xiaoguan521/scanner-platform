@@ -158,7 +158,7 @@ jobs:
           set -euo pipefail
           cp docs/offline-package.md build_output/README.md
           mkdir -p build_output/docs build_output/tools
-          cp docs/engines.md docs/linux-server-scan.md build_output/docs/
+          cp docs/engines.md docs/linux-server-scan.md docs/offline-vulnerability-data.md build_output/docs/
           cp scripts/collect_linux_inputs.py build_output/tools/
           mkdir -p build_output/runtime/inputs build_output/vuln-data
 
@@ -236,6 +236,6 @@ jobs:
           body: |
             Early-development packages for local, single-host validation.
             Each supported archive contains the Server, Updater, Worker, Server-mode web UI, and SHA-256-pinned Nuclei, Trivy, and ZAP engines. The archive also contains a quickstart README and checksum sidecar.
-            Trivy databases and rule releases are kept separate. Use sec-updater --prepare-engines --with-java-db on a network-connected preparation machine, then copy the complete vuln-data directory to an offline host. This prepares the built-in Nuclei HTTP baseline and Trivy vulnerability/Java databases; it does not install the full upstream Nuclei template library.
+            Vulnerability data is available from the manually triggered Build Offline Vulnerability Data workflow as a separate downloadable artifact. It includes the built-in Nuclei HTTP baseline and Trivy vulnerability/Java databases; it does not install the full upstream Nuclei template library.
             ZAP requires Java 17 or newer on PATH. The local Server, Worker, and Updater currently communicate over loopback; these packages are not a hardened multi-host production deployment.
             Publish this draft only after reviewing the validation record and target-platform requirements.

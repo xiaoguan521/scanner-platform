@@ -6,7 +6,9 @@ GitHub Actions 的 `Build & Release Artifacts` 工作流提供 Linux amd64/arm64
 
 ## 准备漏洞库
 
-程序压缩包不包含规则发布目录和 Trivy 数据库。先在可联网且架构与目标包相同的机器上解压，然后运行：
+程序压缩包不包含规则发布目录和 Trivy 数据库。可在本机手动准备，也可以在 GitHub Actions 中运行 `Build Offline Vulnerability Data` 工作流下载独立数据包。操作步骤、校验方式和当前覆盖范围见[离线漏洞库下载包](offline-vulnerability-data.md)。
+
+本机准备时，在可联网的机器上解压平台程序包，然后运行：
 
 ```bash
 ./sec-updater --prepare-engines --with-java-db

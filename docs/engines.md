@@ -20,7 +20,7 @@ make engines-java # 检查 JAR/WAR/EAR 时额外准备 Java 索引；大库流�
 make dev       # 启动网页、Server、Worker、Updater
 ```
 
-不想在目标机安装 Go/Node.js 时，可在 GitHub Actions 手动运行 `Build & Release Artifacts`，下载对应平台的整机包。压缩包包含平台程序、`web/dist`、锁定版本的 Nuclei/Trivy/ZAP 及其版本/许可证元数据；Linux arm64、amd64，macOS arm64、amd64 和 Windows amd64 均有包。当前锁定的引擎未提供 Windows arm64 资产，因此该架构不打包。规则与漏洞库单独准备、拷贝和启动步骤见[离线平台包说明](offline-package.md)。ZAP 需要目标机预装 Java 17 或更高版本。
+不想在目标机安装 Go/Node.js 时，可在 GitHub Actions 手动运行 `Build & Release Artifacts`，下载对应平台的整机包。压缩包包含平台程序、`web/dist`、锁定版本的 Nuclei/Trivy/ZAP 及其版本/许可证元数据；Linux arm64、amd64，macOS arm64、amd64 和 Windows amd64 均有包。当前锁定的引擎未提供 Windows arm64 资产，因此该架构不打包。漏洞库可通过独立的 `Build Offline Vulnerability Data` 工作流手动生成并下载，详见[离线漏洞库下载包](offline-vulnerability-data.md)。ZAP 需要目标机预装 Java 17 或更高版本。
 
 打开 `http://127.0.0.1:8080`，首次设置管理员。已完成安装时直接 `make dev`。默认规则目录 `vuln-data/`，输入目录 `runtime/inputs/`。漏洞库解压后较大，连同 Updater 下载缓存、Worker 私有缓存建议预留至少 6 GiB。`make engines` 需要互联网；已有程序和完整规则库时扫描不进行规则更新。
 
