@@ -134,7 +134,7 @@ jobs:
           test -s build_output/bin/zap/zap-2.17.0.jar
           test -s build_output/bin/nuclei.installed.json
           test -s build_output/bin/trivy.installed.json
-          test -s build_output/bin/zap/zap.installed.json
+          test -s build_output/bin/zap.installed.json
 
       - name: Download reviewed frontend bundle
         uses: actions/download-artifact@v4
