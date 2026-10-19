@@ -291,8 +291,8 @@ paths:
     patch:
       tags:
       - assets
-      summary: Update owner, business group and unapproved port requests
-      description: Only admin or security_engineer. Asset address and kind are immutable.
+      summary: Update asset address, owner, business group and port requests
+      description: Only admin or security_engineer. Changing a host IP revokes related scope grants and clears its reachability result; port decisions are reset.
       security:
       - sessionCookie: []
       parameters:
@@ -323,6 +323,84 @@ paths:
                 "$ref": "#/components/schemas/Asset"
         '400':
           description: Invalid metadata or port request
+        '403':
+          description: Insufficient role
+        '404':
+          description: No matching asset
+        '409':
+          description: Duplicate asset address
+    delete:
+      tags:
+      - assets
+      summary: Delete an asset without authorization records
+      description: Only admin or security_engineer. Revoke and delete related scopes first.
+      security:
+      - sessionCookie: []
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema:
+          type: string
+          enum:
+          - XMLHttpRequest
+      responses:
+        '200':
+          description: Asset deleted
+        '403':
+          description: Insufficient role
+        '404':
+          description: No matching asset
+        '409':
+          description: Asset still has related authorization records
+  "/api/v1/assets/{id}/reachability-check":
+    post:
+      tags:
+      - assets
+      summary: Send one bounded ICMP echo to a registered numeric host IP
+      description: Only admin or security_engineer. One echo request with a 2.5 second timeout. No response does not prove the host is offline.
+      security:
+      - sessionCookie: []
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema:
+          type: string
+          enum:
+          - XMLHttpRequest
+      responses:
+        '200':
+          description: Reachability hint
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - status
+                - checkedAt
+                properties:
+                  status:
+                    type: string
+                    enum:
+                    - REACHABLE
+                    - NO_RESPONSE
+                    - CHECK_FAILED
+                  checkedAt:
+                    type: string
+                    format: date-time
+        '400':
+          description: Asset is not a registered host
         '403':
           description: Insufficient role
         '404':
@@ -372,6 +450,56 @@ paths:
           description: No matching asset
         '409':
           description: Port is already requested, skipped, or quarantined
+  "/api/v1/assets/{id}/port-requests/batch":
+    post:
+      tags:
+      - assets
+      summary: Submit a batch of discovered ports as individual unapproved requests
+      description: Only admin or security_engineer. Accepts 1–1024 unique ports atomically. Does not grant scan permission; an ops approver must review every port.
+      security:
+      - sessionCookie: []
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema:
+          type: string
+          enum:
+          - XMLHttpRequest
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - ports
+              properties:
+                ports:
+                  type: array
+                  minItems: 1
+                  maxItems: 1024
+                  uniqueItems: true
+                  items:
+                    type: integer
+                    minimum: 1
+                    maximum: 65535
+      responses:
+        '201':
+          description: All ports are now pending review
+        '400':
+          description: Invalid port request
+        '403':
+          description: Insufficient role
+        '404':
+          description: No matching asset
+        '409':
+          description: At least one port is already requested, skipped, or quarantined; no request is inserted
   "/api/v1/port-quarantines":
     get:
       summary: Authenticated local port-quarantines
@@ -451,6 +579,101 @@ paths:
           type: string
           enum:
           - XMLHttpRequest
+  "/api/v1/scopes/{id}":
+    put:
+      tags:
+      - approvals
+      summary: Edit a scope request and return it to pending review
+      description: Admin or security_engineer only; any old approval is cleared.
+      security:
+      - sessionCookie: []
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema:
+          type: string
+          enum:
+          - XMLHttpRequest
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/ScopeApplication"
+      responses:
+        '200':
+          description: Updated pending scope request
+        '403':
+          description: Insufficient role
+        '404':
+          description: No matching scope
+        '409':
+          description: Scope is no longer editable
+    delete:
+      tags:
+      - approvals
+      summary: Delete a non-approved scope record
+      description: An approved scope must first be revoked.
+      security:
+      - sessionCookie: []
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema:
+          type: string
+          enum:
+          - XMLHttpRequest
+      responses:
+        '200':
+          description: Scope record deleted
+        '403':
+          description: Insufficient role
+        '404':
+          description: No matching scope
+        '409':
+          description: Approved scope must be revoked before deletion
+  "/api/v1/scopes/{id}/revoke":
+    post:
+      tags:
+      - approvals
+      summary: Revoke an approved scope
+      description: Admin, security_engineer or ops_approver; does not delete the audit record.
+      security:
+      - sessionCookie: []
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema:
+          type: string
+          enum:
+          - XMLHttpRequest
+      responses:
+        '200':
+          description: Scope is revoked
+        '403':
+          description: Insufficient role
+        '404':
+          description: No matching scope
+        '409':
+          description: Scope is not currently approved
   "/api/v1/scopes/{id}/review":
     post:
       tags:
@@ -833,6 +1056,41 @@ paths:
           enum:
           - XMLHttpRequest
   "/api/v1/schedules/{id}":
+    put:
+      summary: Update a schedule definition
+      description: Replaces the schedule inputs and next run while preserving enabled state and history.
+      responses:
+        '200':
+          description: Updated schedule
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Schedule"
+        '400':
+          description: Invalid schedule
+        '404':
+          description: No matching schedule
+      security:
+      - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/Schedule"
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema:
+          type: string
+          enum:
+          - XMLHttpRequest
     patch:
       summary: Enable/disable a schedule
       responses:
@@ -851,6 +1109,28 @@ paths:
                   type: boolean
               required:
               - enabled
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema:
+          type: string
+          enum:
+          - XMLHttpRequest
+    delete:
+      summary: Delete a schedule and stop future triggers
+      responses:
+        '200':
+          description: Schedule deleted; existing tasks and findings are preserved
+        '404':
+          description: No matching schedule
+      security:
+      - sessionCookie: []
       parameters:
       - in: path
         name: id
@@ -1345,10 +1625,14 @@ components:
     EditAssetRequest:
       type: object
       required:
+      - address
       - businessGroup
       - owner
       - requestedPorts
       properties:
+        address:
+          type: string
+          description: Numeric host IP or registry path; a changed host IP revokes related scope grants.
         businessGroup:
           type: string
           maxLength: 100
@@ -1452,6 +1736,17 @@ components:
         owner:
           type: string
         createdAt:
+          type: string
+          format: date-time
+        reachabilityStatus:
+          type: string
+          enum:
+          - UNCHECKED
+          - REACHABLE
+          - NO_RESPONSE
+          - CHECK_FAILED
+          description: ICMP reachability hint; NO_RESPONSE does not prove the host is offline.
+        reachabilityCheckedAt:
           type: string
           format: date-time
         ports:
@@ -1689,6 +1984,7 @@ components:
             - synthetic
             - zap
             - port-probe
+            - auto
         status:
           type: string
           enum:
@@ -1747,7 +2043,7 @@ components:
           "$ref": "#/components/schemas/PortProbeConfig"
         portProbePorts:
           type: array
-          maxItems: 1024
+          maxItems: 65535
           items:
             type: integer
             minimum: 1
@@ -1755,9 +2051,20 @@ components:
           description: Exact validated port list dispatched by Server.
         portProbeResults:
           type: array
-          maxItems: 1024
+          maxItems: 65535
           items:
             "$ref": "#/components/schemas/PortProbeResult"
+        serviceResults:
+          type: array
+          items:
+            "$ref": "#/components/schemas/ServiceResult"
+        customRuleCount:
+          type: integer
+          minimum: 0
+          maximum: 20
+        systemScanStatus:
+          type: string
+          description: Fixed Worker result status for optional local SSH package collection; never contains credentials or raw remote output.
         error:
           type: string
     Finding:
@@ -1995,6 +2302,26 @@ components:
           minimum: 1
           maximum: 65535
           description: A TCP connection succeeded; no service data was collected.
+    ServiceResult:
+      type: object
+      required:
+      - port
+      - kind
+      properties:
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        scheme:
+          type: string
+          enum:
+          - http
+          - https
+        kind:
+          type: string
+          enum:
+          - HTTP
+          - OTHER
     TaskInput:
       type: object
       properties:
@@ -2020,6 +2347,7 @@ components:
           - trivy
           - zap
           - port-probe
+          - auto
         scheme:
           type: string
           enum:
@@ -2041,10 +2369,17 @@ components:
           description: Required for a single-asset port-probe task; resolved by Server to its registered numeric IP.
         portProbe:
           "$ref": "#/components/schemas/PortProbeConfig"
+          description: Used by auto/port-probe. The Worker receives the exact Server-resolved list.
+        customRuleIds:
+          type: array
+          maxItems: 20
+          uniqueItems: true
+          items:
+            type: string
       required:
       - synthetic
       - targets
-      description: Choose synthetic=true, nuclei/zap with scheme and approved registered targets, trivy with a local Worker input path/kind, or port-probe with one registered assetId and an opsApproved bounded TCP plan. Port probes use at most 1024 ports, return open candidates only, and never authorize vulnerability scans. No host discovery, CIDR expansion, UDP probes, remote image pull, SSH or active ZAP scans.
+      description: Choose synthetic=true, nuclei/zap with approved registered targets, trivy with a local Worker input path/kind, port-probe for TCP connectivity only, or auto with one registered assetId and an opsApproved bounded TCP plan. Auto runs read-only HTTP(S) checks against open ports within that exact plan; it may run the embedded one-shot Linux package collector only when the Worker has a matching local SSH profile and the configured SSH port is selected and open. SSH credentials and host keys never pass through Server. SSH uses strict local known_hosts validation and public-key authentication only. No host discovery, CIDR expansion, UDP probes, remote image pulls, password authentication, brute force or active ZAP scans.
     Schedule:
       allOf:
       - "$ref": "#/components/schemas/TaskInput"
@@ -2202,6 +2537,6 @@ components:
             "$ref": "#/components/schemas/Detection"
         portProbeResults:
           type: array
-          maxItems: 1024
+          maxItems: 65535
           items:
             "$ref": "#/components/schemas/PortProbeResult"

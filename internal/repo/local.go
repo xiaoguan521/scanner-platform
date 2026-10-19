@@ -33,6 +33,10 @@ type taskDetails struct {
 	Owners       map[string]targetOwner     `json:"owners"`
 	ProbePorts   []int                      `json:"probePorts,omitempty"`
 	ProbeResults []taskflow.PortProbeResult `json:"probeResults,omitempty"`
+	VulnPorts    []int                      `json:"vulnerabilityPorts,omitempty"`
+	CustomRules  [][]byte                   `json:"customRules,omitempty"`
+	Services     []taskflow.ServiceResult   `json:"services,omitempty"`
+	SystemStatus string                     `json:"systemScanStatus,omitempty"`
 	Deadline     string                     `json:"deadline"`
 	RuleVersion  string                     `json:"ruleVersion"`
 	Error        string                     `json:"error,omitempty"`
@@ -69,6 +73,7 @@ func (s *RuntimeStore) initLocal(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS local_nodes(id TEXT PRIMARY KEY,data TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS local_rule_bundles(version TEXT PRIMARY KEY,data TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS rule_jobs(id TEXT PRIMARY KEY,status TEXT NOT NULL,data TEXT NOT NULL,bundle BLOB,created_at TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS custom_rules(id TEXT PRIMARY KEY,data TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL,updated_at TEXT NOT NULL)`,
 	} {
 		if _, err := s.db.ExecContext(ctx, q); err != nil {
 			return err
@@ -113,6 +118,8 @@ func resolveTargets(ctx context.Context, tx *sql.Tx, in taskflow.TaskInput) ([]s
 		return []string{in.InputPath}, detail, nil
 	} else if in.Engine == "port-probe" {
 		return resolvePortProbe(ctx, tx, in, detail)
+	} else if in.Engine == "auto" {
+		return resolveAutoScan(ctx, tx, in, detail)
 	} else if (in.Engine != "nuclei" && in.Engine != "zap") || (in.Scheme != "http" && in.Scheme != "https") || in.InputPath != "" || in.InputKind != "" {
 		return nil, detail, ErrInvalidTask
 	}
@@ -249,6 +256,21 @@ UNION SELECT port FROM port_quarantine WHERE asset_id=? AND status='ACTIVE'`, in
 	return []string{address}, detail, nil
 }
 
+func resolveAutoScan(ctx context.Context, tx *sql.Tx, in taskflow.TaskInput, detail taskDetails) ([]string, taskDetails, error) {
+	if in.AssetID == "" || in.InputPath != "" || in.InputKind != "" || in.Scheme != "" || len(in.Targets) > 1 || len(in.CustomRuleIDs) > 20 {
+		return nil, detail, ErrInvalidTask
+	}
+	targets, resolved, err := resolvePortProbe(ctx, tx, in, detail)
+	if err != nil {
+		return nil, resolved, err
+	}
+	// The caller explicitly confirmed authorization for this single registered
+	// IP and the selected bounded TCP range. Only open ports from this exact list
+	// can proceed to the safe HTTP check.
+	resolved.VulnPorts = append([]int{}, resolved.ProbePorts...)
+	return targets, resolved, nil
+}
+
 func logLocal(ctx context.Context, tx *sql.Tx, actor, action, kind, id, detail string) error {
 	// Standalone repository tests do not initialize account tables.
 	var exists int
@@ -267,6 +289,10 @@ func createLocalTask(ctx context.Context, tx *sql.Tx, in taskflow.TaskInput, act
 	targets, detail, err := resolveTargets(ctx, tx, in)
 	if err != nil {
 		return taskflow.Task{}, err
+	}
+	detail.CustomRules, err = customTemplates(ctx, tx, detail.Input)
+	if err != nil {
+		return taskflow.Task{}, fmt.Errorf("load custom scan rules: %w", err)
 	}
 	status := "PENDING"
 	_, allowed, err := scheduler.AllowedUntil(in.TimeWindows, now)
@@ -301,12 +327,18 @@ func createLocalTask(ctx context.Context, tx *sql.Tx, in taskflow.TaskInput, act
 		if json.Unmarshal([]byte(catalog), &bundle) != nil || !bundle.Integrity {
 			return taskflow.Task{}, ErrInvalidTask
 		}
-		supported := false
-		for _, engine := range bundle.Engines {
-			supported = supported || engine == in.Engine
+		requiredEngines := []string{in.Engine}
+		if in.Engine == "auto" {
+			requiredEngines = []string{"nuclei", "trivy"}
 		}
-		if !supported {
-			return taskflow.Task{}, fmt.Errorf("%w: 当前规则包不包含所选引擎", ErrInvalidTask)
+		supported := make(map[string]bool, len(bundle.Engines))
+		for _, engine := range bundle.Engines {
+			supported[engine] = true
+		}
+		for _, requiredEngine := range requiredEngines {
+			if !supported[requiredEngine] {
+				return taskflow.Task{}, fmt.Errorf("%w: 当前规则包缺少自动综合扫描所需的 %s 引擎或漏洞库", ErrInvalidTask, requiredEngine)
+			}
 		}
 	}
 	data, _ := json.Marshal(detail)
@@ -425,6 +457,81 @@ func (s *RuntimeStore) SaveSchedule(ctx context.Context, in taskflow.Schedule, a
 	return in, tx.Commit()
 }
 
+func (s *RuntimeStore) UpdateSchedule(ctx context.Context, id string, in taskflow.Schedule, actor string) (taskflow.Schedule, error) {
+	if id == "" || in.Engine == "port-probe" {
+		return in, ErrInvalidTask
+	}
+	due, err := time.Parse(time.RFC3339, in.NextRun)
+	if err != nil || !due.After(time.Now()) || due.After(time.Now().Add(366*24*time.Hour)) || len(strings.TrimSpace(in.Name)) == 0 || len(in.Name) > 100 || in.IntervalMinutes < 0 || in.IntervalMinutes > 525600 {
+		return in, ErrInvalidTask
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return in, err
+	}
+	defer tx.Rollback()
+	var raw string
+	var current taskflow.Schedule
+	if err := tx.QueryRowContext(ctx, "SELECT data FROM task_schedules WHERE id=?", id).Scan(&raw); errors.Is(err, sql.ErrNoRows) {
+		return in, ErrTaskConflict
+	} else if err != nil {
+		return in, err
+	}
+	if err := json.Unmarshal([]byte(raw), &current); err != nil {
+		return in, err
+	}
+	_, detail, err := resolveTargets(ctx, tx, in.TaskInput)
+	if err != nil {
+		return in, err
+	}
+	in.TaskInput = detail.Input
+	in.ID = id
+	in.Enabled = current.Enabled
+	in.CreatedBy = current.CreatedBy
+	in.LastTaskID = current.LastTaskID
+	in.LastError = ""
+	in.NextRun = due.UTC().Format(time.RFC3339Nano)
+	data, err := json.Marshal(in)
+	if err != nil {
+		return in, err
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE task_schedules SET data=? WHERE id=?", string(data), id); err != nil {
+		return in, err
+	}
+	if err := logLocal(ctx, tx, actor, "update_schedule", "schedule", id, ""); err != nil {
+		return in, err
+	}
+	if err := tx.Commit(); err != nil {
+		return in, err
+	}
+	return in, nil
+}
+
+func (s *RuntimeStore) DeleteSchedule(ctx context.Context, id, actor string) error {
+	if strings.TrimSpace(id) == "" {
+		return ErrInvalidTask
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var exists int
+	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM task_schedules WHERE id=?", id).Scan(&exists); err != nil {
+		return err
+	}
+	if exists == 0 {
+		return ErrTaskConflict
+	}
+	if err := logLocal(ctx, tx, actor, "delete_schedule", "schedule", id, ""); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM task_schedules WHERE id=?", id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *RuntimeStore) ListSchedules(ctx context.Context) ([]taskflow.Schedule, error) {
 	rows, err := s.db.QueryContext(ctx, "SELECT data FROM task_schedules ORDER BY id")
 	if err != nil {
@@ -502,6 +609,9 @@ func (s *RuntimeStore) Tick(ctx context.Context, now time.Time) error {
 		var original string
 		if err := tx.QueryRowContext(ctx, "SELECT data FROM task_schedules WHERE id=?", item.ID).Scan(&original); err != nil {
 			tx.Rollback()
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
 			return err
 		}
 		var latest taskflow.Schedule

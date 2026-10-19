@@ -22,10 +22,10 @@ const (
 	PresetCommon          = "common"
 	PresetCustom          = "custom"
 	PresetCommonAndCustom = "common-and-custom"
-	MaxPorts              = 1024
+	MaxPorts              = 65535
 	MaxRanges             = 128
 	ProbeTimeout          = 700 * time.Millisecond
-	ProbeConcurrency      = 4
+	ProbeConcurrency      = 64
 )
 
 type Range struct {
@@ -52,7 +52,7 @@ func CommonPorts() []int {
 }
 
 // SelectPorts validates a configuration, applies exclusions, and returns a
-// sorted list capped at MaxPorts. Ranges are inclusive.
+// sorted TCP port list. Ranges are inclusive and may cover the full port space.
 func SelectPorts(config Config) ([]int, error) {
 	preset := config.Preset
 	if preset == "" {

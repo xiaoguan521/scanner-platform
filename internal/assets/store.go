@@ -19,20 +19,23 @@ var (
 	ErrNotFound      = errors.New("asset not found")
 	ErrPortRequested = errors.New("port already requested")
 	ErrPortExcluded  = errors.New("port is skipped or quarantined")
+	ErrInUse         = errors.New("asset is referenced by authorization records")
 )
 
 type Asset struct {
-	ID               string `json:"id"`
-	Kind             string `json:"kind"`
-	Address          string `json:"address"`
-	ResolvedIP       string `json:"resolvedIp,omitempty"`
-	BusinessGroup    string `json:"businessGroup"`
-	Owner            string `json:"owner"`
-	CreatedAt        string `json:"createdAt"`
-	Ports            []Port `json:"ports"`
-	RequestedPorts   []int  `json:"requestedPorts"`
-	QuarantinedPorts []int  `json:"quarantinedPorts"`
-	SkippedPorts     []int  `json:"skippedPorts"`
+	ID                    string `json:"id"`
+	Kind                  string `json:"kind"`
+	Address               string `json:"address"`
+	ResolvedIP            string `json:"resolvedIp,omitempty"`
+	BusinessGroup         string `json:"businessGroup"`
+	Owner                 string `json:"owner"`
+	CreatedAt             string `json:"createdAt"`
+	Ports                 []Port `json:"ports"`
+	RequestedPorts        []int  `json:"requestedPorts"`
+	QuarantinedPorts      []int  `json:"quarantinedPorts"`
+	SkippedPorts          []int  `json:"skippedPorts"`
+	ReachabilityStatus    string `json:"reachabilityStatus"`
+	ReachabilityCheckedAt string `json:"reachabilityCheckedAt,omitempty"`
 }
 type Port struct {
 	Port   int    `json:"port"`
@@ -48,6 +51,7 @@ type Input struct {
 	SkippedPorts   []int  `json:"skippedPorts"`
 }
 type Edit struct {
+	Address        string `json:"address"`
 	BusinessGroup  string `json:"businessGroup"`
 	Owner          string `json:"owner"`
 	RequestedPorts []int  `json:"requestedPorts"`
@@ -58,14 +62,27 @@ type Repository interface {
 	Create(context.Context, string, Input) (Asset, error)
 	Update(context.Context, string, string, Edit) (Asset, error)
 	RequestPort(context.Context, string, string, int) error
+	RequestPorts(context.Context, string, string, []int) error
+	Delete(context.Context, string, string) error
+	CheckReachability(context.Context, string, string) (Reachability, error)
 }
-type Store struct{ db *sql.DB }
+type Store struct {
+	db     *sql.DB
+	pinger Pinger
+}
 
-const maxPorts = 50
+const (
+	maxPorts            = 50
+	MaxPortRequestBatch = 1024
+)
 
 var imageRepoPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,254}$`)
 
 func New(db *sql.DB) (*Store, error) {
+	return NewWithPinger(db, systemPing)
+}
+
+func NewWithPinger(db *sql.DB, pinger Pinger) (*Store, error) {
 	if db == nil {
 		return nil, fmt.Errorf("%w: missing database", ErrInvalid)
 	}
@@ -132,12 +149,19 @@ func New(db *sql.DB) (*Store, error) {
     reviewed_by TEXT NOT NULL REFERENCES users(id),
     approval_ticket TEXT NOT NULL,reviewed_at TEXT NOT NULL,
     review_note TEXT NOT NULL DEFAULT '',PRIMARY KEY(asset_id,port))`,
+		`CREATE TABLE IF NOT EXISTS asset_reachability (
+	    asset_id TEXT PRIMARY KEY REFERENCES assets(id) ON DELETE CASCADE,
+	    status TEXT NOT NULL CHECK(status IN ('REACHABLE','NO_RESPONSE','CHECK_FAILED')),
+	    checked_at TEXT NOT NULL)`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			return nil, fmt.Errorf("initialize asset schema: %w", err)
 		}
 	}
-	return &Store{db: db}, nil
+	if pinger == nil {
+		pinger = systemPing
+	}
+	return &Store{db: db, pinger: pinger}, nil
 }
 func validFields(group, owner string) bool {
 	return len(strings.TrimSpace(group)) >= 1 && len(strings.TrimSpace(group)) <= 100 &&
@@ -233,22 +257,31 @@ func storeRequests(ctx context.Context, tx *sql.Tx, id, actor string, ports []in
 }
 func decodeAsset(row interface{ Scan(...any) error }) (Asset, error) {
 	var a Asset
-	var resolved sql.NullString
-	err := row.Scan(&a.ID, &a.Kind, &a.Address, &resolved, &a.BusinessGroup, &a.Owner, &a.CreatedAt)
+	var resolved, checkedAt sql.NullString
+	err := row.Scan(&a.ID, &a.Kind, &a.Address, &resolved, &a.BusinessGroup, &a.Owner, &a.CreatedAt,
+		&a.ReachabilityStatus, &checkedAt)
 	if err != nil {
 		return a, err
 	}
 	if resolved.Valid {
 		a.ResolvedIP = resolved.String
 	}
+	if checkedAt.Valid {
+		a.ReachabilityCheckedAt = checkedAt.String
+	}
 	a.Ports = []Port{}
 	a.RequestedPorts = []int{}
 	a.QuarantinedPorts = []int{}
 	a.SkippedPorts = []int{}
+	if a.ReachabilityStatus == "" {
+		a.ReachabilityStatus = "UNCHECKED"
+	}
 	return a, nil
 }
 
-const columns = "id,kind,address,resolved_ip,business_group,owner,created_at"
+const columns = `id,kind,address,resolved_ip,business_group,owner,created_at,
+COALESCE((SELECT status FROM asset_reachability r WHERE r.asset_id=assets.id),'UNCHECKED'),
+COALESCE((SELECT checked_at FROM asset_reachability r WHERE r.asset_id=assets.id),'')`
 
 func (s *Store) List(ctx context.Context) ([]Asset, error) {
 	rows, err := s.db.QueryContext(ctx, "SELECT "+columns+" FROM assets ORDER BY created_at DESC,id")
@@ -383,6 +416,10 @@ func skippedPortRecords(ports []int) []Port {
 	return out
 }
 func (s *Store) Update(ctx context.Context, actor, id string, edit Edit) (Asset, error) {
+	if strings.TrimSpace(actor) == "" || strings.TrimSpace(id) == "" {
+		return Asset{}, ErrInvalid
+	}
+	edit.Address = strings.TrimSpace(edit.Address)
 	edit.BusinessGroup = strings.TrimSpace(edit.BusinessGroup)
 	edit.Owner = strings.TrimSpace(edit.Owner)
 	if !validFields(edit.BusinessGroup, edit.Owner) {
@@ -404,12 +441,37 @@ func (s *Store) Update(ctx context.Context, actor, id string, edit Edit) (Asset,
 	if err != nil {
 		return Asset{}, err
 	}
-	normalized, err := normalize(Input{Kind: a.Kind, Address: a.Address, BusinessGroup: edit.BusinessGroup, Owner: edit.Owner, RequestedPorts: ports, SkippedPorts: edit.SkippedPorts})
+	if edit.Address == "" {
+		edit.Address = a.Address
+	}
+	normalized, err := normalize(Input{Kind: a.Kind, Address: edit.Address, BusinessGroup: edit.BusinessGroup, Owner: edit.Owner, RequestedPorts: ports, SkippedPorts: edit.SkippedPorts})
 	if err != nil {
 		return Asset{}, err
 	}
-	if _, err := tx.ExecContext(ctx, "UPDATE assets SET business_group=?,owner=? WHERE id=?", edit.BusinessGroup, edit.Owner, id); err != nil {
+	resolved := ""
+	if normalized.Kind == "host" {
+		resolved = normalized.Address
+	}
+	addressChanged := normalized.Address != a.Address
+	if _, err := tx.ExecContext(ctx, "UPDATE assets SET address=?,resolved_ip=?,business_group=?,owner=? WHERE id=?", normalized.Address, resolved, edit.BusinessGroup, edit.Owner, id); err != nil {
+		if strings.Contains(err.Error(), "UNIQUE") {
+			return Asset{}, ErrDuplicate
+		}
 		return Asset{}, err
+	}
+	if addressChanged {
+		var hasScopeTable int
+		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='authorized_scopes'").Scan(&hasScopeTable); err != nil {
+			return Asset{}, err
+		}
+		if hasScopeTable > 0 {
+			if _, err := tx.ExecContext(ctx, "UPDATE authorized_scopes SET status='REVOKED' WHERE asset_id=? AND status IN ('PENDING','APPROVED')", id); err != nil {
+				return Asset{}, err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, "DELETE FROM asset_reachability WHERE asset_id=?", id); err != nil {
+			return Asset{}, err
+		}
 	}
 	// Any metadata or request edit invalidates all earlier port decisions.
 	// Never retain stale approvals when an asset is resubmitted.
@@ -437,6 +499,12 @@ func (s *Store) Update(ctx context.Context, actor, id string, edit Edit) (Asset,
 	}
 	a.BusinessGroup = edit.BusinessGroup
 	a.Owner = edit.Owner
+	a.Address = normalized.Address
+	a.ResolvedIP = resolved
+	if addressChanged {
+		a.ReachabilityStatus = "UNCHECKED"
+		a.ReachabilityCheckedAt = ""
+	}
 	a.RequestedPorts = ports
 	a.Ports = skippedPortRecords(normalized.SkippedPorts)
 	a.SkippedPorts = normalized.SkippedPorts
@@ -490,4 +558,161 @@ func (s *Store) RequestPort(ctx context.Context, actor, id string, port int) err
 		return err
 	}
 	return tx.Commit()
+}
+
+// RequestPorts creates a set of individual approval requests atomically. It
+// does not approve any port or grant scan access.
+func (s *Store) RequestPorts(ctx context.Context, actor, id string, ports []int) error {
+	if strings.TrimSpace(actor) == "" || id == "" || len(ports) == 0 || len(ports) > MaxPortRequestBatch {
+		return ErrInvalid
+	}
+	seen := make(map[int]struct{}, len(ports))
+	for _, port := range ports {
+		if port < 1 || port > 65535 {
+			return ErrInvalid
+		}
+		if _, exists := seen[port]; exists {
+			return ErrInvalid
+		}
+		seen[port] = struct{}{}
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var kind string
+	if err := tx.QueryRowContext(ctx, "SELECT kind FROM assets WHERE id=?", id).Scan(&kind); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	if kind != "host" {
+		return ErrInvalid
+	}
+	requested, err := tx.PrepareContext(ctx, "SELECT count(*) FROM asset_port_requests WHERE asset_id=? AND port=?")
+	if err != nil {
+		return err
+	}
+	defer requested.Close()
+	excluded, err := tx.PrepareContext(ctx, `SELECT
+ (SELECT count(*) FROM asset_ports WHERE asset_id=? AND port=? AND kind='EXCLUDED_PROXY')+
+ (SELECT count(*) FROM port_quarantine WHERE asset_id=? AND port=? AND status='ACTIVE')`)
+	if err != nil {
+		return err
+	}
+	defer excluded.Close()
+	for _, port := range ports {
+		var exists int
+		if err := requested.QueryRowContext(ctx, id, port).Scan(&exists); err != nil {
+			return err
+		}
+		if exists > 0 {
+			return ErrPortRequested
+		}
+		if err := excluded.QueryRowContext(ctx, id, port, id, port).Scan(&exists); err != nil {
+			return err
+		}
+		if exists > 0 {
+			return ErrPortExcluded
+		}
+	}
+	if err := storeRequests(ctx, tx, id, actor, ports); err != nil {
+		return err
+	}
+	if err := auditTx(ctx, tx, actor, "request_asset_ports", id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// Delete removes an asset only after its authorization records are removed or
+// revoked and deleted, so an active authorization cannot silently outlive it.
+func (s *Store) Delete(ctx context.Context, actor, id string) error {
+	if strings.TrimSpace(actor) == "" || strings.TrimSpace(id) == "" {
+		return ErrInvalid
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var exists int
+	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM assets WHERE id=?", id).Scan(&exists); err != nil {
+		return err
+	}
+	if exists == 0 {
+		return ErrNotFound
+	}
+	var hasScopeTable int
+	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='authorized_scopes'").Scan(&hasScopeTable); err != nil {
+		return err
+	}
+	if hasScopeTable > 0 {
+		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM authorized_scopes WHERE asset_id=?", id).Scan(&exists); err != nil {
+			return err
+		}
+		if exists > 0 {
+			return ErrInUse
+		}
+	}
+	if err := auditTx(ctx, tx, actor, "delete_asset", id); err != nil {
+		return err
+	}
+	for _, table := range []string{"asset_reachability", "port_quarantine", "asset_ports", "asset_port_reviews", "asset_port_request_authors", "asset_port_requests"} {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE asset_id=?", id); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM assets WHERE id=?", id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// CheckReachability sends exactly one bounded ICMP echo to the registered host.
+// NO_RESPONSE is informational; ICMP may be blocked while TCP services remain reachable.
+func (s *Store) CheckReachability(ctx context.Context, actor, id string) (Reachability, error) {
+	if strings.TrimSpace(actor) == "" || strings.TrimSpace(id) == "" {
+		return Reachability{}, ErrInvalid
+	}
+	var address, kind string
+	if err := s.db.QueryRowContext(ctx, "SELECT address,kind FROM assets WHERE id=?", id).Scan(&address, &kind); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Reachability{}, ErrNotFound
+		}
+		return Reachability{}, err
+	}
+	if kind != "host" {
+		return Reachability{}, ErrInvalid
+	}
+	status := "CHECK_FAILED"
+	reachable, pingErr := s.pinger(ctx, address)
+	if pingErr == nil {
+		status = "NO_RESPONSE"
+		if reachable {
+			status = "REACHABLE"
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return Reachability{}, err
+	}
+	checkedAt := time.Now().UTC().Format(time.RFC3339Nano)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Reachability{}, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO asset_reachability(asset_id,status,checked_at) VALUES(?,?,?)
+ ON CONFLICT(asset_id) DO UPDATE SET status=excluded.status,checked_at=excluded.checked_at`, id, status, checkedAt); err != nil {
+		return Reachability{}, err
+	}
+	if err := auditTx(ctx, tx, actor, "check_asset_reachability", id); err != nil {
+		return Reachability{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Reachability{}, err
+	}
+	return Reachability{Status: status, CheckedAt: checkedAt}, nil
 }

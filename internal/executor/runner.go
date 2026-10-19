@@ -16,6 +16,7 @@ import (
 
 	"scanner-platform/internal/portprobe"
 	"scanner-platform/internal/rules"
+	"scanner-platform/internal/sshcollect"
 	"scanner-platform/internal/taskflow"
 )
 
@@ -30,6 +31,7 @@ type Runner struct {
 	InputsDir     string
 	Rate          int
 	Timeout       int
+	SSHCollector  *sshcollect.Collector
 	versionOnce   sync.Once
 	versionErrors map[string]error
 }

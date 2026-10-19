@@ -21,6 +21,7 @@ type Worker struct {
 	Interval     time.Duration
 	Execute      func(context.Context, Task) ([]Detection, error)
 	ProbePorts   func(context.Context, Task) ([]PortProbeResult, error)
+	AutoScan     func(context.Context, Task) (AutoResult, error)
 	EngineStatus func() []EngineStatus
 }
 
@@ -107,6 +108,8 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 	}()
 	var detections []Detection
 	var portProbeResults []PortProbeResult
+	var serviceResults []ServiceResult
+	var systemScanStatus string
 	if task.Synthetic {
 		err = waitFor(workCtx, w.Delay)
 	} else if len(task.Engines) == 1 && task.Engines[0] == "port-probe" {
@@ -114,6 +117,14 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 			err = fmt.Errorf("TCP port probe is not configured")
 		} else {
 			portProbeResults, err = w.ProbePorts(workCtx, task)
+		}
+	} else if len(task.Engines) == 1 && task.Engines[0] == "auto" {
+		if w.AutoScan == nil {
+			err = fmt.Errorf("automatic scan is not configured")
+		} else {
+			var result AutoResult
+			result, err = w.AutoScan(workCtx, task)
+			detections, portProbeResults, serviceResults, systemScanStatus = result.Findings, result.Ports, result.Services, result.SystemStatus
 		}
 	} else if w.Execute == nil {
 		err = fmt.Errorf("scanning engines are not configured")
@@ -127,6 +138,10 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 		if len(task.Engines) == 1 && task.Engines[0] == "port-probe" {
 			report.Findings = nil
 			report.PortProbeResults = portProbeResults
+		} else if len(task.Engines) == 1 && task.Engines[0] == "auto" {
+			report.PortProbeResults = portProbeResults
+			report.ServiceResults = serviceResults
+			report.SystemScanStatus = systemScanStatus
 		}
 	}
 	if err != nil {

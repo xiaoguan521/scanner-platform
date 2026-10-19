@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"scanner-platform/internal/executor"
+	"scanner-platform/internal/sshcollect"
 	"syscall"
 	"time"
 
@@ -31,6 +32,7 @@ func RunWorker(args []string, stdout, stderr io.Writer) int {
 	rulesDir := flags.String("rules-dir", "vuln-data", "Read-only rule directory")
 	runtimeDir := flags.String("runtime-dir", "runtime/worker", "Private engine runtime and cache")
 	inputsDir := flags.String("inputs-dir", "runtime/inputs", "Local Trivy input root")
+	sshConfigPath := flags.String("ssh-config", "", "Worker-local SSH public-key profile and known-hosts JSON")
 	rate := flags.Int("rate", 5, "Nuclei requests per second (1-100)")
 	timeout := flags.Int("request-timeout", 10, "HTTP request timeout in seconds (1-60)")
 	status := flags.Bool("status", false, "Print worker mode and exit")
@@ -42,6 +44,14 @@ func RunWorker(args []string, stdout, stderr io.Writer) int {
 	}
 	absolute := func(path string) string { p, _ := filepath.Abs(path); return p }
 	runner := &executor.Runner{BinDir: absolute(*binDir), RulesDir: absolute(*rulesDir), RuntimeDir: absolute(*runtimeDir), InputsDir: absolute(*inputsDir), Rate: *rate, Timeout: *timeout}
+	if *sshConfigPath != "" {
+		collector, err := sshcollect.Load(absolute(*sshConfigPath))
+		if err != nil {
+			fmt.Fprintln(stderr, "invalid --ssh-config; see docs/ssh-collection.md")
+			return 2
+		}
+		runner.SSHCollector = collector
+	}
 	if *status {
 		_ = json.NewEncoder(stdout).Encode(map[string]any{"role": "sec-worker", "engines": runner.Status()})
 		return 0
@@ -60,7 +70,7 @@ func RunWorker(args []string, stdout, stderr io.Writer) int {
 	defer stop()
 	worker := taskflow.Worker{
 		ServerURL: *server, ID: *id, Interval: *interval, Delay: *delay,
-		Execute: runner.Execute, ProbePorts: runner.ProbePorts, EngineStatus: runner.Status,
+		Execute: runner.Execute, ProbePorts: runner.ProbePorts, AutoScan: runner.AutoScan, EngineStatus: runner.Status,
 		Client: &http.Client{
 			Timeout:       5 * time.Second,
 			Transport:     &http.Transport{Proxy: nil},

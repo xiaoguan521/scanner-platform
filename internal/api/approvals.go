@@ -54,6 +54,54 @@ func registerApprovalHandlers(mux *http.ServeMux, users account.Repository, repo
 		}
 		respond(w, 201, item)
 	}))
+	mux.HandleFunc("PUT /api/v1/scopes/{id}", auth(users, false, func(w http.ResponseWriter, r *http.Request, u account.User) {
+		if !mayRequest(u) {
+			bad(w, 403, "forbidden")
+			return
+		}
+		if !mutationGuard(w, r) {
+			return
+		}
+		var in approvals.ScopeInput
+		if !readJSON(w, r, &in) {
+			return
+		}
+		item, err := repo.UpdateScope(r.Context(), u.ID, r.PathValue("id"), in)
+		if err != nil {
+			handleError(w, err)
+			return
+		}
+		respond(w, 200, item)
+	}))
+	mux.HandleFunc("DELETE /api/v1/scopes/{id}", auth(users, false, func(w http.ResponseWriter, r *http.Request, u account.User) {
+		if !mayRequest(u) {
+			bad(w, 403, "forbidden")
+			return
+		}
+		if !mutationGuard(w, r) {
+			return
+		}
+		if err := repo.DeleteScope(r.Context(), u.ID, r.PathValue("id")); err != nil {
+			handleError(w, err)
+			return
+		}
+		respond(w, 200, map[string]string{"status": "DELETED"})
+	}))
+	mux.HandleFunc("POST /api/v1/scopes/{id}/revoke", auth(users, false, func(w http.ResponseWriter, r *http.Request, u account.User) {
+		if !mayRequest(u) && !mayReview(u) {
+			bad(w, 403, "forbidden")
+			return
+		}
+		if !mutationGuard(w, r) {
+			return
+		}
+		item, err := repo.RevokeScope(r.Context(), u.ID, r.PathValue("id"))
+		if err != nil {
+			handleError(w, err)
+			return
+		}
+		respond(w, 200, item)
+	}))
 	mux.HandleFunc("POST /api/v1/scopes/{id}/review", auth(users, false, func(w http.ResponseWriter, r *http.Request, u account.User) {
 		if !mayReview(u) {
 			bad(w, 403, "forbidden")

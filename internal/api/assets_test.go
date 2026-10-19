@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"scanner-platform/internal/account"
@@ -22,7 +23,7 @@ func TestAssetAPIRequiresLoginAndScopedWrites(t *testing.T) {
 	if err := a.InitAdmin(context.Background(), "testadmin", "Safe-Sample-Password-12"); err != nil {
 		t.Fatal(err)
 	}
-	store, err := assets.New(a.SQLDB())
+	store, err := assets.NewWithPinger(a.SQLDB(), func(context.Context, string) (bool, error) { return true, nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,12 +66,25 @@ func TestAssetAPIRequiresLoginAndScopedWrites(t *testing.T) {
 	if len(asset.Ports) != 0 || len(asset.RequestedPorts) != 2 {
 		t.Fatalf("unsafe grant: %+v", asset)
 	}
+	reachability := send("POST", "/api/v1/assets/"+asset.ID+"/reachability-check", "", c, true)
+	if reachability.Code != http.StatusOK || !strings.Contains(reachability.Body.String(), `"status":"REACHABLE"`) {
+		t.Fatalf("reachability check: %d %s", reachability.Code, reachability.Body.String())
+	}
 	requestedPort := send("POST", "/api/v1/assets/"+asset.ID+"/port-requests", `{"port":8080}`, c, true)
 	if requestedPort.Code != 201 {
 		t.Fatalf("request discovered candidate: %d %s", requestedPort.Code, requestedPort.Body.String())
 	}
 	if duplicate := send("POST", "/api/v1/assets/"+asset.ID+"/port-requests", `{"port":8080}`, c, true); duplicate.Code != 409 {
 		t.Fatalf("duplicate port request: %d", duplicate.Code)
+	}
+	if batch := send("POST", "/api/v1/assets/"+asset.ID+"/port-requests/batch", `{"ports":[8081,8082]}`, c, true); batch.Code != 201 {
+		t.Fatalf("batch port request: %d %s", batch.Code, batch.Body.String())
+	}
+	if duplicateBatch := send("POST", "/api/v1/assets/"+asset.ID+"/port-requests/batch", `{"ports":[8083,8081]}`, c, true); duplicateBatch.Code != 409 {
+		t.Fatalf("duplicate batch request was accepted: %d %s", duplicateBatch.Code, duplicateBatch.Body.String())
+	}
+	if afterConflict := send("POST", "/api/v1/assets/"+asset.ID+"/port-requests", `{"port":8083}`, c, true); afterConflict.Code != 201 {
+		t.Fatalf("failed batch partially inserted a request: %d %s", afterConflict.Code, afterConflict.Body.String())
 	}
 	skippedAsset := send("POST", "/api/v1/assets", `{"kind":"host","address":"192.0.2.21","businessGroup":"QA","owner":"Engineer","requestedPorts":[8443],"skippedPorts":[8443]}`, c, true)
 	if skippedAsset.Code != 201 {
@@ -95,9 +109,20 @@ func TestAssetAPIRequiresLoginAndScopedWrites(t *testing.T) {
 	if got := send("GET", "/api/v1/assets", "", c, false); got.Code != 200 {
 		t.Fatalf("list: %d", got.Code)
 	}
-	updated := send("PATCH", "/api/v1/assets/"+asset.ID, `{"businessGroup":"New Group","owner":"Engineer","requestedPorts":[8443]}`, c, true)
+	updated := send("PATCH", "/api/v1/assets/"+asset.ID, `{"address":"192.0.2.22","businessGroup":"New Group","owner":"Engineer","requestedPorts":[8443]}`, c, true)
 	if updated.Code != 200 {
 		t.Fatalf("update: %d %s", updated.Code, updated.Body.String())
+	}
+	var updatedAsset assets.Asset
+	if err := json.Unmarshal(updated.Body.Bytes(), &updatedAsset); err != nil {
+		t.Fatal(err)
+	}
+	if updatedAsset.Address != "192.0.2.22" || updatedAsset.ReachabilityStatus != "UNCHECKED" || updatedAsset.ReachabilityCheckedAt != "" {
+		t.Fatalf("asset update returned stale address/reachability: %+v", updatedAsset)
+	}
+	duplicateAddress := send("PATCH", "/api/v1/assets/"+asset.ID, `{"address":"192.0.2.21","businessGroup":"New Group","owner":"Engineer","requestedPorts":[]}`, c, true)
+	if duplicateAddress.Code != http.StatusConflict {
+		t.Fatalf("duplicate address update: %d %s", duplicateAddress.Code, duplicateAddress.Body.String())
 	}
 	if got := send("PATCH", "/api/v1/assets/missing", `{"businessGroup":"QA","owner":"Engineer"}`, c, true); got.Code != 404 {
 		t.Fatalf("missing asset: %d", got.Code)
@@ -120,6 +145,9 @@ func TestAssetAPIRequiresLoginAndScopedWrites(t *testing.T) {
 	}
 	if got := send("PATCH", "/api/v1/assets/"+asset.ID, `{"businessGroup":"Bad","owner":"Bad"}`, vc, true); got.Code != 403 {
 		t.Fatalf("viewer edited asset: %d", got.Code)
+	}
+	if got := send("DELETE", "/api/v1/assets/"+asset.ID, "", vc, true); got.Code != 403 {
+		t.Fatalf("viewer deleted asset: %d", got.Code)
 	}
 	for _, tc := range []struct {
 		role     string
@@ -144,5 +172,11 @@ func TestAssetAPIRequiresLoginAndScopedWrites(t *testing.T) {
 	}
 	if got := send("GET", "/api/v1/port-quarantines", "", c, false); got.Code != 501 {
 		t.Fatalf("quarantine should remain unavailable: %d", got.Code)
+	}
+	if got := send("DELETE", "/api/v1/assets/"+asset.ID, "", c, true); got.Code != http.StatusOK {
+		t.Fatalf("asset delete: %d %s", got.Code, got.Body.String())
+	}
+	if got := send("GET", "/api/v1/assets", "", c, false); !strings.Contains(got.Body.String(), skipped.ID) || strings.Contains(got.Body.String(), asset.ID) {
+		t.Fatalf("asset delete did not update registry: %d %s", got.Code, got.Body.String())
 	}
 }

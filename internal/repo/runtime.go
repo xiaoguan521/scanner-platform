@@ -173,12 +173,22 @@ func readRuntimeTask(row rowScanner) (taskflow.Task, error) {
 	task.PortProbeConfig = detail.Input.PortProbe
 	task.PortProbePorts = detail.ProbePorts
 	task.PortProbeResults = detail.ProbeResults
+	task.VulnerabilityPorts = detail.VulnPorts
+	task.ServiceResults = detail.Services
+	task.SystemScanStatus = detail.SystemStatus
+	task.CustomTemplates = make([]json.RawMessage, 0, len(detail.CustomRules))
+	for _, template := range detail.CustomRules {
+		task.CustomTemplates = append(task.CustomTemplates, json.RawMessage(template))
+	}
+	task.CustomRuleCount = len(detail.CustomRules)
 	if detail.Input.Engine != "" && detail.Input.Engine != "synthetic" {
 		task.Synthetic = false
 		task.Engines = []string{detail.Input.Engine}
 		task.ScopeName = "显式目标扫描"
 		if detail.Input.Engine == "port-probe" {
 			task.ScopeName = "单台资产 TCP 端口探测"
+		} else if detail.Input.Engine == "auto" {
+			task.ScopeName = "单台资产自动端口与 HTTP 漏洞检查"
 		}
 	}
 	if task.SkippedTargets == nil {
@@ -257,6 +267,7 @@ func (s *RuntimeStore) claimRuntimeTask(ctx context.Context, worker string) (*ta
 				return nil, err
 			}
 			fresh.RuleVersion = detail.RuleVersion
+			fresh.CustomRules = detail.CustomRules
 			detail = fresh
 			encoded, _ := json.Marshal(targets)
 			if _, err := tx.ExecContext(ctx, "UPDATE scan_tasks SET targets=? WHERE id=?", string(encoded), id); err != nil {

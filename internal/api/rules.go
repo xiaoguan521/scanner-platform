@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"scanner-platform/internal/repo"
@@ -8,6 +9,51 @@ import (
 )
 
 func registerRuleHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui func(bool, http.HandlerFunc) http.HandlerFunc, actor func(*http.Request) string) {
+	mux.HandleFunc("GET /api/v1/custom-rules", ui(false, func(w http.ResponseWriter, r *http.Request) {
+		items, err := store.ListCustomRules(r.Context())
+		if !runtimeStoreError(w, err) {
+			runtimeJSON(w, 200, ListResponse[rules.CustomRule]{Items: items, Total: len(items)})
+		}
+	}))
+	writeCustomRule := func(w http.ResponseWriter, r *http.Request, create bool) {
+		var body rules.CustomRule
+		if !runtimeDecode(w, r, &body) {
+			return
+		}
+		if !create {
+			id := r.PathValue("id")
+			if body.ID != "" && body.ID != id {
+				bad(w, 400, "custom_rule_id_mismatch")
+				return
+			}
+			body.ID = id
+		}
+		item, err := store.SaveCustomRule(r.Context(), actor(r), body, create)
+		if errors.Is(err, repo.ErrInvalidCustomRule) {
+			bad(w, 400, "invalid_custom_rule")
+			return
+		}
+		if errors.Is(err, repo.ErrCustomRuleConflict) {
+			bad(w, http.StatusConflict, "custom_rule_conflict")
+			return
+		}
+		if !runtimeStoreError(w, err) {
+			code := http.StatusOK
+			if create {
+				code = http.StatusCreated
+			}
+			runtimeJSON(w, code, item)
+		}
+	}
+	mux.HandleFunc("POST /api/v1/custom-rules", ui(true, func(w http.ResponseWriter, r *http.Request) { writeCustomRule(w, r, true) }))
+	mux.HandleFunc("PUT /api/v1/custom-rules/{id}", ui(true, func(w http.ResponseWriter, r *http.Request) { writeCustomRule(w, r, false) }))
+	mux.HandleFunc("DELETE /api/v1/custom-rules/{id}", ui(true, func(w http.ResponseWriter, r *http.Request) {
+		if err := store.DeleteCustomRule(r.Context(), r.PathValue("id"), actor(r)); errors.Is(err, repo.ErrCustomRuleConflict) {
+			bad(w, http.StatusConflict, "custom_rule_conflict")
+		} else if !runtimeStoreError(w, err) {
+			runtimeJSON(w, 200, map[string]string{"status": "DELETED"})
+		}
+	}))
 	mux.HandleFunc("GET /api/v1/rules", ui(false, func(w http.ResponseWriter, r *http.Request) {
 		items, err := store.ListRules(r.Context())
 		if !runtimeStoreError(w, err) {

@@ -7,6 +7,7 @@ SCANNER_RULES=${SCANNER_RULES:-vuln-data}
 SCANNER_LOG_DIR=${SCANNER_LOG_DIR:-runtime}
 SCANNER_BIN=${SCANNER_BIN:-bin}
 SCANNER_INPUTS=${SCANNER_INPUTS:-runtime/inputs}
+SCANNER_SSH_CONFIG=${SCANNER_SSH_CONFIG:-}
 mkdir -p "$SCANNER_INPUTS"
 mkdir -p "$SCANNER_LOG_DIR" dist
 if [ "${SCANNER_SKIP_BUILD:-0}" != 1 ]; then
@@ -43,7 +44,11 @@ until curl --fail --silent "http://127.0.0.1:$SCANNER_PORT/readyz" >/dev/null; d
   sleep 0.1
 done
 if ! kill -0 "$server_pid" 2>/dev/null; then cat "$SCANNER_LOG_DIR/server.log"; exit 1; fi
-./dist/sec-worker --server "http://127.0.0.1:$SCANNER_PORT" --bin-dir "$SCANNER_BIN" --rules-dir "$SCANNER_RULES" --inputs-dir "$SCANNER_INPUTS" --runtime-dir "$SCANNER_LOG_DIR/worker" >"$SCANNER_LOG_DIR/worker.log" 2>&1 &
+worker_ssh_args=()
+if [[ -n "$SCANNER_SSH_CONFIG" ]]; then
+  worker_ssh_args+=(--ssh-config "$SCANNER_SSH_CONFIG")
+fi
+./dist/sec-worker --server "http://127.0.0.1:$SCANNER_PORT" --bin-dir "$SCANNER_BIN" --rules-dir "$SCANNER_RULES" --inputs-dir "$SCANNER_INPUTS" --runtime-dir "$SCANNER_LOG_DIR/worker" "${worker_ssh_args[@]}" >"$SCANNER_LOG_DIR/worker.log" 2>&1 &
 worker_pid=$!
 ./dist/sec-updater --server "http://127.0.0.1:$SCANNER_PORT" --rules-dir "$SCANNER_RULES" >"$SCANNER_LOG_DIR/updater.log" 2>&1 &
 updater_pid=$!

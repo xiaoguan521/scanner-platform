@@ -92,6 +92,19 @@ func TestLocalTargetsSchedulesAndCancellation(t *testing.T) {
 	if err := store.ToggleSchedule(ctx, schedule.ID, actor, false); err != nil {
 		t.Fatal(err)
 	}
+	updated, err := store.UpdateSchedule(ctx, schedule.ID, taskflow.Schedule{
+		Name: "Updated schedule", TaskInput: input,
+		NextRun: due.Add(time.Hour).Format(time.RFC3339), IntervalMinutes: 30,
+	}, actor)
+	if err != nil || updated.ID != schedule.ID || updated.Name != "Updated schedule" || updated.Enabled {
+		t.Fatalf("schedule update=%+v err=%v", updated, err)
+	}
+	if err := store.DeleteSchedule(ctx, schedule.ID, actor); err != nil {
+		t.Fatal(err)
+	}
+	if items, err := store.ListSchedules(ctx); err != nil || len(items) != 0 {
+		t.Fatalf("schedule delete left records: %+v err=%v", items, err)
+	}
 	if err := store.Tick(ctx, due.Add(20*time.Minute)); err != nil {
 		t.Fatal(err)
 	}

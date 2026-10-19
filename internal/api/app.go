@@ -337,12 +337,59 @@ func NewDevelopmentHandler(s account.Repository, assetStore assets.Repository, a
 				bad(w, 400, "invalid_asset")
 			case errors.Is(err, assets.ErrNotFound):
 				bad(w, 404, "not_found")
+			case errors.Is(err, assets.ErrDuplicate):
+				bad(w, 409, "asset_exists")
 			default:
 				bad(w, 500, "db_error")
 			}
 			return
 		}
 		respond(w, http.StatusOK, item)
+	}))
+	mux.HandleFunc("DELETE /api/v1/assets/{id}", auth(s, false, func(w http.ResponseWriter, r *http.Request, user account.User) {
+		if user.Role != "admin" && user.Role != "security_engineer" {
+			bad(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		if !mutationGuard(w, r) {
+			return
+		}
+		if err := assetStore.Delete(r.Context(), user.ID, r.PathValue("id")); err != nil {
+			switch {
+			case errors.Is(err, assets.ErrInvalid):
+				bad(w, http.StatusBadRequest, "invalid_asset")
+			case errors.Is(err, assets.ErrNotFound):
+				bad(w, http.StatusNotFound, "not_found")
+			case errors.Is(err, assets.ErrInUse):
+				bad(w, http.StatusConflict, "asset_in_use_remove_authorization_first")
+			default:
+				bad(w, http.StatusInternalServerError, "db_error")
+			}
+			return
+		}
+		respond(w, http.StatusOK, map[string]string{"status": "DELETED"})
+	}))
+	mux.HandleFunc("POST /api/v1/assets/{id}/reachability-check", auth(s, false, func(w http.ResponseWriter, r *http.Request, user account.User) {
+		if user.Role != "admin" && user.Role != "security_engineer" {
+			bad(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		if !mutationGuard(w, r) {
+			return
+		}
+		result, err := assetStore.CheckReachability(r.Context(), user.ID, r.PathValue("id"))
+		if err != nil {
+			switch {
+			case errors.Is(err, assets.ErrInvalid):
+				bad(w, http.StatusBadRequest, "host_asset_required")
+			case errors.Is(err, assets.ErrNotFound):
+				bad(w, http.StatusNotFound, "not_found")
+			default:
+				bad(w, http.StatusInternalServerError, "reachability_check_failed")
+			}
+			return
+		}
+		respond(w, http.StatusOK, result)
 	}))
 	mux.HandleFunc("POST /api/v1/assets/{id}/port-requests", auth(s, false, func(w http.ResponseWriter, r *http.Request, user account.User) {
 		if user.Role != "admin" && user.Role != "security_engineer" {
@@ -373,6 +420,39 @@ func NewDevelopmentHandler(s account.Repository, assetStore assets.Repository, a
 			return
 		}
 		respond(w, http.StatusCreated, map[string]any{"port": input.Port, "status": "PENDING"})
+	}))
+	mux.HandleFunc("POST /api/v1/assets/{id}/port-requests/batch", auth(s, false, func(w http.ResponseWriter, r *http.Request, user account.User) {
+		if user.Role != "admin" && user.Role != "security_engineer" {
+			bad(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		if !mutationGuard(w, r) {
+			return
+		}
+		var input struct {
+			Ports []int `json:"ports"`
+		}
+		if !readJSON(w, r, &input) {
+			return
+		}
+		if len(input.Ports) == 0 || len(input.Ports) > assets.MaxPortRequestBatch {
+			bad(w, http.StatusBadRequest, "invalid_port_request")
+			return
+		}
+		if err := assetStore.RequestPorts(r.Context(), user.ID, r.PathValue("id"), input.Ports); err != nil {
+			switch {
+			case errors.Is(err, assets.ErrInvalid):
+				bad(w, http.StatusBadRequest, "invalid_port_request")
+			case errors.Is(err, assets.ErrNotFound):
+				bad(w, http.StatusNotFound, "not_found")
+			case errors.Is(err, assets.ErrPortRequested), errors.Is(err, assets.ErrPortExcluded):
+				bad(w, http.StatusConflict, "port_request_conflict")
+			default:
+				bad(w, http.StatusInternalServerError, "db_error")
+			}
+			return
+		}
+		respond(w, http.StatusCreated, map[string]any{"requested": len(input.Ports), "status": "PENDING"})
 	}))
 	if len(approvalStores) > 0 && approvalStores[0] != nil {
 		registerApprovalHandlers(mux, s, approvalStores[0])

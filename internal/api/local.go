@@ -68,6 +68,16 @@ func registerLocalHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui func
 			runtimeJSON(w, 201, item)
 		}
 	}))
+	mux.HandleFunc("PUT /api/v1/schedules/{id}", ui(true, func(w http.ResponseWriter, r *http.Request) {
+		var body taskflow.Schedule
+		if !runtimeDecode(w, r, &body) {
+			return
+		}
+		item, err := store.UpdateSchedule(r.Context(), r.PathValue("id"), body, actor(r))
+		if !runtimeStoreError(w, err) {
+			runtimeJSON(w, 200, item)
+		}
+	}))
 	mux.HandleFunc("PATCH /api/v1/schedules/{id}", ui(true, func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Enabled *bool `json:"enabled"`
@@ -81,6 +91,11 @@ func registerLocalHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui func
 		}
 		if !runtimeStoreError(w, store.ToggleSchedule(r.Context(), r.PathValue("id"), actor(r), *body.Enabled)) {
 			runtimeJSON(w, 200, map[string]bool{"enabled": *body.Enabled})
+		}
+	}))
+	mux.HandleFunc("DELETE /api/v1/schedules/{id}", ui(true, func(w http.ResponseWriter, r *http.Request) {
+		if !runtimeStoreError(w, store.DeleteSchedule(r.Context(), r.PathValue("id"), actor(r))) {
+			runtimeJSON(w, 200, map[string]string{"status": "DELETED"})
 		}
 	}))
 	mux.HandleFunc("GET /api/v1/nodes", ui(false, func(w http.ResponseWriter, r *http.Request) {

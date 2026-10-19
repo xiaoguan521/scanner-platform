@@ -32,6 +32,10 @@ type capturedResponse struct {
 }
 
 func fetchRoot(ctx context.Context, raw string, timeout int) (capturedResponse, error) {
+	return fetchRootLimit(ctx, raw, timeout, 2<<20)
+}
+
+func fetchRootLimit(ctx context.Context, raw string, timeout int, maxBody int64) (capturedResponse, error) {
 	u, err := url.Parse(raw)
 	if err != nil || u.User != nil || u.Scheme != "http" && u.Scheme != "https" || u.Path != "" && u.Path != "/" || u.RawQuery != "" || u.Fragment != "" {
 		return capturedResponse{}, fmt.Errorf("only explicit root HTTP URLs are allowed")
@@ -53,12 +57,15 @@ func fetchRoot(ctx context.Context, raw string, timeout int) (capturedResponse, 
 		return capturedResponse{}, fmt.Errorf("root request failed")
 	}
 	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, (2<<20)+1))
+	if maxBody <= 0 {
+		return capturedResponse{}, fmt.Errorf("invalid response limit")
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxBody+1))
 	if err != nil {
 		return capturedResponse{}, fmt.Errorf("read root response failed")
 	}
-	if len(body) > 2<<20 {
-		return capturedResponse{}, fmt.Errorf("response exceeds 2 MiB; result incomplete")
+	if int64(len(body)) > maxBody {
+		return capturedResponse{}, fmt.Errorf("response exceeds configured limit; result incomplete")
 	}
 	return capturedResponse{URL: raw, Status: response.StatusCode, StatusText: http.StatusText(response.StatusCode), Headers: response.Header, Body: body, Duration: time.Since(start).Milliseconds()}, nil
 }

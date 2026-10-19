@@ -141,6 +141,22 @@ func (r *Runner) nuclei(ctx context.Context, task taskflow.Task, dir string) ([]
 	if count == 0 {
 		return nil, fmt.Errorf("no supported baseline JSON templates in pinned rules")
 	}
+	for _, data := range task.CustomTemplates {
+		t, err := ValidateTemplate(data)
+		if err != nil || t.Info.Author != "scanner-platform custom rule" || !strings.Contains(t.Info.Tags, "custom") {
+			return nil, fmt.Errorf("task contains an invalid custom read-only rule")
+		}
+		if _, err := os.Stat(filepath.Join(destination, t.ID+".json")); err == nil {
+			return nil, fmt.Errorf("duplicate custom template ID")
+		}
+		count++
+		if count > 120 {
+			return nil, fmt.Errorf("baseline and custom template limit exceeded")
+		}
+		if err := os.WriteFile(filepath.Join(destination, t.ID+".json"), data, 0600); err != nil {
+			return nil, err
+		}
+	}
 	targets := task.Chunks[0].Targets
 	urls := []string{}
 	for _, target := range targets {

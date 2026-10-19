@@ -63,6 +63,9 @@ type PortRequest struct {
 type Repository interface {
 	ListScopes(context.Context) ([]Scope, error)
 	RequestScope(context.Context, string, ScopeInput) (Scope, error)
+	UpdateScope(context.Context, string, string, ScopeInput) (Scope, error)
+	DeleteScope(context.Context, string, string) error
+	RevokeScope(context.Context, string, string) (Scope, error)
 	ReviewScope(context.Context, string, string, Decision) (Scope, error)
 	ListPortRequests(context.Context) ([]PortRequest, error)
 	ReviewPort(context.Context, string, string, int, Decision) (PortRequest, error)
@@ -210,6 +213,130 @@ func (s *Store) RequestScope(ctx context.Context, actor string, input ScopeInput
 		TimeWindows: in.TimeWindows, RequestedBy: actor, ApprovedBy: "", ApprovalTicket: "",
 		ExpiresAt: in.ExpiresAt, IsActive: false, Status: "PENDING", ReviewNote: ""}, nil
 }
+
+// UpdateScope replaces a request and resets its approval to PENDING. This
+// prevents edits to an approved time window from retaining the old approval.
+func (s *Store) UpdateScope(ctx context.Context, actor, id string, input ScopeInput) (Scope, error) {
+	if strings.TrimSpace(actor) == "" || strings.TrimSpace(id) == "" {
+		return Scope{}, ErrInvalid
+	}
+	in, err := normalizeScopeInput(input)
+	if err != nil {
+		return Scope{}, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Scope{}, err
+	}
+	defer tx.Rollback()
+	current, err := readScope(tx.QueryRowContext(ctx, "SELECT "+scopeFields+" FROM authorized_scopes WHERE id=?", id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Scope{}, ErrMissing
+	}
+	if err != nil {
+		return Scope{}, err
+	}
+	if current.Status != "PENDING" && current.Status != "APPROVED" {
+		return Scope{}, ErrConflict
+	}
+	var address, kind string
+	if err := tx.QueryRowContext(ctx, "SELECT address,kind FROM assets WHERE id=?", in.AssetID).Scan(&address, &kind); errors.Is(err, sql.ErrNoRows) {
+		return Scope{}, ErrMissing
+	} else if err != nil {
+		return Scope{}, err
+	}
+	if kind != "host" || net.ParseIP(address) == nil {
+		return Scope{}, ErrInvalid
+	}
+	windows, err := json.Marshal(in.TimeWindows)
+	if err != nil {
+		return Scope{}, err
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE authorized_scopes SET asset_id=?,cidr_or_host=?,max_targets=1,
+ time_windows=?,expires_at=?,status='PENDING',approved_by='',approval_ticket='',review_note=''
+ WHERE id=?`, in.AssetID, address, string(windows), in.ExpiresAt, id)
+	if err != nil {
+		return Scope{}, err
+	}
+	if err := audit(ctx, tx, actor, "update_scope_reset_approval", "scope", id); err != nil {
+		return Scope{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Scope{}, err
+	}
+	current.AssetID = in.AssetID
+	current.CIDROrHost = address
+	current.MaxTargets = 1
+	current.TimeWindows = in.TimeWindows
+	current.ExpiresAt = in.ExpiresAt
+	current.Status = "PENDING"
+	current.ApprovedBy = ""
+	current.ApprovalTicket = ""
+	current.ReviewNote = ""
+	current.IsActive = false
+	return current, nil
+}
+
+func (s *Store) DeleteScope(ctx context.Context, actor, id string) error {
+	if strings.TrimSpace(actor) == "" || strings.TrimSpace(id) == "" {
+		return ErrInvalid
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var status string
+	if err := tx.QueryRowContext(ctx, "SELECT status FROM authorized_scopes WHERE id=?", id).Scan(&status); errors.Is(err, sql.ErrNoRows) {
+		return ErrMissing
+	} else if err != nil {
+		return err
+	}
+	if status == "APPROVED" {
+		return ErrConflict
+	}
+	if err := audit(ctx, tx, actor, "delete_scope", "scope", id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM authorized_scopes WHERE id=?", id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) RevokeScope(ctx context.Context, actor, id string) (Scope, error) {
+	if strings.TrimSpace(actor) == "" || strings.TrimSpace(id) == "" {
+		return Scope{}, ErrInvalid
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Scope{}, err
+	}
+	defer tx.Rollback()
+	scope, err := readScope(tx.QueryRowContext(ctx, "SELECT "+scopeFields+" FROM authorized_scopes WHERE id=?", id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Scope{}, ErrMissing
+	}
+	if err != nil {
+		return Scope{}, err
+	}
+	if scope.Status != "APPROVED" {
+		return Scope{}, ErrConflict
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE authorized_scopes SET status='REVOKED' WHERE id=?", id); err != nil {
+		return Scope{}, err
+	}
+	if err := audit(ctx, tx, actor, "revoke_scope", "scope", id); err != nil {
+		return Scope{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Scope{}, err
+	}
+	scope.Status = "REVOKED"
+	scope.IsActive = false
+	return scope, nil
+}
+
 func (s *Store) ReviewScope(ctx context.Context, actor, id string, d Decision) (Scope, error) {
 	if id == "" || !validDecision(d) {
 		return Scope{}, ErrInvalid

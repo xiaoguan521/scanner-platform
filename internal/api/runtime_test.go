@@ -89,7 +89,7 @@ func TestRuntimeServesUIAndRejectsInvalidTaskRequests(t *testing.T) {
 	}
 }
 
-func TestRuntimeAcceptsBoundedPortProbePlan(t *testing.T) {
+func TestRuntimeAcceptsFullRangePortProbePlan(t *testing.T) {
 	accounts, err := account.New(filepath.Join(t.TempDir(), "platform.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -130,8 +130,23 @@ func TestRuntimeAcceptsBoundedPortProbePlan(t *testing.T) {
 			t.Fatalf("unexpected effective ports: %v", task.PortProbePorts)
 		}
 	}
-	tooWide := send(`{"synthetic":false,"engine":"port-probe","assetId":"` + asset.ID + `","portProbe":{"preset":"custom","ranges":[{"start":1,"end":1025}],"opsApproved":true},"targets":[],"timeWindows":[]}`)
+	fullRange := send(`{"synthetic":false,"engine":"port-probe","assetId":"` + asset.ID + `","portProbe":{"preset":"custom","ranges":[{"start":1,"end":65535}],"exclusions":[{"start":443,"end":443}],"opsApproved":true},"targets":[],"timeWindows":[]}`)
+	if fullRange.Code != http.StatusCreated {
+		t.Fatalf("full TCP port range rejected: %d %s", fullRange.Code, fullRange.Body.String())
+	}
+	if err := json.NewDecoder(fullRange.Body).Decode(&task); err != nil {
+		t.Fatal(err)
+	}
+	if len(task.PortProbePorts) != 65534 || task.PortProbePorts[0] != 1 || task.PortProbePorts[len(task.PortProbePorts)-1] != 65535 {
+		t.Fatalf("full range was not dispatched with its exclusion applied: count=%d first/last=%v", len(task.PortProbePorts), task.PortProbePorts)
+	}
+	for _, port := range task.PortProbePorts {
+		if port == 443 {
+			t.Fatal("excluded port 443 was dispatched")
+		}
+	}
+	tooWide := send(`{"synthetic":false,"engine":"port-probe","assetId":"` + asset.ID + `","portProbe":{"preset":"custom","ranges":[{"start":1,"end":65536}],"opsApproved":true},"targets":[],"timeWindows":[]}`)
 	if tooWide.Code != http.StatusBadRequest {
-		t.Fatalf("oversized port range accepted: %d %s", tooWide.Code, tooWide.Body.String())
+		t.Fatalf("invalid port range accepted: %d %s", tooWide.Code, tooWide.Body.String())
 	}
 }

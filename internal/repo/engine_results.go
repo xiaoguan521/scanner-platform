@@ -41,8 +41,29 @@ func (s *RuntimeStore) migrateFindings(ctx context.Context) error {
 	return tx.Commit()
 }
 
-func validDetection(d taskflow.Detection, task taskflow.Task) bool {
-	if len(task.Engines) != 1 || d.Engine != task.Engines[0] || len(d.TemplateID) == 0 || len(d.TemplateID) > 200 || len(d.Title) == 0 || len(d.Title) > 500 || len(d.Description) > 4000 || len(d.MatchedPath) > 1000 || len(d.Package) > 300 || len(d.InstalledVersion) > 200 || len(d.FixedVersion) > 1000 || len(d.ArtifactID) > 200 {
+func validDetection(d taskflow.Detection, task taskflow.Task, openResults []taskflow.PortProbeResult) bool {
+	if len(task.Engines) != 1 || len(d.TemplateID) == 0 || len(d.TemplateID) > 200 || len(d.Title) == 0 || len(d.Title) > 500 || len(d.Description) > 4000 || len(d.MatchedPath) > 1000 || len(d.Package) > 300 || len(d.InstalledVersion) > 200 || len(d.FixedVersion) > 1000 || len(d.ArtifactID) > 200 {
+		return false
+	}
+	if task.Engines[0] == "auto" {
+		if d.Engine != "nuclei" && d.Engine != "zap" && d.Engine != "trivy" {
+			return false
+		}
+		address, port, target, err := canonicalTarget(d.Target)
+		if err != nil || target != d.Target || address != task.Chunks[0].Targets[0] {
+			return false
+		}
+		allowed, open := false, false
+		for _, candidate := range task.VulnerabilityPorts {
+			allowed = allowed || candidate == port
+		}
+		for _, candidate := range openResults {
+			open = open || candidate.Port == port
+		}
+		if !allowed || !open {
+			return false
+		}
+	} else if d.Engine != task.Engines[0] {
 		return false
 	}
 	switch d.Severity {
@@ -51,14 +72,18 @@ func validDetection(d taskflow.Detection, task taskflow.Task) bool {
 		return false
 	}
 	targetOK := false
-	for _, target := range task.Chunks[0].Targets {
-		targetOK = targetOK || d.Target == target
+	if task.Engines[0] == "auto" {
+		targetOK = true
+	} else {
+		for _, target := range task.Chunks[0].Targets {
+			targetOK = targetOK || d.Target == target
+		}
 	}
 	return targetOK
 }
 
 func validPortProbeResults(results []taskflow.PortProbeResult, task taskflow.Task) bool {
-	if len(task.Engines) != 1 || task.Engines[0] != "port-probe" || task.AssetID == "" || len(task.Chunks) != 1 || len(task.Chunks[0].Targets) != 1 || len(task.PortProbePorts) == 0 || len(task.PortProbePorts) > portprobe.MaxPorts || len(results) > len(task.PortProbePorts) {
+	if len(task.Engines) != 1 || task.Engines[0] != "port-probe" && task.Engines[0] != "auto" || task.AssetID == "" || len(task.Chunks) != 1 || len(task.Chunks[0].Targets) != 1 || len(task.PortProbePorts) == 0 || len(task.PortProbePorts) > portprobe.MaxPorts || len(results) > len(task.PortProbePorts) {
 		return false
 	}
 	allowed := make(map[int]bool, len(task.PortProbePorts))
@@ -78,6 +103,47 @@ func validPortProbeResults(results []taskflow.PortProbeResult, task taskflow.Tas
 	return true
 }
 
+func validServiceResults(results []taskflow.ServiceResult, task taskflow.Task, open []taskflow.PortProbeResult) bool {
+	if task.Engines[0] != "auto" || len(results) != len(open) || len(results) > 256 {
+		return false
+	}
+	seen := map[int]bool{}
+	for _, result := range results {
+		if result.Port < 1 || seen[result.Port] || result.Kind != "HTTP" && result.Kind != "OTHER" || result.Kind == "HTTP" && result.Scheme != "http" && result.Scheme != "https" || result.Kind == "OTHER" && result.Scheme != "" {
+			return false
+		}
+		allowed, openPort := false, false
+		for _, port := range task.VulnerabilityPorts {
+			allowed = allowed || port == result.Port
+		}
+		for _, port := range open {
+			openPort = openPort || port.Port == result.Port
+		}
+		if !allowed || !openPort {
+			return false
+		}
+		seen[result.Port] = true
+	}
+	for _, port := range open {
+		if !seen[port.Port] {
+			return false
+		}
+	}
+	return true
+}
+
+func validSystemScanStatus(value string) bool {
+	switch value {
+	case taskflow.SystemScanNotConfigured, taskflow.SystemScanPortOutOfScope, taskflow.SystemScanPortClosed,
+		taskflow.SystemScanClientMissing, taskflow.SystemScanHostKeyMismatch, taskflow.SystemScanAuthFailed,
+		taskflow.SystemScanPythonMissing, taskflow.SystemScanCollectionFailed, taskflow.SystemScanInvalidSnapshot,
+		taskflow.SystemScanTrivyUnavailable, taskflow.SystemScanUnsupportedOS, taskflow.SystemScanTrivyFailed, taskflow.SystemScanCompleted:
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *RuntimeStore) completeEngineTask(ctx context.Context, report taskflow.Report) error {
 	if len(report.Findings) > 2000 || len(report.Error) > 500 {
 		return ErrInvalidTask
@@ -95,15 +161,23 @@ func (s *RuntimeStore) completeEngineTask(ctx context.Context, report taskflow.R
 		return ErrTaskConflict
 	}
 	portProbeTask := len(task.Engines) == 1 && task.Engines[0] == "port-probe"
+	autoTask := len(task.Engines) == 1 && task.Engines[0] == "auto"
+	if autoTask && !validSystemScanStatus(report.SystemScanStatus) || !autoTask && report.SystemScanStatus != "" {
+		return ErrInvalidTask
+	}
 	if portProbeTask {
-		if len(report.Findings) != 0 || !validPortProbeResults(report.PortProbeResults, task) {
+		if len(report.Findings) != 0 || len(report.ServiceResults) != 0 || !validPortProbeResults(report.PortProbeResults, task) {
 			return ErrInvalidTask
 		}
-	} else if len(report.PortProbeResults) != 0 {
+	} else if autoTask {
+		if !validPortProbeResults(report.PortProbeResults, task) || !validServiceResults(report.ServiceResults, task, report.PortProbeResults) {
+			return ErrInvalidTask
+		}
+	} else if len(report.PortProbeResults) != 0 || len(report.ServiceResults) != 0 {
 		return ErrInvalidTask
 	}
 	for _, d := range report.Findings {
-		if !validDetection(d, task) {
+		if !validDetection(d, task, report.PortProbeResults) {
 			return ErrInvalidTask
 		}
 	}
@@ -132,7 +206,7 @@ func (s *RuntimeStore) completeEngineTask(ctx context.Context, report taskflow.R
 	if report.Status == "FAILED" && len(report.Findings) != 0 {
 		return ErrInvalidTask
 	}
-	if report.Status == "FAILED" && len(report.PortProbeResults) != 0 {
+	if report.Status == "FAILED" && (len(report.PortProbeResults) != 0 || len(report.ServiceResults) != 0) {
 		return ErrInvalidTask
 	}
 	if report.Status == "COMPLETED" {
@@ -144,8 +218,10 @@ func (s *RuntimeStore) completeEngineTask(ctx context.Context, report taskflow.R
 		if err := json.Unmarshal([]byte(details), &detail); err != nil {
 			return err
 		}
-		if portProbeTask {
+		if portProbeTask || autoTask {
 			detail.ProbeResults = append([]taskflow.PortProbeResult{}, report.PortProbeResults...)
+			detail.Services = append([]taskflow.ServiceResult{}, report.ServiceResults...)
+			detail.SystemStatus = report.SystemScanStatus
 			encoded, err := json.Marshal(detail)
 			if err != nil {
 				return err
@@ -157,7 +233,7 @@ func (s *RuntimeStore) completeEngineTask(ctx context.Context, report taskflow.R
 		for _, d := range report.Findings {
 			identity := d.Target
 			matchedPath := d.MatchedPath
-			if d.Engine == "trivy" && task.InputKind == "rootfs" {
+			if d.Engine == "trivy" && (task.InputKind == "rootfs" || autoTask) {
 				// The stable input alias identifies the host; distro descriptions and
 				// temporary analyzer paths must not change an OS package fingerprint.
 				matchedPath = ""

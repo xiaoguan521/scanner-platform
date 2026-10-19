@@ -1,6 +1,6 @@
 # 扫描引擎接入与服务器验证
 
-已接入 Nuclei、Trivy 和 ZAP。只在创建任务时明确选择真实引擎后才执行；启动服务、登记资产、导入规则均不会自动扫描。引擎是独立子进程，Worker 不连接数据库。
+已接入 Nuclei、Trivy 和 ZAP，并提供“自动综合扫描”：对单台已登记主机，在用户明确填写并获批的 TCP 范围内并发探测，再自动检查范围内开放的 HTTP(S) 服务；若 Worker 配置匹配的本机 SSH profile，且 SSH 端口包含在本次范围内，还会一次性采集系统包数据库并用本地 Trivy 漏洞库分析。SSH 细节见[Worker 本机 SSH 采集](ssh-collection.md)。启动服务、登记资产、导入规则本身不会自动扫描。Worker 不连接数据库。
 
 | 引擎 | 固定版本 / 许可证 | 本机程序 | 当前用途 |
 |---|---|---|---|
@@ -53,7 +53,7 @@ runtime/inputs/deps/example-project/package-lock.json
 runtime/inputs/images/example-image.tar
 ```
 
-创建任务时选 Trivy，类型选“依赖目录”并填 `deps/example-project`，或者选“镜像归档”并填 `images/example-image.tar`。镜像归档由操作员使用 `docker save` 或 OCI 导出准备；Worker 不拉取镜像、不连接 Docker socket、不通过 SSH 读取服务器。输入路径必须位于配置根目录内，拒绝符号链接。
+创建离线 Trivy 任务时，类型选“依赖目录”并填 `deps/example-project`，或者选“镜像归档”并填 `images/example-image.tar`。镜像归档由操作员使用 `docker save` 或 OCI 导出准备；离线输入模式不拉取镜像，也不连接 Docker socket。输入路径必须位于配置根目录内，拒绝符号链接。
 
 Worker 使用固定规则版本中的 `trivy/db/trivy.db` 与 `metadata.json`，先复制到本节点按引擎/规则版本隔离的可写缓存；后续同版本复用缓存。启用 `--offline-scan`、禁用 DB/Java DB/检查规则/VEX 更新与遥测；只运行漏洞扫描，不加载输入目录的 Trivy 配置。JAR 分析需同一规则版本的 `trivy/java-db/{trivy-java.db,metadata.json}`：运行 `make engines-java` 准备，节点页会说明 Java 索引文件是否存在。没有索引的 JAR 目录任务明确失败，固定旧规则版本的排队任务不会自动换新库，准备后应重新创建任务。真实业务文件尚待验证。配置依据：[Trivy filesystem 参数](https://trivy.dev/latest/docs/references/configuration/cli/trivy_filesystem/)、[Java 索引与 DB 配置](https://trivy.dev/docs/latest/configuration/db/)。
 

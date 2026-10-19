@@ -34,7 +34,7 @@ func TestSelectPortsRejectsInvalidOrOversizedConfiguration(t *testing.T) {
 		{Preset: PresetCustom},
 		{Preset: PresetCustom, Ranges: []Range{{Start: 0, End: 80}}},
 		{Preset: PresetCustom, Ranges: []Range{{Start: 80, End: 79}}},
-		{Preset: PresetCustom, Ranges: []Range{{Start: 1, End: 1025}}},
+		{Preset: PresetCustom, Ranges: []Range{{Start: 1, End: 65536}}},
 		{Preset: PresetCommon, Ranges: []Range{{Start: 1, End: 1}}},
 		{Preset: PresetCommon, Exclusions: []Range{{Start: 1, End: 65535}}},
 		{Preset: "all", Ranges: []Range{{Start: 1, End: 1}}},
@@ -42,6 +42,13 @@ func TestSelectPortsRejectsInvalidOrOversizedConfiguration(t *testing.T) {
 		if _, err := SelectPorts(config); !errors.Is(err, ErrInvalidConfig) {
 			t.Errorf("accepted %+v: %v", config, err)
 		}
+	}
+}
+
+func TestSelectPortsAllowsFullTCPPortRange(t *testing.T) {
+	ports, err := SelectPorts(Config{Preset: PresetCustom, Ranges: []Range{{Start: 1, End: 65535}}})
+	if err != nil || len(ports) != 65535 || ports[0] != 1 || ports[len(ports)-1] != 65535 {
+		t.Fatalf("full port range count=%d first/last=%v err=%v", len(ports), ports, err)
 	}
 }
 
@@ -81,10 +88,67 @@ func TestScanRejectsHostnameRangesAndDuplicatePorts(t *testing.T) {
 	}
 }
 
+func TestScanUsesBoundedParallelConnections(t *testing.T) {
+	d := &concurrencyDialer{started: make(chan struct{}, ProbeConcurrency), release: make(chan struct{})}
+	ports := make([]int, ProbeConcurrency*2)
+	for i := range ports {
+		ports[i] = i + 1
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := scanWithDialer(context.Background(), "192.0.2.20", ports, d)
+		done <- err
+	}()
+	for range ProbeConcurrency {
+		<-d.started
+	}
+	close(d.release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.maxActive != ProbeConcurrency {
+		t.Fatalf("maximum active connections=%d want %d", d.maxActive, ProbeConcurrency)
+	}
+}
+
 type fixtureDialer struct {
 	mu      sync.Mutex
 	open    map[int]bool
 	targets []string
+}
+
+type concurrencyDialer struct {
+	mu        sync.Mutex
+	active    int
+	maxActive int
+	started   chan struct{}
+	release   chan struct{}
+}
+
+func (d *concurrencyDialer) DialContext(ctx context.Context, _, _ string) (net.Conn, error) {
+	d.mu.Lock()
+	d.active++
+	if d.active > d.maxActive {
+		d.maxActive = d.active
+	}
+	d.mu.Unlock()
+	select {
+	case d.started <- struct{}{}:
+	default:
+	}
+	defer func() {
+		d.mu.Lock()
+		d.active--
+		d.mu.Unlock()
+	}()
+	select {
+	case <-d.release:
+		return nil, errors.New("closed")
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 func (d *fixtureDialer) DialContext(_ context.Context, network, target string) (net.Conn, error) {
