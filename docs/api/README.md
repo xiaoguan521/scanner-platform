@@ -12,7 +12,7 @@ UI 使用 HttpOnly 的 `scanner_session` Cookie，所有写请求携带 `X-Reque
 
 - `/assets/{id}/port-requests/batch`：对已探测到的开放候选一次提交 1–1024 个独立端口申请。操作使用事务，任意端口已申请、跳过或隔离时整批拒绝；该接口不批准申请，也不直接授予扫描权限。
 - `/tasks/{id}/cancel`：取消待处理或执行中任务。`/findings/{id}` 可更新 `OPEN/IN_PROGRESS/FALSE_POSITIVE`；不提供手工 FIXED。
-- `/report-templates`、`/reports`:持久化模板、冻结快照、异步生成 HTML/XLSX/DOCX、查询历史、下载和失败重试;生成不调用扫描器。见 [报告使用说明](../product/report-usage.md)。
+- `/report-templates`、`/reports`:持久化模板、冻结快照、异步生成 HTML/XLSX/DOCX、查询历史、下载和失败重试;已就绪报告可通过 `POST /reports/{id}/formats` 复用同一冻结快照导出其他格式;生成不调用扫描器。见 [报告使用说明](../product/report-usage.md)。
 - `/detection-capabilities`、`/vulnerability-categories`、`/scan-policy`、`/knowledge`:检测能力状态、32 类字典、管理员端口策略、规范 JSON 知识库维护与导入;不自动抓取外部数据。
 - `POST /port-quarantines/release`:管理员填写复核原因后解除隔离并审计。
 - `/schedules`：首次运行时间、分钟间隔（0=单次）、显式目标、时间窗；`PUT /schedules/{id}` 修改，`PATCH` 启停，`DELETE` 删除后续调度，返回最近任务及错误。
