@@ -39,7 +39,7 @@ func localInput(root, relative string, kind string) (string, error) {
 		if !info.Mode().IsRegular() {
 			return "", fmt.Errorf("image archive must be a regular file")
 		}
-	} else if kind == "filesystem" || kind == "rootfs" {
+	} else if kind == "filesystem" || kind == "rootfs" || kind == "artifact" {
 		if !info.IsDir() {
 			return "", fmt.Errorf("filesystem input must be a directory")
 		}
@@ -107,6 +107,20 @@ func (r *Runner) trivy(ctx context.Context, task taskflow.Task, dir string) ([]t
 	if err != nil {
 		return nil, err
 	}
+	if task.InputKind == "filesystem" || task.InputKind == "artifact" {
+		java, artifacts, err := inspectApplicationInput(ctx, input, task.InputKind == "artifact")
+		if err != nil {
+			return nil, err
+		}
+		if task.InputKind == "filesystem" && artifacts {
+			return nil, &taskflow.ExecutionError{UserMessage: "该目录含 JAR 或 ELF，请用已部署应用类型检查；依赖清单与部署产物混合时请用采集工具拆分"}
+		}
+		if java {
+			if !hasJavaDB(rulesDir) {
+				return nil, &taskflow.ExecutionError{UserMessage: "此任务包含 Java 归档，但固定规则版本没有 Java 索引；请运行 make engines-java，待新版本同步后重新创建任务"}
+			}
+		}
+	}
 	// Private writable cache; immutable release files are never opened for writing.
 	cache := filepath.Join(r.RuntimeDir, "trivy-cache-v"+TrivyVersion+"-"+task.RuleVersion)
 	if _, err := os.Stat(filepath.Join(cache, ".ready")); os.IsNotExist(err) {
@@ -166,7 +180,7 @@ func (r *Runner) trivy(ctx context.Context, task taskflow.Task, dir string) ([]t
 	for i := range detections {
 		if task.InputKind == "rootfs" {
 			detections[i].MatchedPath = "OS packages"
-		} else if task.InputKind == "filesystem" {
+		} else if task.InputKind == "filesystem" || task.InputKind == "artifact" {
 			detections[i].MatchedPath = strings.TrimPrefix(detections[i].MatchedPath, filepath.ToSlash(input)+"/")
 		}
 		if snapshot != "" {
@@ -174,6 +188,63 @@ func (r *Runner) trivy(ctx context.Context, task taskflow.Task, dir string) ([]t
 		}
 	}
 	return detections, nil
+}
+
+func hasJavaDB(rulesDir string) bool {
+	return hasDBFiles(filepath.Join(rulesDir, "java-db"), "trivy-java.db")
+}
+
+func hasDBFiles(dir, database string) bool {
+	for _, name := range []string{database, "metadata.json"} {
+		info, err := os.Stat(filepath.Join(dir, name))
+		if err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func inspectApplicationInput(ctx context.Context, root string, artifactsOnly bool) (bool, bool, error) {
+	found := false
+	artifacts := false
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if !entry.IsDir() {
+			switch strings.ToLower(filepath.Ext(path)) {
+			case ".jar", ".war", ".ear", ".par":
+				found = true
+				artifacts = true
+				return nil
+			}
+			if entry.Name() == snapshotName {
+				return nil
+			}
+			file, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			var magic [4]byte
+			_, readErr := io.ReadFull(file, magic[:])
+			file.Close()
+			if readErr != nil && readErr != io.EOF && readErr != io.ErrUnexpectedEOF {
+				return readErr
+			}
+			if string(magic[:]) == "\x7fELF" {
+				artifacts = true
+				return nil
+			}
+			if artifactsOnly {
+				return &taskflow.ExecutionError{UserMessage: "已部署应用输入只接受 JAR/WAR/EAR/PAR 和 Go ELF；锁文件请使用依赖目录类型，混合目录请先采集拆分"}
+			}
+		}
+		return nil
+	})
+	return found, artifacts, err
 }
 
 func ParseTrivy(data []byte, target string) ([]taskflow.Detection, error) {

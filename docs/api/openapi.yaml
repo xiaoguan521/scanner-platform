@@ -1694,6 +1694,7 @@ components:
           - filesystem
           - image-archive
           - rootfs
+          - artifact
         error:
           type: string
     Finding:
@@ -1920,12 +1921,13 @@ components:
           - filesystem
           - image-archive
           - rootfs
+          - artifact
       required:
       - synthetic
       - targets
       description: Choose synthetic=true, a root HTTP baseline engine (nuclei/zap
         with scheme and registered targets), or trivy with a local Worker input path/kind
-        (filesystem dependencies, image-archive, or Linux rootfs OS package snapshot).
+        (filesystem lockfiles, artifact deployed JAR/Go files, image-archive, or Linux rootfs OS package snapshot).
         No discovery, remote image pull, SSH or active ZAP scans.
     Schedule:
       allOf:

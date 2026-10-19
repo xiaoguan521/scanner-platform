@@ -73,3 +73,23 @@
 - 原有 `scripts/test_local.py` 9 组普通业务回归通过。`LAB_ENV=isolated python3 scripts/test_engines_local.py` 完整通过：合成 Debian 系统包 49 条、选定 Node 依赖 5 条、Docker 与 OCI 归档各 49 条且相同镜像跨格式去重；重复系统检查不重复，修改快照拒绝，模拟麒麟发行版明确失败，缺失输入拒绝。Nuclei/ZAP 既有回环夹具各 4 条。计数基于本机当前漏洞库；没有连接真实服务器、Docker/containerd daemon 或 Kubernetes API。
 - 浏览器实际提交 rootfs 夹具任务，完成后查看系统包发现项：显示稳定来源、采集时间、组件、安装/修复版本，`lab-a/os` 筛选共 49 条；前端无 console error。原始证据留在本机私有临时目录，截图在本机可视化目录，未提交资产或结果。
 - 已知边界：只实测合成 Debian / Node / 镜像；CentOS 7 RPM 实际识别、银河麒麟厂商源、源码安装中间件、国产数据库产品级检测、运行内核/进程/容器卷仍待专项适配和指定服务器验证。CentOS 使用 RHEL 公告的限制见官方文档；不能伪造发行版来补覆盖。Java 索引默认尚未准备，后续单独补齐。说明见 `docs/linux-server-scan.md`。
+
+## 2026-10-19：离线 Java 索引与已部署应用
+
+- 新增 `make engines-java` / Updater `--with-java-db`，通过锁定 Trivy 的 `--download-java-db-only` 显式下载 Java 组件索引；主漏洞库仍用于 CVE 匹配。实际 Java OCI 压缩层约 940 MiB，展开索引约 1.5 GiB；与主库合计约 3 GiB。
+- Updater 本地准备改为流式复制、哈希、fsync 和私有暂存发布，避免把大库组装成内存 ZIP 或写进 Server 数据库。沿用不可覆盖版本、完整性核对、独立激活；失败/取消不切换 CURRENT。网页 ZIP 仍限 256 MiB，单文件 4 GiB、总展开 8 GiB 的限制均保持。支持完整缓存目录的离线准备，实际 `--skip-db-download` 安装并激活通过。
+- 实测修正两个固定版本行为：Trivy filesystem 禁用 JAR/Go 二进制分析，需要 `rootfs --pkg-types library`；Go 默认按执行权限筛文件，需要固定 `--file-patterns gobinary:.*` 读取选中的非执行 ELF。新增 `artifact` 任务类型，API/OpenAPI/前端同步；不授予执行权限、不运行输入文件。锁文件与部署产物选错模式明确拒绝，混合应用采集自动拆为两个独立输入。
+- Java 索引缺失的部署目录任务回报可操作的失败提示；节点状态区分主库和 Java 索引文件。采集脚本改为 Python 3.6 语法可用，SQLite RPM 一致备份要求 3.7+；旧解释器实际运行仍待目标环境验证。
+- `make build`、`make lint`、`make test`（race、采集工具 9 项测试）通过；原有 9 组普通业务回归再次通过；前端 Server/Demo 构建、OpenAPI 四种输入枚举核对通过；Linux amd64/arm64、Windows amd64 交叉编译通过。`make verify-flags` 实测 Nuclei 23 / Trivy 20 / ZAP 7 个参数。
+- `SCANNER_EXPECT_JAVA_DB=1 LAB_ENV=isolated python3 scripts/test_engines_local.py` 完整通过：Java 元数据 JAR 7 条（含预期 CVE-2021-44228）、Node 锁文件 5 条、合成 Debian 系统包 49 条；含相同 Java 元数据的 Docker/OCI 归档各 56 条并跨格式去重；Linux amd64/arm64 两个自建 Go ELF 均实际分析构建信息。没有执行夹具程序、加载脆弱库字节码、访问 Docker/Kubernetes 或真实业务服务器。
+- 浏览器实际选择“已部署应用 / 中间件”、提交 Java 夹具任务并观察完成；筛选该输入仍为 7 条，重复检查保留首次时间；严重级别筛选及安装/修复版本展开正常。前端无 console error。测试实例已与用户数据库隔离，证据保留在本机私有目录。
+- 新失败路径测试覆盖 Java 数据缺失、缓存链接、超限稀疏文件、取消、不可覆盖版本、CURRENT 保持、混合输入模式和时间窗取消语义；没有新增 Go/npm 依赖或修改 CI 工作流。
+- 本地数据已具备 Java/Go/Node/系统包/镜像的通用分析链路；真实 CentOS 7、银河麒麟厂商公告源、具体中间件及国产数据库专项识别仍未完成。完整 Nuclei CVE 模板库、Kubernetes 自动接入与生产部署不在本次实现中。不能把合成夹具计数当真实资产结果。
+
+### 同日补充：混合应用分流覆盖修复
+
+- 合成夹具复现：根目录与已有 `artifacts/` 下的同名 JAR 在原地分流时发生覆盖，采集成功但嵌套内容丢失；已有 `dependencies/` 下的同名锁文件也受同一问题影响。改为在输出暂存目录内的独立目录分流，保留各文件的原相对路径，完成后替换组件目录；整个输出仍在最后原子发布，异常由现有清理逻辑移除暂存内容。
+- 新增回归保留根/嵌套同名 JAR 和锁文件的全部内容及快照 SHA-256，并模拟分流中途存储失败，确认无输出发布、无暂存残留。开发先运行新增回归确认旧实现失败，修复后 `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_collect_linux_inputs.py -v` 的 11 项测试通过；未运行全量引擎测试。
+- 分工记录：本轮最初方案复核因高阶模型容量限制改由 GPT-5.6 Sol 只读执行；开发修复使用 GPT-6.1 Sol，独立验收使用 GPT-6 Sol 与 GPT-6 Luna。后续默认分工已按 Sol/Luna 调整，见 `AGENTS.md`。
+- 混合目录覆盖修复后，GPT-6 Sol 独立复现并核对根目录、`artifacts/`、`dependencies/` 中同名 JAR/锁文件的全部字节及 SHA-256 清单；Python 11 项和完整本机引擎夹具均通过。证据目录位于本机私有临时目录，未写入仓库。
+- GPT-6 Luna 独立运行 `LAB_ENV=isolated go test -tags=lab ./... -run '^$'`，全部包编译通过且未运行测试；同时确认所有 `PrepareDefault` 调用使用新签名，并复核 Go ELF 必须逐个显式选择的说明与命令行帮助。

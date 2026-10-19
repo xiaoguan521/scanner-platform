@@ -71,7 +71,10 @@ def copy_stable(source, destination):
     destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     with source.open('rb') as src, destination.open('xb') as dst:
         copied = 0
-        while chunk := src.read(128 << 10):
+        while True:
+            chunk = src.read(128 << 10)
+            if not chunk:
+                break
             copied += len(chunk)
             if copied > before.st_size:
                 raise ValueError('Input changed during collection; retry when it is stable')
@@ -116,6 +119,8 @@ def collect_os(root, destination):
             continue
         target = destination / name
         if name.endswith('rpmdb.sqlite'):
+            if not hasattr(sqlite3.Connection, 'backup'):
+                raise ValueError('SQLite RPM snapshots require Python 3.7+; Python 3.6 supports dpkg/apk/legacy RPM files')
             target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             # SQLite backup includes a committed WAL without modifying the source.
             uri = 'file:' + urllib.parse.quote(str(source), safe='/') + '?mode=ro'
@@ -136,8 +141,12 @@ def collect_os(root, destination):
         raise ValueError('A Linux os-release file and supported dpkg/apk/rpm package database are required')
 
 
+def deployed_file(name):
+    return name.lower().endswith(('.jar', '.war', '.ear', '.par'))
+
+
 def application_file(name):
-    return name in LOCKS or name.endswith(('.jar', '.war', '.ear', '.deps.json')) or (
+    return name in LOCKS or deployed_file(name) or name.endswith('.deps.json') or (
         name.startswith('requirements') and name.endswith('.txt'))
 
 
@@ -150,10 +159,10 @@ def collect_application(source, destination):
         if not application_file(source.name) and not elf:
             raise ValueError('Select a dependency manifest, JAR/WAR/EAR or an ELF executable')
         copy_stable(source, destination / source.name)
-        return
+        return {'artifact' if deployed_file(source.name) or elf else 'filesystem'}
     if not source.is_dir():
         raise ValueError('Application input is missing')
-    count, total = 0, 0
+    count, total, kinds = 0, 0, set()
     for current, dirs, names in os.walk(source, followlinks=False):
         dirs[:] = sorted(name for name in dirs if name not in EXCLUDE)
         if any((Path(current) / name).is_symlink() for name in dirs):
@@ -169,6 +178,8 @@ def collect_application(source, destination):
             if count > MAX_FILES or total > MAX_TOTAL:
                 raise ValueError('Application input is too large; split it into separate components')
             copy_stable(path, destination / path.relative_to(source))
+            kinds.add('artifact' if deployed_file(name) else 'filesystem')
+    return kinds
 
 
 def named(value):
@@ -183,7 +194,7 @@ def main(argv=None):
     parser.add_argument('--source', required=True, help='Stable private host alias, e.g. lab-a (no auto-discovery)')
     parser.add_argument('--output', required=True, type=Path, help='NEW private output directory; never overwritten')
     parser.add_argument('--rootfs', type=Path, default=Path('/'), help='Linux root filesystem; defaults to / on Linux only')
-    parser.add_argument('--app', action='append', type=named, default=[], help='Explicit alias=application directory, lockfile, JAR or ELF')
+    parser.add_argument('--app', action='append', type=named, default=[], help='Explicit alias=directory (manifests/JAR only), lockfile, JAR, or single ELF')
     parser.add_argument('--image', action='append', type=named, default=[], help='Explicit alias=LOCAL image ID/tag; docker image save only')
     parser.add_argument('--image-archive', action='append', type=named, default=[], help='Explicit alias=previously exported Docker/OCI tar, including containerd exports')
     parser.add_argument('--docker-socket', type=Path, default=Path('/var/run/docker.sock'), help='Explicit local Unix socket; no remote Docker contexts')
@@ -208,9 +219,31 @@ def main(argv=None):
         snapshot(staging / 'os', args.source, 'rootfs', collected)
         for name, path in args.app:
             destination = staging / 'apps' / name
-            collect_application(Path(path).absolute(), destination)
-            snapshot(destination, args.source, 'filesystem', collected)
-            components.append({'name': name, 'kind': 'filesystem', 'path': 'apps/' + name})
+            kinds = collect_application(Path(path).absolute(), destination)
+            if not kinds:
+                raise ValueError('Application has no supported dependency files or deployed artifacts')
+            if len(kinds) == 1:
+                kind = next(iter(kinds))
+                snapshot(destination, args.source, kind, collected)
+                components.append({'name': name, 'kind': kind, 'path': 'apps/' + name})
+            else:
+                # Trivy fs scans lockfiles; rootfs --pkg-types library scans
+                # deployed JAR/Go artifacts. Keep explicit, disjoint tasks.
+                # Split outside the source tree so existing artifacts/ and
+                # dependencies/ paths cannot collide with their destinations.
+                split = Path(tempfile.mkdtemp(prefix='.app-split-', dir=staging))
+                for file in list(destination.rglob('*')):
+                    if not file.is_file():
+                        continue
+                    sub = 'artifacts' if deployed_file(file.name) else 'dependencies'
+                    target = split / sub / file.relative_to(destination)
+                    target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                    file.rename(target)
+                shutil.rmtree(destination)
+                split.rename(destination)
+                for sub, kind in [('dependencies', 'filesystem'), ('artifacts', 'artifact')]:
+                    snapshot(destination / sub, args.source, kind, collected)
+                    components.append({'name': name + '-' + sub, 'kind': kind, 'path': 'apps/' + name + '/' + sub})
         for name, reference in args.image:
             if reference.startswith('-') or len(reference) > 500 or not args.docker_socket.is_absolute():
                 raise ValueError('Invalid image reference or local Docker socket path')

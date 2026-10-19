@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import zipfile
 
 from test_local import API, PASSWORD, ROOT, until
 
@@ -27,10 +28,34 @@ def main():
                          'node_modules/lodash': {'version': '4.17.20'}},
             'dependencies': {'lodash': {'version': '4.17.20'}}}
     (directory / 'inputs/deps/package-lock.json').write_text(json.dumps(lock))
+    current = (ROOT / 'vuln-data/CURRENT').read_text().strip()
+    java_available = (ROOT / 'vuln-data/releases' / current / 'trivy/java-db/trivy-java.db').is_file()
+    if os.environ.get('SCANNER_EXPECT_JAVA_DB') == '1' and not java_available:
+        raise SystemExit('Run make engines-java first; Java regression was explicitly requested.')
+    collector_apps = []
+    if java_available:
+        java = directory / 'java-fixture'
+        java.mkdir()
+        # Metadata-only fixture. No vulnerable library bytecode is downloaded,
+        # executed or used to attack anything.
+        with zipfile.ZipFile(java / 'log4j-core-2.14.1.jar', 'w') as jar:
+            jar.writestr('META-INF/MANIFEST.MF', 'Manifest-Version: 1.0\nImplementation-Title: log4j-core\nImplementation-Version: 2.14.1\n\n')
+            jar.writestr('META-INF/maven/org.apache.logging.log4j/log4j-core/pom.properties',
+                         'groupId=org.apache.logging.log4j\nartifactId=log4j-core\nversion=2.14.1\n')
+        collector_apps += ['--app', 'java=' + str(java)]
+    go_source = directory / 'fixture.go'
+    go_source.write_text('package main\nfunc main() {}\n')
+    for arch in ['amd64', 'arm64']:
+        output = directory / ('go-' + arch)
+        environment = dict(os.environ, GOOS='linux', GOARCH=arch, CGO_ENABLED='0', GOPROXY='off', GOTOOLCHAIN='local')
+        subprocess.run(['go', 'build', '-trimpath', '-o', str(output), str(go_source)], env=environment, check=True)
+        collector_apps += ['--app', 'go-' + arch + '=' + str(output)]
     # Build a tiny Docker-save archive from local metadata; no image pull or daemon.
     layer_buffer=io.BytesIO()
     linux_files = {'etc/debian_version': b'12.0\n', 'etc/os-release': b'ID=debian\nVERSION_ID="12"\nPRETTY_NAME="Debian GNU/Linux 12"\n',
                    'var/lib/dpkg/status': b'Package: openssl\nStatus: install ok installed\nArchitecture: amd64\nVersion: 3.0.11-1~deb12u2\n\n'}
+    if java_available:
+        linux_files['opt/app/log4j-core-2.14.1.jar'] = (java / 'log4j-core-2.14.1.jar').read_bytes()
     with tarfile.open(fileobj=layer_buffer,mode='w') as layer:
         for name,body in linux_files.items():
             entry=tarfile.TarInfo(name);entry.size=len(body);entry.mode=0o644;layer.addfile(entry,io.BytesIO(body))
@@ -60,7 +85,7 @@ def main():
             entry = tarfile.TarInfo(name); entry.size = len(body); entry.mode = 0o600; image.addfile(entry, io.BytesIO(body))
     subprocess.run([sys.executable, str(ROOT / 'scripts/collect_linux_inputs.py'), '--source', 'lab-a',
                     '--rootfs', str(directory / 'linux-fixture'), '--output', str(directory / 'inputs/lab-a'),
-                    '--app', 'web=' + str(directory / 'inputs/deps'), '--image-archive', 'middleware=' + str(directory / 'oci-fixture.tar')], check=True)
+                    '--app', 'web=' + str(directory / 'inputs/deps'), '--image-archive', 'middleware=' + str(directory / 'oci-fixture.tar'), *collector_apps], check=True)
     shutil.copytree(directory / 'linux-fixture', directory / 'kylin-fixture')
     (directory / 'kylin-fixture/etc/os-release').write_text('ID=kylin\nID_LIKE=centos\nVERSION_ID=V10\n')
     subprocess.run([sys.executable, str(ROOT / 'scripts/collect_linux_inputs.py'), '--source', 'lab-kylin',
@@ -164,6 +189,22 @@ def main():
         app_findings = [f for f in api.call('GET', '/api/v1/findings')['items'] if f['taskId'] == app_task['id']]
         assert app_findings and all('lab-a' in f['description'] for f in app_findings)
         print(f'PASS Linux collector -> rootfs -> {len(os_findings)} OS findings; selected application -> {len(app_findings)} findings; stable dedup', flush=True)
+        java_findings = []
+        if java_available:
+            java_task = api.call('POST', '/api/v1/tasks', {**input_body, 'inputKind': 'artifact', 'inputPath': 'lab-a/apps/java'}, expect=201)
+            until(lambda: completed(java_task), timeout=180)
+            java_findings = [f for f in api.call('GET', '/api/v1/findings')['items'] if f['taskId'] == java_task['id']]
+            assert any(f['templateOrCve'] == 'CVE-2021-44228' and f['installedVersion'] == '2.14.1' for f in java_findings)
+            print(f'PASS Java metadata fixture: offline Java index and main DB -> {len(java_findings)} findings including expected CVE; no library executed', flush=True)
+        else:
+            print('SKIP Java fixture: active bundle has no Java index; use make engines-java', flush=True)
+        for arch in ['amd64', 'arm64']:
+            go_task = api.call('POST', '/api/v1/tasks', {**input_body, 'inputKind': 'artifact', 'inputPath': 'lab-a/apps/go-' + arch}, expect=201)
+            until(lambda: completed(go_task), timeout=150)
+            report = max((directory / 'worker').glob('scan-*/trivy.json'), key=lambda p: p.stat().st_mtime_ns)
+            analyzed = json.loads(report.read_text())
+            assert any(item.get('Type') == 'gobinary' for item in analyzed.get('Results', [])), 'Go build information was not analyzed'
+        print('PASS Go Linux amd64/arm64 ELF inputs: build metadata analyzed without executing either binary', flush=True)
         # A changed copy must fail before launching a scan, without new findings.
         (directory / 'inputs/lab-a/os/var/lib/dpkg/status').write_text('changed fixture')
         changed = api.call('POST', '/api/v1/tasks', rootfs_input, expect=201)
@@ -196,6 +237,7 @@ def main():
         result = {'state': 'PASS', 'realServersContacted': False, 'fixturePaths': sorted(set(requests)),
                   'engineFindingCounts': counts, 'imageArchiveFindingCount':len(image_findings), 'linuxOSFindingCount': len(os_findings),
                   'collectedAppFindingCount': len(app_findings), 'ociArchiveFindingCount': len(oci_findings),
+                  'javaIndexTested': java_available, 'javaFixtureFindingCount': len(java_findings), 'goFixtureArchitectures': ['amd64', 'arm64'],
                   'unsupportedDistributionRejected': True, 'checks': ['Linux rootfs collector', 'snapshot integrity', 'real process/report/persistence', 'skip ports',
                   'ZAP offline passive analysis', 'Trivy offline scan', 'stable dedup', 'failure reporting']}
         (directory / 'result.json').write_text(json.dumps(result, indent=2) + '\n')

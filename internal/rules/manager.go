@@ -256,8 +256,30 @@ func (m *Manager) Import(ctx context.Context, data []byte) (Bundle, error) {
 		}
 
 	}
-	if err := os.WriteFile(filepath.Join(stage, "manifest.json"), manifestData, 0600); err != nil {
+	return m.publishStage(ctx, stage, manifest, manifestData)
+}
+
+// publishStage is shared by ZIP import and Updater's streaming local DB
+// preparation. Neither path changes CURRENT until a separate activation.
+func (m *Manager) publishStage(ctx context.Context, stage string, manifest Manifest, manifestData []byte) (Bundle, error) {
+	if err := ctx.Err(); err != nil {
 		return Bundle{}, err
+	}
+	output, err := os.OpenFile(filepath.Join(stage, "manifest.json"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return Bundle{}, err
+	}
+	_, writeErr := output.Write(manifestData)
+	syncErr := output.Sync()
+	closeErr := output.Close()
+	if writeErr != nil {
+		return Bundle{}, writeErr
+	}
+	if syncErr != nil {
+		return Bundle{}, syncErr
+	}
+	if closeErr != nil {
+		return Bundle{}, closeErr
 	}
 	destination := filepath.Join(m.Root, "releases", manifest.Version)
 	if _, err := os.Lstat(destination); err == nil {

@@ -16,6 +16,7 @@
 
 ```bash
 make engines   # 下载三种官方引擎；Updater 下载 Trivy DB、安装并激活默认规则；核对参数
+make engines-java # 检查 JAR/WAR/EAR 时额外准备 Java 索引；大库流式安装
 make dev       # 启动网页、Server、Worker、Updater
 ```
 
@@ -39,7 +40,9 @@ ZAP 由 Go 先读取指定根地址响应（不跟随重定向、单响应上限
 
 ## Trivy：Linux 系统、依赖与镜像归档
 
-Linux 上同时有 Docker 和直接部署时，使用 [Linux 采集与扫描说明](linux-server-scan.md)：在目标机器由操作员明确选择应用目录和本地镜像，采集主机软件包数据库、指定依赖与镜像，复制到 Worker，再分别创建 `rootfs`、`filesystem`、`image-archive` 任务。新 rootfs 模式仅分析 OS 软件包。采集不会发起网络探测或远程登录。
+Linux 上同时有 Docker 和直接部署时，使用 [Linux 采集与扫描说明](linux-server-scan.md)：在目标机器由操作员明确选择应用目录和本地镜像，采集主机软件包数据库、指定依赖与镜像，复制到 Worker，再分别创建 `rootfs`（系统包）、`filesystem`（依赖清单）、`artifact`（JAR/Go 部署文件）、`image-archive`（镜像）任务。采集不会发起网络探测或远程登录。
+
+Trivy 0.76 的 `filesystem` 禁用 JAR/Go 部署产物分析，`rootfs` 禁用项目锁文件分析，因此 `artifact` 固定运行 `rootfs --pkg-types library`。已选 Go ELF 使用固定文件匹配规则识别，保持非执行权限；不执行输入。混合目录由采集工具拆开，对应分别创建任务；手工选错类型会拒绝，避免仅部分识别却报告完成。依据：[锁定版本的模式选择](https://github.com/aquasecurity/trivy/blob/v0.76.0/pkg/commands/artifact/run.go)。
 
 将要检查的内容放到 Worker 本机输入根目录：
 
@@ -50,7 +53,17 @@ runtime/inputs/images/example-image.tar
 
 创建任务时选 Trivy，类型选“依赖目录”并填 `deps/example-project`，或者选“镜像归档”并填 `images/example-image.tar`。镜像归档由操作员使用 `docker save` 或 OCI 导出准备；Worker 不拉取镜像、不连接 Docker socket、不通过 SSH 读取服务器。输入路径必须位于配置根目录内，拒绝符号链接。
 
-Worker 使用固定规则版本中的 `trivy/db/trivy.db` 与 `metadata.json`，先复制到本节点按引擎/规则版本隔离的可写缓存；后续同版本复用缓存。启用 `--offline-scan`、禁用 DB/Java DB/检查规则/VEX 更新与遥测；只运行漏洞扫描，不加载输入目录的 Trivy 配置。JAR 分析需要另行提供同一规则包内的 `trivy/java-db/`；默认准备仅下载主漏洞库。依赖目录和镜像包都已在本地夹具上验证；真实业务文件尚待验证。配置依据：[Trivy filesystem 参数](https://trivy.dev/latest/docs/references/configuration/cli/trivy_filesystem/)。
+Worker 使用固定规则版本中的 `trivy/db/trivy.db` 与 `metadata.json`，先复制到本节点按引擎/规则版本隔离的可写缓存；后续同版本复用缓存。启用 `--offline-scan`、禁用 DB/Java DB/检查规则/VEX 更新与遥测；只运行漏洞扫描，不加载输入目录的 Trivy 配置。JAR 分析需同一规则版本的 `trivy/java-db/{trivy-java.db,metadata.json}`：运行 `make engines-java` 准备，节点页会说明 Java 索引文件是否存在。没有索引的 JAR 目录任务明确失败，固定旧规则版本的排队任务不会自动换新库，准备后应重新创建任务。真实业务文件尚待验证。配置依据：[Trivy filesystem 参数](https://trivy.dev/latest/docs/references/configuration/cli/trivy_filesystem/)、[Java 索引与 DB 配置](https://trivy.dev/docs/latest/configuration/db/)。
+
+Java 索引压缩包当前约 940 MiB（大小随上游变化），超过网页 ZIP 上限。Updater 直接把已下载主库/Java 索引流式复制、哈希、fsync 到暂存版本，再按现有不可覆盖版本逻辑安装并显式激活；不把大库放入 Server 数据库。网页规则 ZIP 仍限 256 MiB；单规则文件仍限 4 GiB、总展开量仍限 8 GiB。2026-10-19 本机主库与 Java 索引合计约 3 GiB；下载缓存、活动/备用规则和每个 Worker 私有缓存各占一份，应按实际 DB 体积准备磁盘。
+
+离线准备时，把主库与 Java 索引缓存完整复制到 Updater 可读目录（包括各自 metadata），执行：
+
+```bash
+dist/sec-updater --prepare-engines --with-java-db --skip-db-download --db-cache /path/to/trivy-cache
+```
+
+缓存布局为 `db/{trivy.db,metadata.json}` 与 `java-db/{trivy-java.db,metadata.json}`。这条命令不联网、不扫描；只由 Updater 写规则盘。缺失、链接、文件变化、大小超限或复制中止均不激活新版本。没有 Java 索引时原有 Node.js/系统包任务仍可使用主库。Java 离线行为依据：[Trivy 受限网络配置](https://trivy.dev/docs/latest/guide/advanced/air-gap/)。
 
 结果保留组件、安装版本、漏洞编号与修复版本。镜像使用 Trivy 返回的不可变 ImageID 去重，不依赖归档文件名；重复检测保留首次时间和人工处理状态。未检出不会自动标记 FIXED。
 

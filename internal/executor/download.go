@@ -16,3 +16,11 @@ func DownloadTrivyDB(ctx context.Context, binDir, cacheDir, runtimeDir string) e
 	r := Runner{BinDir: binDir}
 	return runProcess(ctx, r.binary("trivy"), engineflags.TrivyDownloadArgs(cacheDir), runtimeDir, io.Discard)
 }
+
+func DownloadTrivyJavaDB(ctx context.Context, binDir, cacheDir, runtimeDir string) error {
+	if err := os.MkdirAll(runtimeDir, 0700); err != nil {
+		return err
+	}
+	r := Runner{BinDir: binDir}
+	return runProcess(ctx, r.binary("trivy"), engineflags.TrivyDownloadJavaArgs(cacheDir), runtimeDir, io.Discard)
+}

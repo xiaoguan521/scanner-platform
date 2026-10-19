@@ -184,7 +184,7 @@ export interface RuleBundle {
 }
 
 export interface EngineStatus { name: string; version: string; installed: boolean; ready: boolean; message: string }
-export interface TaskInput { synthetic: boolean; engine?: 'nuclei'|'trivy'|'zap'|'synthetic'; scheme?: 'http'|'https'; inputPath?: string; inputKind?: 'filesystem'|'image-archive'|'rootfs'; targets: string[]; timeWindows: TimeWindow[] }
+export interface TaskInput { synthetic: boolean; engine?: 'nuclei'|'trivy'|'zap'|'synthetic'; scheme?: 'http'|'https'; inputPath?: string; inputKind?: 'filesystem'|'image-archive'|'rootfs'|'artifact'; targets: string[]; timeWindows: TimeWindow[] }
 export interface Schedule extends TaskInput {
   id: string; name: string; nextRun: string; intervalMinutes: number; enabled: boolean;
   lastTaskId: string; lastError: string; createdBy: string;

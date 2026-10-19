@@ -29,7 +29,7 @@ func TestInstalledEnginesOnLoopbackFixture(t *testing.T) {
 	}
 	dir := t.TempDir()
 	manager := rules.Manager{Root: filepath.Join(dir, "rules")}
-	bundle, err := manager.PrepareDefault(context.Background(), "20261016.01", "")
+	bundle, err := manager.PrepareDefault(context.Background(), "20261016.01", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}

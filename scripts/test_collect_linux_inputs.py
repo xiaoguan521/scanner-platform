@@ -144,6 +144,71 @@ class CollectorTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.run_collect(['--image', 'web=fixture:local', '--image-archive', 'web=' + str(archive)], output='other')
 
+    def test_mixed_application_splits_lockfiles_and_deployed_artifacts(self):
+        app = self.root / 'app'
+        app.mkdir()
+        (app / 'package-lock.json').write_text('{}')
+        (app / 'fixture.jar').write_bytes(b'Java metadata fixture')
+        output = self.run_collect(['--app', 'web=' + str(app)])
+        receipt = json.loads((output / 'collection.json').read_text())
+        self.assertEqual([c['kind'] for c in receipt['components']], ['rootfs', 'filesystem', 'artifact'])
+        self.assertTrue((output / 'apps/web/dependencies/package-lock.json').is_file())
+        self.assertTrue((output / 'apps/web/artifacts/fixture.jar').is_file())
+        for relative, kind in [('dependencies', 'filesystem'), ('artifacts', 'artifact')]:
+            manifest = json.loads((output / 'apps/web' / relative / collector.SNAPSHOT).read_text())
+            self.assertEqual(manifest['kind'], kind)
+
+    def test_mixed_application_preserves_overlapping_component_paths(self):
+        app = self.root / 'app'
+        files = {
+            'fixture.jar': b'root Java fixture',
+            'artifacts/fixture.jar': b'nested Java fixture',
+            'package-lock.json': b'{"name":"root-fixture"}',
+            'dependencies/package-lock.json': b'{"name":"nested-fixture"}',
+        }
+        for name, body in files.items():
+            path = app / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(body)
+        output = self.run_collect(['--app', 'web=' + str(app)])
+        for sub, kind in [('artifacts', 'artifact'), ('dependencies', 'filesystem')]:
+            directory = output / 'apps/web' / sub
+            expected = {name: body for name, body in files.items()
+                        if collector.deployed_file(name) == (kind == 'artifact')}
+            manifest = json.loads((directory / collector.SNAPSHOT).read_text())
+            self.assertEqual(manifest['kind'], kind)
+            self.assertEqual(set(manifest['files']), set(expected))
+            self.assertEqual({str(path.relative_to(directory)) for path in directory.rglob('*')
+                              if path.is_file() and path.name != collector.SNAPSHOT}, set(expected))
+            for name, body in expected.items():
+                self.assertEqual((directory / name).read_bytes(), body)
+                self.assertEqual(manifest['files'][name], hashlib.sha256(body).hexdigest())
+        self.assertEqual(list(output.glob('.app-split-*')), [])
+
+    def test_mixed_application_split_failure_cleans_unpublished_output(self):
+        app = self.root / 'app'
+        (app / 'artifacts').mkdir(parents=True)
+        (app / 'fixture.jar').write_bytes(b'root Java fixture')
+        (app / 'artifacts/fixture.jar').write_bytes(b'nested Java fixture')
+        (app / 'package-lock.json').write_text('{}')
+        original_rename = Path.rename
+        moved = 0
+
+        def fail_during_split(path, target):
+            nonlocal moved
+            if path.name == 'fixture.jar':
+                moved += 1
+                if moved == 2:
+                    raise OSError('synthetic storage failure')
+            return original_rename(path, target)
+
+        with mock.patch.object(Path, 'rename', autospec=True, side_effect=fail_during_split):
+            with self.assertRaises(SystemExit):
+                self.run_collect(['--app', 'web=' + str(app)])
+        self.assertEqual(moved, 2)
+        self.assertFalse((self.root / 'lab-a').exists())
+        self.assertEqual(list(self.root.glob('.scanner-collect-*')), [])
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -1,8 +1,6 @@
 package rules
 
 import (
-	"archive/zip"
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -31,74 +29,132 @@ func BaselineTemplates() map[string][]byte {
 
 // PrepareDefault installs a bundle built by Updater from the original baseline
 // templates and the database downloaded using the pinned Trivy binary.
-func (m *Manager) PrepareDefault(ctx context.Context, version, trivyCache string) (Bundle, error) {
+func (m *Manager) PrepareDefault(ctx context.Context, version, trivyCache string, includeJava bool) (Bundle, error) {
+	if !ValidateVersion(version) {
+		return Bundle{}, fmt.Errorf("invalid prepared rule version")
+	}
+	if err := m.initialize(); err != nil {
+		return Bundle{}, err
+	}
 	manifest := Manifest{Version: version, Engines: []string{"nuclei"}, Files: map[string]string{}}
 	files := BaselineTemplates()
 	sources := map[string]string{}
 	if trivyCache != "" {
+		info, err := os.Lstat(trivyCache)
+		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return Bundle{}, fmt.Errorf("database cache root must be a concrete directory")
+		}
 		manifest.Engines = append(manifest.Engines, "trivy")
-		for _, name := range []string{"db/trivy.db", "db/metadata.json"} {
+		names := []string{"db/trivy.db", "db/metadata.json"}
+		if includeJava {
+			names = append(names, "java-db/trivy-java.db", "java-db/metadata.json")
+		}
+		for _, name := range names {
 			source := filepath.Join(trivyCache, filepath.FromSlash(name))
-			input, err := os.Open(source)
-			if err != nil {
-				return Bundle{}, err
+			// The cache is an explicit local input, not a link into rules/assets.
+			for p := filepath.FromSlash(name); p != "."; p = filepath.Dir(p) {
+				info, err := os.Lstat(filepath.Join(trivyCache, p))
+				if err != nil || info.Mode()&os.ModeSymlink != 0 {
+					return Bundle{}, fmt.Errorf("database cache is missing or contains a symlink")
+				}
 			}
-			digest := sha256.New()
-			_, err = io.Copy(digest, input)
-			input.Close()
-			if err != nil {
-				return Bundle{}, err
-			}
-			path := "trivy/" + name
-			manifest.Files[path] = hex.EncodeToString(digest.Sum(nil))
-			sources[path] = source
+			sources["trivy/"+name] = source
 		}
+	} else if includeJava {
+		return Bundle{}, fmt.Errorf("Java preparation requires a Trivy DB cache")
 	}
-	for name, data := range files {
-		manifest.Files[name] = hashBytes(data)
-	}
-	var buffer bytes.Buffer
-	archive := zip.NewWriter(&buffer)
-	for name, data := range files {
-		output, err := archive.Create(name)
-		if err != nil {
-			return Bundle{}, err
-		}
-		if _, err = output.Write(data); err != nil {
-			return Bundle{}, err
-		}
-	}
-	for name, path := range sources {
-		if err := ctx.Err(); err != nil {
-			return Bundle{}, err
-		}
-		output, err := archive.Create(name)
-		if err != nil {
-			return Bundle{}, err
-		}
-		input, err := os.Open(path)
-		if err != nil {
-			return Bundle{}, err
-		}
-		_, err = io.Copy(output, input)
-		input.Close()
-		if err != nil {
-			return Bundle{}, err
-		}
-	}
-	data, _ := json.Marshal(manifest)
-	output, err := archive.Create("manifest.json")
+	// Large Java indexes cannot fit in the web ZIP limit. Copy and hash them
+	// directly into a private staging directory, never into a byte slice or DB.
+	stage, err := os.MkdirTemp(m.Root, ".prepare-")
 	if err != nil {
 		return Bundle{}, err
 	}
-	if _, err = output.Write(data); err != nil {
+	defer os.RemoveAll(stage)
+	var total int64
+	for name, data := range files {
+		if err := ctx.Err(); err != nil {
+			return Bundle{}, err
+		}
+		destination := filepath.Join(stage, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(destination), 0700); err != nil {
+			return Bundle{}, err
+		}
+		output, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		if err != nil {
+			return Bundle{}, err
+		}
+		_, writeErr := output.Write(data)
+		syncErr := output.Sync()
+		closeErr := output.Close()
+		if writeErr != nil {
+			return Bundle{}, writeErr
+		}
+		if syncErr != nil {
+			return Bundle{}, syncErr
+		}
+		if closeErr != nil {
+			return Bundle{}, closeErr
+		}
+		manifest.Files[name] = hashBytes(data)
+		total += int64(len(data))
+	}
+	for name, source := range sources {
+		if err := ctx.Err(); err != nil {
+			return Bundle{}, err
+		}
+		info, err := os.Lstat(source)
+		if err != nil || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > MaxRuleFile || info.Size()+total > MaxExpanded {
+			return Bundle{}, fmt.Errorf("database cache file is invalid or exceeds size limits")
+		}
+		destination := filepath.Join(stage, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(destination), 0700); err != nil {
+			return Bundle{}, err
+		}
+		input, err := os.Open(source)
+		if err != nil {
+			return Bundle{}, err
+		}
+		output, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		if err != nil {
+			input.Close()
+			return Bundle{}, err
+		}
+		digest := sha256.New()
+		count, copyErr := io.Copy(io.MultiWriter(output, digest), io.LimitReader(preparedReader{ctx, input}, MaxRuleFile+1))
+		input.Close()
+		syncErr := output.Sync()
+		closeErr := output.Close()
+		if copyErr != nil {
+			return Bundle{}, copyErr
+		}
+		if syncErr != nil {
+			return Bundle{}, syncErr
+		}
+		if closeErr != nil {
+			return Bundle{}, closeErr
+		}
+		after, err := os.Lstat(source)
+		if err != nil || !os.SameFile(info, after) || after.ModTime() != info.ModTime() || count != info.Size() {
+			return Bundle{}, fmt.Errorf("database cache changed during preparation")
+		}
+		total += count
+		manifest.Files[name] = hex.EncodeToString(digest.Sum(nil))
+	}
+	data, _ := json.Marshal(manifest)
+	if _, err := decodeManifest(data); err != nil {
 		return Bundle{}, err
 	}
-	if err := archive.Close(); err != nil {
-		return Bundle{}, err
+	return m.publishStage(ctx, stage, manifest, data)
+}
+
+type preparedReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r preparedReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
 	}
-	if buffer.Len() > MaxArchive {
-		return Bundle{}, fmt.Errorf("default rules exceed ZIP import limit")
-	}
-	return m.Import(ctx, buffer.Bytes())
+	return r.reader.Read(p)
 }

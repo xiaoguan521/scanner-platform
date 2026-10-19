@@ -10,12 +10,16 @@ func TrivyArgs(kind, input, cache, output string) []string {
 	command := "filesystem"
 	if kind == "image-archive" {
 		command = "image"
-	} else if kind == "rootfs" {
+	} else if kind == "rootfs" || kind == "artifact" {
 		command = "rootfs"
 	}
 	args := []string{command, "--cache-dir", cache, "--config", "", "--ignorefile", "", "--scanners", "vuln", "--format", "json", "--output", output, "--offline-scan", "--skip-db-update", "--skip-java-db-update", "--skip-check-update", "--skip-version-check", "--disable-telemetry", "--skip-vex-repo-update", "--no-progress", "--timeout", "10m"}
 	if kind == "rootfs" {
 		args = append(args, "--pkg-types", "os")
+	} else if kind == "artifact" {
+		// The selected ELF files keep private non-executable permissions. Force
+		// the Go parser without granting execute permission or running them.
+		args = append(args, "--pkg-types", "library", "--file-patterns", "gobinary:.*")
 	}
 	if kind == "image-archive" {
 		args = append(args, "--input", input)
@@ -30,4 +34,8 @@ func ZAPArgs(jar, home, plan string) []string {
 }
 func TrivyDownloadArgs(cache string) []string {
 	return []string{"image", "--cache-dir", cache, "--config", "", "--download-db-only", "--skip-version-check", "--disable-telemetry", "--no-progress"}
+}
+
+func TrivyDownloadJavaArgs(cache string) []string {
+	return []string{"image", "--cache-dir", cache, "--config", "", "--download-java-db-only", "--skip-version-check", "--disable-telemetry", "--no-progress"}
 }

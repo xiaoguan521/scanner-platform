@@ -24,6 +24,7 @@ func RunUpdater(args []string, stdout, stderr io.Writer) int {
 	root := flags.String("rules-dir", "vuln-data", "Updater-owned rule directory")
 	prepare := flags.Bool("prepare-engines", false, "Install and activate baseline templates and Trivy DB; no scans")
 	skipDownload := flags.Bool("skip-db-download", false, "Use the existing Trivy DB cache during preparation")
+	withJava := flags.Bool("with-java-db", false, "Include Java artifact index in explicit engine preparation")
 	binDir := flags.String("bin-dir", "bin", "Pinned engine binaries")
 	dbCache := flags.String("db-cache", "runtime/engine-data/trivy", "Updater DB download cache")
 	once := flags.Bool("once", false, "Process at most one queued operation")
@@ -53,11 +54,18 @@ func RunUpdater(args []string, stdout, stderr io.Writer) int {
 				fmt.Fprintln(stderr, err)
 				return 1
 			}
+			if *withJava {
+				fmt.Fprintln(stdout, "Downloading Trivy Java artifact index (no scan)...")
+				if err := executor.DownloadTrivyJavaDB(ctx, absolute(*binDir), absolute(*dbCache), absolute("runtime/updater-prepare-java")); err != nil {
+					fmt.Fprintln(stderr, err)
+					return 1
+				}
+			}
 		}
 		manager := rules.Manager{Root: absolute(*root)}
 		version := time.Now().UTC().Format("20060102.150405")
 		fmt.Fprintln(stdout, "Packaging, hashing and installing local engine rules...")
-		bundle, err := manager.PrepareDefault(ctx, version, absolute(*dbCache))
+		bundle, err := manager.PrepareDefault(ctx, version, absolute(*dbCache), *withJava)
 		if err == nil {
 			err = manager.Activate(ctx, bundle.Version, false)
 		}
@@ -66,6 +74,9 @@ func RunUpdater(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		fmt.Fprintln(stdout, "Activated rules", bundle.Version, "(Nuclei root-GET baseline + Trivy DB)")
+		if *withJava {
+			fmt.Fprintln(stdout, "Java artifact index included; scan runners remain offline")
+		}
 		return 0
 	}
 	agent := rules.Agent{ServerURL: *server, ID: *id, Manager: &rules.Manager{Root: *root}}

@@ -104,8 +104,8 @@ func resolveTargets(ctx context.Context, tx *sql.Tx, in taskflow.TaskInput) ([]s
 			return nil, detail, ErrInvalidTask
 		}
 	} else if in.Engine == "trivy" {
-		if len(in.Targets) != 0 || in.Scheme != "" || !filepath.IsLocal(in.InputPath) || strings.ContainsAny(in.InputPath, "\\:\x00") || len(in.InputPath) > 240 || (in.InputKind != "filesystem" && in.InputKind != "image-archive" && in.InputKind != "rootfs") {
-			return nil, detail, fmt.Errorf("%w: Trivy requires a relative Worker input path and filesystem/image-archive/rootfs kind", ErrInvalidTask)
+		if len(in.Targets) != 0 || in.Scheme != "" || !filepath.IsLocal(in.InputPath) || strings.ContainsAny(in.InputPath, "\\:\x00") || len(in.InputPath) > 240 || (in.InputKind != "filesystem" && in.InputKind != "image-archive" && in.InputKind != "rootfs" && in.InputKind != "artifact") {
+			return nil, detail, fmt.Errorf("%w: Trivy requires a relative Worker input path and filesystem/artifact/image-archive/rootfs kind", ErrInvalidTask)
 		}
 		return []string{in.InputPath}, detail, nil
 	} else if (in.Engine != "nuclei" && in.Engine != "zap") || (in.Scheme != "http" && in.Scheme != "https") || in.InputPath != "" || in.InputKind != "" {

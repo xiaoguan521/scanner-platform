@@ -6,7 +6,7 @@ ifeq ($(GOOS),windows)
 EXE_EXT := .exe
 endif
 
-.PHONY: build test lint verify-flags test-lab web-install web-dev web-build dev test-local engines test-engines-local
+.PHONY: build test lint verify-flags test-lab web-install web-dev web-build dev test-local engines engines-java test-engines-local
 
 dev:
 	bash scripts/dev.sh
@@ -50,6 +50,12 @@ engines:
 
 verify-flags:
 	python3 scripts/verify_engine_flags.py
+
+engines-java:
+	mkdir -p dist
+	$(GO) build -o dist/sec-updater$(EXE_EXT) ./cmd/updater
+	./dist/sec-updater$(EXE_EXT) --prepare-engines --with-java-db
+	$(MAKE) verify-flags
 
 test-lab:
 	@if [ "$${LAB_ENV:-}" != "isolated" ]; then \

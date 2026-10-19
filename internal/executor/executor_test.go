@@ -148,6 +148,10 @@ func TestTrivyLocalInputAndArguments(t *testing.T) {
 	if !strings.HasPrefix(args, "rootfs ") || !strings.Contains(args, "--pkg-types os") || strings.Contains(args, "--input") {
 		t.Fatal("rootfs must use only OS package analysis", args)
 	}
+	args = strings.Join(engineflags.TrivyArgs("artifact", "/input/apps", "/cache", "/out"), " ")
+	if !strings.HasPrefix(args, "rootfs ") || !strings.Contains(args, "--pkg-types library") || !strings.Contains(args, "--file-patterns gobinary:.*") {
+		t.Fatal("deployed artifacts require library analysis independent of executable permissions", args)
+	}
 	plan, _ := json.Marshal(ZAPPlan("fixture.har", "output", []string{"http://192.0.2.1:80"}))
 	if strings.Contains(string(plan), "spider") || strings.Contains(string(plan), "activeScan") || strings.Contains(string(plan), `"type":"requestor"`) {
 		t.Fatal("ZAP plan must only import responses")
@@ -163,6 +167,30 @@ func TestTrivyRootfsRejectsUnanalyzedOS(t *testing.T) {
 	// A supported OS package analysis may legitimately have no known CVEs.
 	if got, err := parseTrivy([]byte(`{"Results":[{"Class":"os-pkgs","Target":"Debian 12"}]}`), "lab-a/os", true); err != nil || len(got) != 0 {
 		t.Fatal(got, err)
+	}
+}
+
+func TestJavaInputDetectionDoesNotRequireAnIndexForNodeInputs(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "package-lock.json"), []byte(`{}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if java, artifacts, err := inspectApplicationInput(context.Background(), root, false); err != nil || java || artifacts {
+		t.Fatal(java, artifacts, err)
+	}
+	if _, _, err := inspectApplicationInput(context.Background(), root, true); err == nil {
+		t.Fatal("lockfiles accepted as deployed artifacts")
+	}
+	if err := os.WriteFile(filepath.Join(root, "fixture.jar"), []byte("metadata fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if java, artifacts, err := inspectApplicationInput(context.Background(), root, false); err != nil || !java || !artifacts {
+		t.Fatal(java, artifacts, err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, _, err := inspectApplicationInput(ctx, root, false); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
 	}
 }
 

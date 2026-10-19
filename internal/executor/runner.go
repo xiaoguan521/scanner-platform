@@ -61,6 +61,16 @@ func (r *Runner) Status() []taskflow.EngineStatus {
 					if info, err := os.Stat(path); err == nil && info.IsDir() {
 						status.Ready = true
 						status.Message = "程序和本地规则已就绪，执行前校验完整性"
+						if item.name == "trivy" {
+							status.Ready = hasDBFiles(filepath.Join(path, "db"), "trivy.db")
+							status.Message = "主漏洞库文件已就绪；Java 索引未准备，JAR 需运行 make engines-java"
+							if hasJavaDB(path) {
+								status.Message = "主漏洞库和 Java 索引文件已就绪；执行前校验完整性"
+							}
+							if !status.Ready {
+								status.Message = "主漏洞库文件缺失，请运行 make engines 或重新导入完整规则"
+							}
+						}
 					}
 				}
 			}
