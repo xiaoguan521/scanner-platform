@@ -16,6 +16,20 @@ const endpoint = '/api/v1/reports';
 const templatesEndpoint = '/api/v1/report-templates';
 const { Text } = Typography;
 
+// Report task targets can be a bare IP (automatic scan) or an IP:port
+// (HTTP checks). Both must map to the same registered asset.
+function reportTargetHost(raw: string): string {
+  const target = raw.trim();
+  if (/^https?:\/\//i.test(target)) {
+    try { return new URL(target).hostname.replace(/^\[|\]$/g, ''); }
+    catch { return target; }
+  }
+  const ipv6 = target.match(/^\[([^\]]+)\](?::\d+)?$/);
+  if (ipv6) return ipv6[1];
+  const ipv4Port = target.match(/^([^:]+):(\d+)$/);
+  return ipv4Port ? ipv4Port[1] : target;
+}
+
 export const ReportsPage: React.FC = () => {
   const { user } = useAuth();
   const canWrite = !isDemoMode && (user?.role === 'admin' || user?.role === 'security_engineer');
@@ -35,6 +49,18 @@ export const ReportsPage: React.FC = () => {
   const [logo, setLogo] = useState<string>();
   const [form] = Form.useForm<ReportTemplate & { enabledSections: string[] }>();
   const groups = useMemo(() => [...new Set(assets.map(a => a.businessGroup).filter(Boolean))].sort(), [assets]);
+  const scopedAssets = useMemo(() =>
+    assets.filter(a => (!businessGroup || a.businessGroup === businessGroup) &&
+      (!assetId || a.id === assetId)),
+    [assets, businessGroup, assetId]);
+  const availableTasks = useMemo(() => {
+    if (!businessGroup && !assetId) return tasks;
+    const ids = new Set(scopedAssets.map(a => a.id));
+    const hosts = new Set(scopedAssets.map(a => a.address));
+    return tasks.filter(task => ids.has(task.assetId ?? '') ||
+      task.chunks?.some(chunk => chunk.targets?.some(target =>
+        hosts.has(reportTargetHost(target)))));
+  }, [tasks, scopedAssets, businessGroup, assetId]);
   const selectedTemplate = templates.find(t => t.id === templateId);
   const reload = useCallback(async (signal?: AbortSignal) => {
     if (isDemoMode) return;
@@ -69,9 +95,9 @@ export const ReportsPage: React.FC = () => {
       <Space wrap align="end">
         <div><Text type="secondary">报告模板</Text><Select value={templateId} onChange={setTemplateId} style={{ display: 'block', width: 190 }} options={templates.map(t => ({ value: t.id, label: t.name }))} /></div>
         <div><Text type="secondary">输出格式</Text><Select value={format} onChange={setFormat} style={{ display: 'block', width: 130 }} options={Object.entries(formatNames).map(([value, label]) => ({ value, label }))} /></div>
-        <div><Text type="secondary">业务组</Text><Select allowClear value={businessGroup} onChange={setBusinessGroup} style={{ display: 'block', width: 180 }} placeholder="全部业务组" options={groups.map(value => ({ value, label: value }))} /></div>
-        <div><Text type="secondary">资产</Text><Select allowClear showSearch optionFilterProp="label" value={assetId} onChange={setAssetId} style={{ display: 'block', width: 210 }} placeholder="全部资产" options={assets.map(a => ({ value: a.id, label: a.address }))} /></div>
-        <div><Text type="secondary">扫描任务</Text><Select allowClear showSearch optionFilterProp="label" value={taskId} onChange={setTaskId} style={{ display: 'block', width: 220 }} placeholder="全部任务" options={tasks.map(t => ({ value: t.id, label: `${t.id} · ${t.status}` }))} /></div>
+        <div><Text type="secondary">业务组</Text><Select allowClear value={businessGroup} onChange={value => { setBusinessGroup(value); setAssetId(undefined); setTaskId(undefined); }} style={{ display: 'block', width: 180 }} placeholder="全部业务组" options={groups.map(value => ({ value, label: value }))} /></div>
+        <div><Text type="secondary">资产</Text><Select allowClear showSearch optionFilterProp="label" value={assetId} onChange={value => { setAssetId(value); setTaskId(undefined); }} style={{ display: 'block', width: 210 }} placeholder="全部资产" options={assets.filter(a => !businessGroup || a.businessGroup === businessGroup).map(a => ({ value: a.id, label: a.address }))} /></div>
+        <div><Text type="secondary">扫描任务</Text><Select allowClear showSearch optionFilterProp="label" value={taskId} onChange={setTaskId} style={{ display: 'block', width: 220 }} placeholder="全部任务" options={availableTasks.map(t => ({ value: t.id, label: `${t.id} · ${t.status}` }))} /></div>
         <div><Text type="secondary">最近发现时间</Text><DatePicker.RangePicker value={range} onChange={setRange} allowEmpty={[true, true]} /></div>
         <Button type="primary" loading={busy} disabled={!canWrite || !!error || !!assetsError || !!tasksError || !selectedTemplate} onClick={() => void generate()}>生成报告</Button>
       </Space>
