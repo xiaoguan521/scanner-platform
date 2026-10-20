@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"scanner-platform/internal/scheduler"
+	"scanner-platform/internal/versionmgr"
 )
 
 func TestWorkerPausesLocallyAtDeadline(t *testing.T) {
@@ -359,3 +360,73 @@ func TestWorkerStopsAndDoesNotReportAfterLeaseOutage(t *testing.T) {
 }
 
 func timePtr(value time.Time) *time.Time { return &value }
+
+func TestWorkerWaitsForMissingRulesWithoutClaimingRuleTask(t *testing.T) {
+	var claimCount atomic.Int32
+	var heartbeat struct {
+		Status           string `json:"status"`
+		LocalRuleVersion string `json:"localRuleVersion"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/nodes/heartbeat":
+			if err := json.NewDecoder(r.Body).Decode(&heartbeat); err != nil {
+				t.Error(err)
+			}
+			w.WriteHeader(http.StatusOK)
+		case "/api/v1/worker/claim":
+			claimCount.Add(1)
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Error(err)
+			}
+			if body["rulesReady"] != false || body["localRuleVersion"] != "" {
+				t.Errorf("missing rules claim was not fail-closed: %+v", body)
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+	worker := Worker{ServerURL: server.URL, ID: "waiting-worker", Client: server.Client(), CurrentRuleVersion: func(context.Context) (string, error) {
+		return "", versionmgr.ErrWaitingForRules
+	}}
+	worked, err := worker.ProcessOne(context.Background())
+	if err != nil || worked {
+		t.Fatalf("missing rules was not treated as a wait: worked=%v err=%v", worked, err)
+	}
+	if claimCount.Load() != 1 || heartbeat.Status != NodeStatusWaitingForRules || heartbeat.LocalRuleVersion != "" {
+		t.Fatalf("missing rules heartbeat/claim mismatch: claims=%d heartbeat=%+v", claimCount.Load(), heartbeat)
+	}
+}
+
+func TestWorkerStopsOnInvalidCurrentWithoutClaiming(t *testing.T) {
+	var claimCount atomic.Int32
+	var heartbeat struct {
+		Status string `json:"status"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/nodes/heartbeat":
+			_ = json.NewDecoder(r.Body).Decode(&heartbeat)
+			w.WriteHeader(http.StatusOK)
+		case "/api/v1/worker/claim":
+			claimCount.Add(1)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+	worker := Worker{ServerURL: server.URL, ID: "invalid-current-worker", Client: server.Client(), CurrentRuleVersion: func(context.Context) (string, error) {
+		return "", versionmgr.ErrInvalidCurrent
+	}}
+	worked, err := worker.ProcessOne(context.Background())
+	if worked || !errors.Is(err, versionmgr.ErrInvalidCurrent) {
+		t.Fatalf("invalid CURRENT was not surfaced: worked=%v err=%v", worked, err)
+	}
+	if claimCount.Load() != 0 || heartbeat.Status != NodeStatusRulesError {
+		t.Fatalf("invalid CURRENT still claimed or lacked error heartbeat: claims=%d status=%q", claimCount.Load(), heartbeat.Status)
+	}
+}

@@ -352,3 +352,107 @@ func TestRuntimeWorkerRenewAPIValidatesLeaseBinding(t *testing.T) {
 		t.Fatalf("wrong version renewal status=%d, want %d", response.StatusCode, http.StatusConflict)
 	}
 }
+
+func TestWorkerHeartbeatPersistsRuleReadinessAndLocalVersion(t *testing.T) {
+	store, err := repo.OpenRuntime(filepath.Join(t.TempDir(), "platform.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	server := httptest.NewServer(NewRuntimeHandler(store, nil, ""))
+	defer server.Close()
+
+	postHeartbeat := func(body string) *http.Response {
+		response, err := server.Client().Post(server.URL+"/api/v1/nodes/heartbeat", "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return response
+	}
+	response := postHeartbeat(`{"id":"rules-worker","kind":"worker","status":"WAITING_FOR_RULES","localRuleVersion":""}`)
+	if response.StatusCode != http.StatusOK {
+		response.Body.Close()
+		t.Fatalf("waiting heartbeat status=%d", response.StatusCode)
+	}
+	response.Body.Close()
+	response, err = server.Client().Get(server.URL + "/api/v1/nodes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var list ListResponse[repo.LocalNode]
+	if err := json.NewDecoder(response.Body).Decode(&list); err != nil {
+		response.Body.Close()
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if len(list.Items) != 1 || list.Items[0].Status != taskflow.NodeStatusWaitingForRules || list.Items[0].BoundRuleVersion != "" {
+		t.Fatalf("waiting rule state not persisted: %+v", list.Items)
+	}
+
+	response = postHeartbeat(`{"id":"rules-worker","kind":"worker","status":"ONLINE","localRuleVersion":"20261020.05"}`)
+	if response.StatusCode != http.StatusOK {
+		response.Body.Close()
+		t.Fatalf("ready heartbeat status=%d", response.StatusCode)
+	}
+	response.Body.Close()
+	response, err = server.Client().Get(server.URL + "/api/v1/nodes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	list = ListResponse[repo.LocalNode]{}
+	if err := json.NewDecoder(response.Body).Decode(&list); err != nil {
+		response.Body.Close()
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if len(list.Items) != 1 || list.Items[0].Status != "ONLINE" || list.Items[0].BoundRuleVersion != "20261020.05" {
+		t.Fatalf("ready rule state not persisted: %+v", list.Items)
+	}
+
+	response = postHeartbeat(`{"id":"rules-worker","kind":"worker","status":"WAITING_FOR_RULES","localRuleVersion":""}`)
+	if response.StatusCode != http.StatusOK {
+		response.Body.Close()
+		t.Fatalf("waiting heartbeat after ready status=%d", response.StatusCode)
+	}
+	response.Body.Close()
+	response, err = server.Client().Get(server.URL + "/api/v1/nodes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	list = ListResponse[repo.LocalNode]{}
+	if err := json.NewDecoder(response.Body).Decode(&list); err != nil {
+		response.Body.Close()
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if len(list.Items) != 1 || list.Items[0].Status != taskflow.NodeStatusWaitingForRules || list.Items[0].BoundRuleVersion != "" {
+		t.Fatalf("stale rule version was retained after waiting state: %+v", list.Items)
+	}
+}
+
+func TestWorkerRuleReadinessAPIRejectsInvalidBindings(t *testing.T) {
+	store, err := repo.OpenRuntime(filepath.Join(t.TempDir(), "platform.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	server := httptest.NewServer(NewRuntimeHandler(store, nil, ""))
+	defer server.Close()
+	post := func(path, body string) int {
+		response, err := server.Client().Post(server.URL+path, "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		return response.StatusCode
+	}
+	if got := post("/api/v1/worker/claim", `{"workerId":"rules-worker","localRuleVersion":"bad","rulesReady":true}`); got != http.StatusBadRequest {
+		t.Fatalf("invalid local rule version status=%d", got)
+	}
+	if got := post("/api/v1/worker/claim", `{"workerId":"rules-worker","localRuleVersion":"20261020.05","rulesReady":false}`); got != http.StatusBadRequest {
+		t.Fatalf("inconsistent rule readiness status=%d", got)
+	}
+	if got := post("/api/v1/nodes/heartbeat", `{"id":"rules-worker","kind":"worker","status":"WAITING_FOR_RULES","localRuleVersion":"20261020.05"}`); got != http.StatusBadRequest {
+		t.Fatalf("waiting heartbeat with version status=%d", got)
+	}
+}

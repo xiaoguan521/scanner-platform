@@ -38,6 +38,8 @@ type Schedule struct {
 const SyntheticTitle = "模拟发现项：任务链路已完成（未执行真实扫描）"
 
 const (
+	NodeStatusWaitingForRules  = "WAITING_FOR_RULES"
+	NodeStatusRulesError       = "RULES_ERROR"
 	SystemScanNotStarted       = "未采集：自动综合扫描在系统包检查前失败或中止"
 	SystemScanNotConfigured    = "未配置 Worker 本地 SSH 采集"
 	SystemScanPortOutOfScope   = "未采集：配置的 SSH 端口不在本次明确范围内"

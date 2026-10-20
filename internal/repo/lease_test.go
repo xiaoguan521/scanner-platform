@@ -164,3 +164,26 @@ func TestRuntimeConcurrentLeaseRenewalsKeepBinding(t *testing.T) {
 		t.Fatalf("concurrent renewal changed binding: status=%q worker=%q version=%q lease=%q", status, worker, bound, lease)
 	}
 }
+
+func TestClaimWithLocalRulesSkipsUnavailableRuleTaskButKeepsNoRuleTaskEligible(t *testing.T) {
+	store, actor := localFixture(t)
+	ctx := context.Background()
+	approveFixturePort(t, store, actor, "192.0.2.20", 80)
+	installNucleiFixtureBundle(t, store, "20261020.05")
+	if _, err := store.CreateLocalTask(ctx, taskflow.TaskInput{Engine: "nuclei", Scheme: "http", Targets: []string{"192.0.2.20:80"}}, actor); err != nil {
+		t.Fatal(err)
+	}
+	portTask := createLeasePortProbe(t, store, actor)
+
+	claimed, err := store.ClaimRuntimeTaskWithRules(ctx, "rules-missing-worker", "", false)
+	if err != nil || claimed == nil || len(claimed.Engines) != 1 || claimed.Engines[0] != "port-probe" || claimed.ID != portTask.ID {
+		t.Fatalf("missing local rules claimed the wrong task: %+v err=%v", claimed, err)
+	}
+	if claimed, err := store.ClaimRuntimeTaskWithRules(ctx, "rules-mismatch-worker", "20261020.06", true); err != nil || claimed != nil {
+		t.Fatalf("mismatched local rules claimed a rule task: %+v err=%v", claimed, err)
+	}
+	claimed, err = store.ClaimRuntimeTaskWithRules(ctx, "rules-ready-worker", "20261020.05", true)
+	if err != nil || claimed == nil || len(claimed.Engines) != 1 || claimed.Engines[0] != "nuclei" {
+		t.Fatalf("matching local rules did not claim rule task: %+v err=%v", claimed, err)
+	}
+}

@@ -936,16 +936,28 @@ func (s *RuntimeStore) ListQuarantines(ctx context.Context) ([]map[string]any, e
 }
 
 func (s *RuntimeStore) TouchNode(ctx context.Context, id, kind, task string, engineStatus ...[]taskflow.EngineStatus) error {
+	return s.TouchNodeState(ctx, id, kind, task, "", "", engineStatus...)
+}
+
+// TouchNodeState persists the Worker-local rule version and an explicit
+// readiness status. An empty localRuleVersion preserves the last reported
+// value so older updater/report heartbeats do not erase Worker state.
+func (s *RuntimeStore) TouchNodeState(ctx context.Context, id, kind, task, localRuleVersion, nodeStatus string, engineStatus ...[]taskflow.EngineStatus) error {
 	status := "ONLINE"
 	if task != "" {
 		status = "BUSY"
 	}
-	node := LocalNode{ID: id, Kind: kind, HostID: "local", IP: "127.0.0.1", Status: status, CurrentTask: task, LastHeartbeat: time.Now().UTC(), FenceStatus: "NOT_SUPPORTED"}
+	if nodeStatus != "" {
+		status = nodeStatus
+	}
+	node := LocalNode{ID: id, Kind: kind, HostID: "local", IP: "127.0.0.1", Status: status, CurrentTask: task, BoundRuleVersion: localRuleVersion, LastHeartbeat: time.Now().UTC(), FenceStatus: "NOT_SUPPORTED"}
 	if len(engineStatus) > 0 {
 		node.Engines = engineStatus[0]
 	}
 	data, _ := json.Marshal(node)
-	_, err := s.db.ExecContext(ctx, `INSERT INTO local_nodes(id,data) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET data=CASE WHEN json_extract(excluded.data,'$.engines') IS NULL THEN json_set(excluded.data,'$.engines',json_extract(local_nodes.data,'$.engines')) ELSE excluded.data END`, id, string(data))
+	_, err := s.db.ExecContext(ctx, `INSERT INTO local_nodes(id,data) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET data=json_set(
+		json_set(excluded.data,'$.boundRuleVersion',CASE WHEN json_extract(excluded.data,'$.status') IN ('WAITING_FOR_RULES','RULES_ERROR') THEN '' WHEN COALESCE(json_extract(excluded.data,'$.boundRuleVersion'),'')='' THEN COALESCE(json_extract(local_nodes.data,'$.boundRuleVersion'),'') ELSE json_extract(excluded.data,'$.boundRuleVersion') END),
+		'$.engines',CASE WHEN json_extract(excluded.data,'$.engines') IS NULL THEN json_extract(local_nodes.data,'$.engines') ELSE json_extract(excluded.data,'$.engines') END)`, id, string(data))
 	return err
 }
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"scanner-platform/internal/rules"
 	"scanner-platform/internal/sshcollect"
 	"scanner-platform/internal/taskflow"
+	"scanner-platform/internal/versionmgr"
 )
 
 const NucleiVersion = "3.11.1"
@@ -43,6 +45,31 @@ func (r *Runner) binary(name string) string {
 	return filepath.Join(r.BinDir, name)
 }
 func (r *Runner) zapJAR() string { return filepath.Join(r.BinDir, "zap", "zap-"+ZAPVersion+".jar") }
+
+// CurrentRuleVersion reads the Worker-local CURRENT pointer without creating
+// or changing anything under the read-only rule root. A missing pointer is a
+// normal waiting state; malformed pointers fail closed through versionmgr.
+func (r *Runner) CurrentRuleVersion(ctx context.Context) (string, error) {
+	version, err := versionmgr.ReadLocalCurrent(ctx, r.RulesDir)
+	if err != nil {
+		// A first boot may not have a rule root yet. Treat that state as
+		// waiting for rules; malformed existing roots remain fail-closed errors.
+		if errors.Is(err, os.ErrNotExist) {
+			return "", versionmgr.ErrWaitingForRules
+		}
+		return "", err
+	}
+	// Keep the readiness check cheap and read-only. Full manifest/file
+	// integrity is rechecked by ruleDirectory immediately before each engine.
+	info, err := os.Lstat(filepath.Join(r.RulesDir, "releases", version))
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		if err == nil {
+			err = fmt.Errorf("current release is not a directory")
+		}
+		return "", fmt.Errorf("%w: %v", versionmgr.ErrInvalidCurrent, err)
+	}
+	return version, nil
+}
 
 func (r *Runner) Status() []taskflow.EngineStatus {
 	r.checkVersions()

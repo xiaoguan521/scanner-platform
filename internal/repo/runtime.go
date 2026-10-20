@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"scanner-platform/internal/assets"
@@ -442,8 +443,20 @@ func (s *RuntimeStore) runtimeTaskFindingCounts(ctx context.Context) (map[string
 }
 
 func (s *RuntimeStore) ClaimRuntimeTask(ctx context.Context, worker string) (*taskflow.Task, error) {
+	return s.claimRuntimeTaskWithRules(ctx, worker, "", true, false)
+}
+
+// ClaimRuntimeTaskWithRules is used by a real Worker after it has read its
+// local CURRENT pointer. Rule-backed tasks are left queued when the local
+// version is missing or differs; no task is claimed and no fake scan failure
+// is created. Port probes and passive ZAP tasks do not require a rule bundle.
+func (s *RuntimeStore) ClaimRuntimeTaskWithRules(ctx context.Context, worker, localRuleVersion string, rulesReady bool) (*taskflow.Task, error) {
+	return s.claimRuntimeTaskWithRules(ctx, worker, localRuleVersion, rulesReady, true)
+}
+
+func (s *RuntimeStore) claimRuntimeTaskWithRules(ctx context.Context, worker, localRuleVersion string, rulesReady, enforceRules bool) (*taskflow.Task, error) {
 	for attempt := 0; attempt < 10; attempt++ {
-		task, err := s.claimRuntimeTask(ctx, worker)
+		task, err := s.claimRuntimeTask(ctx, worker, localRuleVersion, rulesReady, enforceRules)
 		var sqliteErr interface{ Code() int }
 		if err == nil || !errors.As(err, &sqliteErr) || sqliteErr.Code()&255 != 5 {
 			return task, err
@@ -459,17 +472,30 @@ func (s *RuntimeStore) ClaimRuntimeTask(ctx context.Context, worker string) (*ta
 	return nil, fmt.Errorf("claim queue remained busy")
 }
 
-func (s *RuntimeStore) claimRuntimeTask(ctx context.Context, worker string) (*taskflow.Task, error) {
+func (s *RuntimeStore) claimRuntimeTask(ctx context.Context, worker, localRuleVersion string, rulesReady, enforceRules bool) (*taskflow.Task, error) {
 	// Check each queued task against its persisted window immediately before dispatch.
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	var claimedDetail taskDetails
+	claimedID := ""
+	skippedForRules := map[string]bool{}
 	defer tx.Rollback()
 	for {
 		var id, data string
-		err = tx.QueryRowContext(ctx, `SELECT id,details FROM scan_tasks WHERE status='PENDING' ORDER BY created_at,id LIMIT 1`).Scan(&id, &data)
+		query := `SELECT id,details FROM scan_tasks WHERE status='PENDING'`
+		args := make([]any, 0, len(skippedForRules))
+		if len(skippedForRules) > 0 {
+			placeholders := make([]string, 0, len(skippedForRules))
+			for id := range skippedForRules {
+				placeholders = append(placeholders, "?")
+				args = append(args, id)
+			}
+			query += " AND id NOT IN (" + strings.Join(placeholders, ",") + ")"
+		}
+		query += " ORDER BY created_at,id LIMIT 1"
+		err = tx.QueryRowContext(ctx, query, args...).Scan(&id, &data)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, tx.Commit()
 		}
@@ -479,6 +505,11 @@ func (s *RuntimeStore) claimRuntimeTask(ctx context.Context, worker string) (*ta
 		var detail taskDetails
 		if err := json.Unmarshal([]byte(data), &detail); err != nil {
 			return nil, err
+		}
+		if enforceRules && requiresRuleBundle(detail.Input) &&
+			(!rulesReady || localRuleVersion == "" || detail.RuleVersion == "" || detail.RuleVersion != localRuleVersion) {
+			skippedForRules[id] = true
+			continue
 		}
 		if len(detail.Input.Targets) > 0 || detail.Input.Engine == "trivy" {
 			targets, fresh, err := resolveTargets(ctx, tx, detail.Input)
@@ -544,6 +575,7 @@ func (s *RuntimeStore) claimRuntimeTask(ctx context.Context, worker string) (*ta
 			return nil, err
 		}
 		claimedDetail = detail
+		claimedID = id
 		break
 	}
 	claimNow := time.Now().UTC()
@@ -568,8 +600,7 @@ func (s *RuntimeStore) claimRuntimeTask(ctx context.Context, worker string) (*ta
 		leaseExpiry = expires.Format(time.RFC3339Nano)
 	}
 	task, err := readRuntimeTask(tx.QueryRowContext(ctx, `UPDATE scan_tasks SET status='RUNNING',worker_id=?,started_at=?,pinned_rule_version=?,lease_expires_at=?
-		WHERE id=(SELECT id FROM scan_tasks WHERE status='PENDING' ORDER BY created_at,id LIMIT 1)
-		AND status='PENDING' RETURNING `+taskColumns, worker, claimNow.Format(time.RFC3339Nano), leaseVersion, leaseExpiry))
+		WHERE id=? AND status='PENDING' RETURNING `+taskColumns, worker, claimNow.Format(time.RFC3339Nano), leaseVersion, leaseExpiry, claimedID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -583,6 +614,10 @@ func (s *RuntimeStore) claimRuntimeTask(ctx context.Context, worker string) (*ta
 		return nil, err
 	}
 	return &task, nil
+}
+
+func requiresRuleBundle(input taskflow.TaskInput) bool {
+	return !input.Synthetic && input.Engine != "port-probe" && input.Engine != "zap"
 }
 
 func (s *RuntimeStore) CompleteRuntimeTask(ctx context.Context, report taskflow.Report) error {

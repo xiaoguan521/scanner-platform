@@ -1394,6 +1394,13 @@ paths:
               properties:
                 workerId:
                   type: string
+                localRuleVersion:
+                  type: string
+                  maxLength: 200
+                  description: Read-only Worker CURRENT version; empty when the Worker is waiting for rules.
+                rulesReady:
+                  type: boolean
+                  description: When present, Server leaves rule-backed tasks queued unless this Worker reports a matching local version.
               required:
               - workerId
   "/api/v1/worker/report":
@@ -1524,6 +1531,13 @@ paths:
                   - updater
                 currentTask:
                   type: string
+                localRuleVersion:
+                  type: string
+                  maxLength: 200
+                  description: Read-only local CURRENT version reported by a Worker.
+                status:
+                  type: string
+                  enum: [ONLINE, BUSY, WAITING_FOR_RULES, RULES_ERROR]
                 engines:
                   type: array
                   maxItems: 3
@@ -2760,6 +2774,8 @@ components:
           - ONLINE
           - OFFLINE
           - BUSY
+          - WAITING_FOR_RULES
+          - RULES_ERROR
           - UNKNOWN
         currentTask:
           type: string

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"scanner-platform/internal/scheduler"
+	"scanner-platform/internal/versionmgr"
 )
 
 type Worker struct {
@@ -26,7 +27,10 @@ type Worker struct {
 	ProbePorts   func(context.Context, Task) ([]PortProbeResult, error)
 	AutoScan     func(context.Context, Task) (AutoResult, error)
 	EngineStatus func() []EngineStatus
-	LeaseGuard   scheduler.LeaseGuard
+	// CurrentRuleVersion reads the local read-only CURRENT pointer. The real
+	// bootstrap supplies it; old fake/synthetic tests may leave it nil.
+	CurrentRuleVersion func(context.Context) (string, error)
+	LeaseGuard         scheduler.LeaseGuard
 	// RequireLeases is enabled by the real Worker bootstrap. Direct protocol
 	// tests may leave it false to exercise legacy fake tasks that predate lease
 	// fields; Server-issued real tasks always include the fields.
@@ -116,7 +120,10 @@ func (w *Worker) Run(ctx context.Context, once bool) error {
 	for {
 		worked, err := w.ProcessOne(ctx)
 		if err != nil {
-			if once || ctx.Err() != nil {
+			// An invalid CURRENT is a local integrity/configuration error. Keep
+			// the worker stopped until the rules installation is repaired rather
+			// than polling forever while reporting the same RULES_ERROR state.
+			if once || ctx.Err() != nil || errors.Is(err, versionmgr.ErrInvalidCurrent) {
 				return err
 			}
 			slog.Warn("worker request failed; retrying", "error", err)
@@ -134,11 +141,48 @@ func (w *Worker) Run(ctx context.Context, once bool) error {
 }
 
 func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
-	if w.EngineStatus != nil {
-		_, _ = w.post(ctx, "/api/v1/nodes/heartbeat", map[string]any{"id": w.ID, "kind": "worker", "engines": w.EngineStatus()}, nil)
+	localRuleVersion := ""
+	rulesReady := true
+	nodeStatus := "ONLINE"
+	readinessErr := error(nil)
+	if w.CurrentRuleVersion != nil {
+		version, err := w.CurrentRuleVersion(ctx)
+		if err != nil {
+			if errors.Is(err, versionmgr.ErrWaitingForRules) {
+				rulesReady = false
+				nodeStatus = NodeStatusWaitingForRules
+			} else {
+				nodeStatus = NodeStatusRulesError
+				readinessErr = fmt.Errorf("local rule readiness check failed: %w", err)
+			}
+		} else if strings.TrimSpace(version) == "" {
+			rulesReady = false
+			nodeStatus = NodeStatusWaitingForRules
+		} else {
+			localRuleVersion = version
+		}
+	}
+	if w.EngineStatus != nil || w.CurrentRuleVersion != nil {
+		payload := map[string]any{"id": w.ID, "kind": "worker"}
+		if w.EngineStatus != nil {
+			payload["engines"] = w.EngineStatus()
+		}
+		if w.CurrentRuleVersion != nil {
+			payload["localRuleVersion"] = localRuleVersion
+			payload["status"] = nodeStatus
+		}
+		_, _ = w.post(ctx, "/api/v1/nodes/heartbeat", payload, nil)
+	}
+	if readinessErr != nil {
+		return false, readinessErr
 	}
 	var task Task
-	code, err := w.post(ctx, "/api/v1/worker/claim", map[string]string{"workerId": w.ID}, &task)
+	claimPayload := map[string]any{"workerId": w.ID}
+	if w.CurrentRuleVersion != nil {
+		claimPayload["localRuleVersion"] = localRuleVersion
+		claimPayload["rulesReady"] = rulesReady
+	}
+	code, err := w.post(ctx, "/api/v1/worker/claim", claimPayload, &task)
 	if err != nil {
 		return false, err
 	}
@@ -179,6 +223,9 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 					TaskStatus string `json:"taskStatus"`
 				}
 				payload := map[string]any{"id": w.ID, "kind": "worker", "currentTask": task.ID}
+				if w.CurrentRuleVersion != nil {
+					payload["localRuleVersion"] = localRuleVersion
+				}
 				if current, ok := progress.snapshot(); ok {
 					payload["progress"] = ProgressUpdate{TaskID: task.ID, Phase: current.Phase, Completed: current.Completed, Total: current.Total}
 				}

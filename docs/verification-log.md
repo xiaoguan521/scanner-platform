@@ -18,6 +18,7 @@
 | 自动综合扫描 HTTP 失败状态回报 | Worker/Server 回归与 V4 排除端口验证通过；最新 V5 任务界面显示已完成，结果仍待逐项复核 | HTTP 错误保持 FAILED 并保存明确的系统包阶段状态。此前路由阻塞记录为历史状态；本轮开发期间未重启原测试实例，新应用能力不属于该次实扫验收范围。 |
 | 正式客户端签名/公证和供应链证明 | 未实施 | Phase 0 归档仅是占位骨架。缺少 Windows 代码签名、macOS 签名/公证及 Artifact Attestation；不能直接当作受信任的可部署产品发布。 |
 | PoC #2 租约守护与本地任务租约（2026-10-20） | Scheduler、SQLite Server/Worker HTTP 联调及 race 单测通过；生产节点验收未执行 | 真实任务领取时生成 `pinned_rule_version`/`lease_expires_at`，`/worker/renew` 校验任务、Worker、版本、过期和 hard deadline，`Tick` 回收过期任务；Worker 租约失联时停止且不发送陈旧回报。仍需在 TLS/节点令牌、独立进程和强杀路径上实测。 |
+| PoC #2 CURRENT 门禁与本地规则版本（2026-10-20） | 本地 CURRENT 读取、缺失等待、版本过滤和节点心跳单测通过；生产多节点验收未执行 | 真实 Worker 读取只读规则根的 CURRENT，缺失时上报 `WAITING_FOR_RULES` 并退避，不领取规则任务；规则任务只在 Server 看到相同 `localRuleVersion` 时领取，端口探测/ZAP 保持无规则兼容。无效 CURRENT 显式上报 `RULES_ERROR` 并停止；完整 manifest/hash 仍在引擎执行前复核。 |
 | PoC #2 GC 两阶段文件操作（2026-10-20） | 本地文件实现与隔离竞态单测通过；真实 Updater 集成未执行 | 当前和最近备用版本保护、>=2h 退役宽限期、每阶段向 Server 复核本节点 RUNNING 任务；使用限定目录的 rename、持久隔离记录和二次检查后删除。缺少可信退役状态或隔离记录时拒绝回收；完整激活协调、真实 Node API 和 Windows 实机行为仍待集成验证。 |
 | 四入口与本地只读 API 骨架（2026-10-16） | 仅搭建结构，本轮按用户要求暂未运行测试 | 增加统一启动入口、Portable 编译入口、Server/Portable loopback 只读诊断 API 和数据库接口定义。业务接口 501，readyz 503，未启用 Node API、数据库、扫描或规则激活。须后续完成跨平台编译、API/安全边界测试与接口联调。 |
 | UI 用户管理契约与前端发布构建（2026-10-16） | 本地前端双模式、Go、YAML/actionlint 通过；GitHub 云端未运行 | 新增用户/角色演示页面，GET `/api/v1/users` 仅返回 501；用户写入/认证/RBAC/审计不开放。CI 纳入 Node.js 22 npm ci + 双模式打包检查；Release 仅构建一次 Server-mode UI 作为 `web/` 静态资产加入每个平台的归档，不表示 Server 已支持 UI 静态服务。 |
@@ -36,6 +37,12 @@
 - 新增 `POST /api/v1/worker/renew`，只允许原任务、Worker 和绑定版本续租。Server 拒绝错误绑定、过期租约和 hard deadline 后续租，并把新到期时间限制在短租期和 hard deadline 内。任务结果回报也校验同一租约；`Tick` 将过期任务回收到 `PENDING` 或 `PAUSED_WINDOW`。
 - Worker 真实启动路径使用 `scheduler.LeaseGuard`；续租失联达到最后确认租期后取消执行，租约错误不会再发送可能被重新分配任务的 FAILED/COMPLETED 回报。缺少真实租约字段时真实 Worker fail closed，旧 fake/synthetic 测试保持兼容。
 - `go test -race ./internal/repo ./internal/api ./internal/taskflow ./internal/scheduler` 通过，覆盖旧 Schema 迁移、claim/renew 绑定、续租边界、Tick 回收、API 200/409、并发续租和 Worker 续租成功/失联自终止。该结果仅证明本地 SQLite 和回环 HTTP 协议；生产 TLS、节点令牌、独立进程强杀及跨节点重分配仍未验收。
+
+## 2026-10-20：PoC #2 CURRENT 门禁与规则版本上报
+
+- Runner 新增只读 `CurrentRuleVersion` 检查，使用 `versionmgr.ReadLocalCurrent`，拒绝缺失、非法指针、链接和不存在的当前版本目录；不创建或修改规则目录。真实 Worker bootstrap 接入该回调。
+- Worker 首次及周期心跳携带 `localRuleVersion`；缺失 CURRENT 时节点状态为 `WAITING_FOR_RULES`，按轮询间隔等待，Server 领取过滤会把规则任务留在队列。当前版本不一致的规则任务同样不领取；`port-probe`/`zap` 不依赖规则，保留兼容路径。无效 CURRENT 状态为 `RULES_ERROR` 并停止领取。
+- Server 在 LocalNode 的 `boundRuleVersion` 保存最近一次 Worker 版本；OpenAPI、API 文档与 PoC #2 已同步。新增 Worker 等待/无效 CURRENT、规则任务过滤、节点心跳持久化和 Runner 只读路径测试。生产节点 TLS/令牌、跨节点版本分发仍未验收。
 
 ## 2026-10-20：自动综合扫描失败回报修复与靶场进度
 

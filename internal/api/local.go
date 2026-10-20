@@ -4,23 +4,34 @@ import (
 	"errors"
 	"net/http"
 	"scanner-platform/internal/repo"
+	"scanner-platform/internal/rules"
 	"scanner-platform/internal/taskflow"
 )
 
 func registerLocalHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui func(bool, http.HandlerFunc) http.HandlerFunc, admin func(http.HandlerFunc) http.HandlerFunc, actor func(*http.Request) string) {
 	mux.HandleFunc("POST /api/v1/nodes/heartbeat", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			ID          string                   `json:"id"`
-			Kind        string                   `json:"kind"`
-			CurrentTask string                   `json:"currentTask"`
-			Engines     []taskflow.EngineStatus  `json:"engines"`
-			Progress    *taskflow.ProgressUpdate `json:"progress,omitempty"`
+			ID               string                   `json:"id"`
+			Kind             string                   `json:"kind"`
+			CurrentTask      string                   `json:"currentTask"`
+			LocalRuleVersion string                   `json:"localRuleVersion"`
+			Status           string                   `json:"status"`
+			Engines          []taskflow.EngineStatus  `json:"engines"`
+			Progress         *taskflow.ProgressUpdate `json:"progress,omitempty"`
 		}
 		if !runtimeDecode(w, r, &body) {
 			return
 		}
-		if !runtimeWorkerID.MatchString(body.ID) || (body.Kind != "worker" && body.Kind != "updater") || len(body.CurrentTask) > 128 {
+		if !runtimeWorkerID.MatchString(body.ID) || (body.Kind != "worker" && body.Kind != "updater") || len(body.CurrentTask) > 128 || len(body.LocalRuleVersion) > 200 || body.LocalRuleVersion != "" && !rules.ValidateVersion(body.LocalRuleVersion) {
 			bad(w, 400, "invalid_node")
+			return
+		}
+		if body.Status != "" && body.Status != "ONLINE" && body.Status != "BUSY" && body.Status != taskflow.NodeStatusWaitingForRules && body.Status != taskflow.NodeStatusRulesError {
+			bad(w, 400, "invalid_node_status")
+			return
+		}
+		if (body.Status == taskflow.NodeStatusWaitingForRules || body.Status == taskflow.NodeStatusRulesError) && body.LocalRuleVersion != "" {
+			bad(w, 400, "invalid_rule_readiness")
 			return
 		}
 		if body.Progress != nil {
@@ -29,7 +40,7 @@ func registerLocalHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui func
 				return
 			}
 		}
-		if !runtimeStoreError(w, store.TouchNode(r.Context(), body.ID, body.Kind, body.CurrentTask, body.Engines)) {
+		if !runtimeStoreError(w, store.TouchNodeState(r.Context(), body.ID, body.Kind, body.CurrentTask, body.LocalRuleVersion, body.Status, body.Engines)) {
 			state := ""
 			if body.CurrentTask != "" && body.Kind == "worker" {
 				state = store.TaskStateForWorker(r.Context(), body.CurrentTask, body.ID)

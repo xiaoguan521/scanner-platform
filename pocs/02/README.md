@@ -19,6 +19,12 @@
 - `RuntimeStore.Tick` 会回收已过期的真实任务：hard deadline 尚未到时回到 `PENDING`，否则进入 `PAUSED_WINDOW`，并清除旧 Worker 和规则绑定，避免失联任务永久保持 `RUNNING`。Worker 的真实启动路径启用 `LeaseGuard`，续租连续失败达到最后确认到期时间后停止执行，且不会提交过期的成功/失败回报；停止超时交给进程监督者升级处理。
 - 该批次保留旧 fake/synthetic HTTP 测试的兼容行为；真实 Worker 对缺少租约字段的非模拟任务 fail closed。当前本地回环 API 尚未接入生产 TLS、节点令牌或跨进程强杀。
 
+## 本轮已实现：CURRENT 等待与节点规则状态
+
+- 真实 Worker 启动前只读检查本地 `CURRENT`。缺失时通过心跳保存 `WAITING_FOR_RULES`，携带空的 `localRuleVersion`，按既有轮询间隔等待；不会领取规则任务，也不会生成“引擎失败”回报。`port-probe` 和被动 `zap` 不依赖规则，可在没有 CURRENT 时继续领取。
+- Server 的领取请求接受 `localRuleVersion` 与 `rulesReady`，对规则任务只选择版本匹配的队列项；本地版本不匹配时保持排队。节点清册保存该版本到 `boundRuleVersion`，周期心跳继续携带版本。CURRENT 格式、规则根或当前版本目录无效时 Worker 发送 `RULES_ERROR` 心跳并明确停止，不写规则目录。
+- 当前仍未实现跨节点生产身份/TLS；规则文件的完整 manifest/hash 校验仍在引擎执行前由 Runner 完成。此批次只提供本地 CURRENT 就绪门禁和版本一致性队列过滤。
+
 本批次单测覆盖旧 Schema 迁移、领取绑定、错误 Worker/版本和过期续租拒绝、hard deadline 限制、Tick 回收、API 200/409、并发续租以及 Worker 续租成功/失联自终止。使用 `go test -race ./internal/repo ./internal/api ./internal/taskflow ./internal/scheduler` 运行。
 
 ## 已实现：GC 资格检查

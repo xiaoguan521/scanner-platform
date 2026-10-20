@@ -10,6 +10,7 @@ import (
 
 	"scanner-platform/internal/account"
 	"scanner-platform/internal/repo"
+	"scanner-platform/internal/rules"
 	"scanner-platform/internal/taskflow"
 )
 
@@ -129,7 +130,9 @@ func NewRuntimeHandler(store *repo.RuntimeStore, fallback http.Handler, uiDir st
 	}))
 	mux.HandleFunc("POST /api/v1/worker/claim", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			WorkerID string `json:"workerId"`
+			WorkerID         string `json:"workerId"`
+			LocalRuleVersion string `json:"localRuleVersion"`
+			RulesReady       *bool  `json:"rulesReady"`
 		}
 		if !runtimeDecode(w, r, &body) {
 			return
@@ -138,10 +141,32 @@ func NewRuntimeHandler(store *repo.RuntimeStore, fallback http.Handler, uiDir st
 			runtimeJSON(w, http.StatusBadRequest, APIError{Error: "invalid_worker", Message: "Worker ID 格式无效"})
 			return
 		}
-		if runtimeStoreError(w, store.TouchNode(r.Context(), body.WorkerID, "worker", "")) {
+		if len(body.LocalRuleVersion) > 200 || body.LocalRuleVersion != "" && !rules.ValidateVersion(body.LocalRuleVersion) {
+			bad(w, http.StatusBadRequest, "invalid_rule_version")
 			return
 		}
-		task, err := store.ClaimRuntimeTask(r.Context(), body.WorkerID)
+		if body.RulesReady != nil && ((!*body.RulesReady && body.LocalRuleVersion != "") || (*body.RulesReady && body.LocalRuleVersion == "")) {
+			bad(w, http.StatusBadRequest, "invalid_rule_readiness")
+			return
+		}
+		if body.RulesReady != nil {
+			status := "ONLINE"
+			if !*body.RulesReady {
+				status = taskflow.NodeStatusWaitingForRules
+			}
+			if runtimeStoreError(w, store.TouchNodeState(r.Context(), body.WorkerID, "worker", "", body.LocalRuleVersion, status)) {
+				return
+			}
+		} else if runtimeStoreError(w, store.TouchNode(r.Context(), body.WorkerID, "worker", "")) {
+			return
+		}
+		var task *taskflow.Task
+		var err error
+		if body.RulesReady != nil {
+			task, err = store.ClaimRuntimeTaskWithRules(r.Context(), body.WorkerID, body.LocalRuleVersion, *body.RulesReady)
+		} else {
+			task, err = store.ClaimRuntimeTask(r.Context(), body.WorkerID)
+		}
 		if runtimeStoreError(w, err) {
 			return
 		}
