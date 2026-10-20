@@ -29,21 +29,23 @@ type targetOwner struct {
 	Owner string `json:"owner"`
 }
 type taskDetails struct {
-	EffectiveExclusions []portprobe.Range          `json:"effectiveExclusions,omitempty"`
-	AssetProfile        inventory.Profile          `json:"assetProfile,omitempty"`
-	Input               taskflow.TaskInput         `json:"input"`
-	Archived            bool                       `json:"archived,omitempty"`
-	Skipped             []string                   `json:"skipped"`
-	Owners              map[string]targetOwner     `json:"owners"`
-	ProbePorts          []int                      `json:"probePorts,omitempty"`
-	ProbeResults        []taskflow.PortProbeResult `json:"probeResults,omitempty"`
-	VulnPorts           []int                      `json:"vulnerabilityPorts,omitempty"`
-	CustomRules         [][]byte                   `json:"customRules,omitempty"`
-	Services            []taskflow.ServiceResult   `json:"services,omitempty"`
-	SystemStatus        string                     `json:"systemScanStatus,omitempty"`
-	Deadline            string                     `json:"deadline"`
-	RuleVersion         string                     `json:"ruleVersion"`
-	Error               string                     `json:"error,omitempty"`
+	EffectiveExclusions []portprobe.Range            `json:"effectiveExclusions,omitempty"`
+	AssetProfile        inventory.Profile            `json:"assetProfile,omitempty"`
+	Input               taskflow.TaskInput           `json:"input"`
+	Archived            bool                         `json:"archived,omitempty"`
+	Skipped             []string                     `json:"skipped"`
+	Owners              map[string]targetOwner       `json:"owners"`
+	ProbePorts          []int                        `json:"probePorts,omitempty"`
+	ProbeResults        []taskflow.PortProbeResult   `json:"probeResults,omitempty"`
+	VulnPorts           []int                        `json:"vulnerabilityPorts,omitempty"`
+	CustomRules         [][]byte                     `json:"customRules,omitempty"`
+	Services            []taskflow.ServiceResult     `json:"services,omitempty"`
+	SystemStatus        string                       `json:"systemScanStatus,omitempty"`
+	ApplicationStatus   string                       `json:"applicationScanStatus,omitempty"`
+	ApplicationResults  []taskflow.ApplicationResult `json:"applicationResults,omitempty"`
+	Deadline            string                       `json:"deadline"`
+	RuleVersion         string                       `json:"ruleVersion"`
+	Error               string                       `json:"error,omitempty"`
 }
 
 func (s *RuntimeStore) initLocal(ctx context.Context) error {
@@ -76,6 +78,10 @@ func (s *RuntimeStore) initLocal(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS audit_logs(id TEXT PRIMARY KEY,actor TEXT NOT NULL,action TEXT NOT NULL,object_type TEXT,object_id TEXT,detail TEXT,created_at TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS task_schedules(id TEXT PRIMARY KEY,data TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS local_nodes(id TEXT PRIMARY KEY,data TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS scan_task_progress(
+			task_id TEXT PRIMARY KEY REFERENCES scan_tasks(id) ON DELETE CASCADE,
+			worker_id TEXT NOT NULL, phase TEXT NOT NULL, completed INTEGER NOT NULL,
+			total INTEGER NOT NULL, updated_at TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS local_rule_bundles(version TEXT PRIMARY KEY,data TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS rule_jobs(id TEXT PRIMARY KEY,status TEXT NOT NULL,data TEXT NOT NULL,bundle BLOB,created_at TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS custom_rules(id TEXT PRIMARY KEY,data TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL,updated_at TEXT NOT NULL)`,

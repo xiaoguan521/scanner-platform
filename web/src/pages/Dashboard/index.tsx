@@ -101,7 +101,7 @@ export const DashboardPage: React.FC = () => {
               valueStyle={{ fontSize: 18 }}
             />
             <div style={{ marginTop: 8, fontSize: 12, color: '#64748b' }}>
-              本地 Updater 上报的当前版本；未验签、未验证引擎兼容性
+              本地 Updater 上报：{currentRule?.signatureVerified?'签名已验证':'签名未验证'}；{currentRule?.engineValidated?'引擎兼容性已验证':'引擎兼容性未验证'}
             </div>
           </Card>
         </Col>

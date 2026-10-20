@@ -38,6 +38,14 @@ type scopeProxy struct {
 	connections []net.Conn
 	blocked     int
 	failed      int
+	denials     proxyDenials
+}
+
+type proxyDenials struct {
+	invalidAuthority      int
+	endpointNotAuthorized int
+	credentialedAuthority int
+	requestNotAllowed     int
 }
 
 func startScopeProxy(ctx context.Context, targets []string) (*scopeProxy, error) {
@@ -68,16 +76,97 @@ func (p *scopeProxy) Close() {
 		_ = c.Close()
 	}
 }
-func (p *scopeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+
+// canonicalProxyTarget keeps Nuclei's proxy request inside the exact IP:port
+// allowlist. HTTP clients may omit the scheme's default port in an absolute
+// URL, so restore only that well-defined port before comparing the endpoint.
+// CONNECT authorities must always carry an explicit port.
+func canonicalProxyTarget(authority, scheme string, connect bool) (string, error) {
+	if connect {
+		return numericTarget(authority)
+	}
+	defaultPort := ""
+	switch scheme {
+	case "http":
+		defaultPort = "80"
+	case "https":
+		defaultPort = "443"
+	default:
+		return "", fmt.Errorf("unsupported proxy URL scheme")
+	}
+	host, port, err := net.SplitHostPort(authority)
+	if err != nil {
+		host = authority
+		if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+			host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+		}
+		if _, parseErr := netip.ParseAddr(host); parseErr != nil {
+			return "", fmt.Errorf("numeric IP authority required")
+		}
+		port = defaultPort
+	}
+	return numericTarget(net.JoinHostPort(host, port))
+}
+
+func (p *scopeProxy) authorizeRequest(r *http.Request) (string, string) {
+	if r.URL.User != nil {
+		return "", "credentialed_authority"
+	}
+	connect := r.Method == http.MethodConnect
 	authority := r.URL.Host
-	if r.Method == http.MethodConnect {
+	if connect {
 		authority = r.Host
 	}
-	canonical, err := numericTarget(authority)
-	if err != nil || !p.allowed[canonical] || r.URL.User != nil {
-		p.mu.Lock()
-		p.blocked++
-		p.mu.Unlock()
+	canonical, err := canonicalProxyTarget(authority, r.URL.Scheme, connect)
+	if err != nil {
+		return "", "invalid_authority"
+	}
+	if !p.allowed[canonical] {
+		return "", "endpoint_not_authorized"
+	}
+	return canonical, ""
+}
+
+func (p *scopeProxy) recordDenial(reason string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.blocked++
+	switch reason {
+	case "invalid_authority":
+		p.denials.invalidAuthority++
+	case "endpoint_not_authorized":
+		p.denials.endpointNotAuthorized++
+	case "credentialed_authority":
+		p.denials.credentialedAuthority++
+	case "request_not_allowed":
+		p.denials.requestNotAllowed++
+	}
+}
+
+func (p *scopeProxy) blockedSummary() (blocked, failed int, summary string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	parts := []string{}
+	for _, item := range []struct {
+		name  string
+		count int
+	}{
+		{"invalid_authority", p.denials.invalidAuthority},
+		{"endpoint_not_authorized", p.denials.endpointNotAuthorized},
+		{"credentialed_authority", p.denials.credentialedAuthority},
+		{"request_not_allowed", p.denials.requestNotAllowed},
+	} {
+		if item.count > 0 {
+			parts = append(parts, fmt.Sprintf("%s=%d", item.name, item.count))
+		}
+	}
+	return p.blocked, p.failed, strings.Join(parts, ",")
+}
+
+func (p *scopeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	canonical, reason := p.authorizeRequest(r)
+	if reason != "" {
+		p.recordDenial(reason)
 		http.Error(w, "target outside explicit IP:port list", 403)
 		return
 	}
@@ -120,9 +209,7 @@ func (p *scopeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.URL.Scheme != "http" || r.Method != http.MethodGet || r.URL.Path != "" && r.URL.Path != "/" || r.URL.RawQuery != "" {
-		p.mu.Lock()
-		p.blocked++
-		p.mu.Unlock()
+		p.recordDenial("request_not_allowed")
 		http.Error(w, "only root GET baseline requests allowed", 403)
 		return
 	}

@@ -95,6 +95,9 @@ func (r *Runner) trivy(ctx context.Context, task taskflow.Task, dir string) ([]t
 		}
 		return nil, err
 	}
+	if task.RequireInputSnapshot && snapshot == "" {
+		return nil, fmt.Errorf("application input requires a verified snapshot")
+	}
 	sourceInput := input
 	if task.InputKind == "image-archive" {
 		layout := filepath.Join(dir, "oci-input")
@@ -162,6 +165,14 @@ func (r *Runner) trivy(ctx context.Context, task taskflow.Task, dir string) ([]t
 	data, err := os.ReadFile(output)
 	if err != nil {
 		return nil, err
+	}
+	if task.ExpectedArtifactType != "" {
+		if task.InputKind != "artifact" || !task.RequireInputSnapshot {
+			return nil, fmt.Errorf("invalid internal artifact task")
+		}
+		if err := validateArtifactAnalysis(data, task.ExpectedArtifactType); err != nil {
+			return nil, err
+		}
 	}
 	detections, err := parseTrivy(data, task.InputPath, task.InputKind == "rootfs")
 	if err != nil {
@@ -347,4 +358,34 @@ func parseTrivy(data []byte, target string, requireOS bool) ([]taskflow.Detectio
 		}
 	}
 	return out, nil
+}
+
+// Trivy 0.76 retains zero-vulnerability lang-pkgs results with a nonempty Target.
+// Validate the analyzer type for this independent input without guessing file
+// identity from the engine's display Target string.
+func validateArtifactAnalysis(data []byte, expected string) error {
+	if expected != "jar" && expected != "gobinary" {
+		return fmt.Errorf("unsupported expected artifact analyzer")
+	}
+	var report struct {
+		Results []struct {
+			Class  string `json:"Class"`
+			Type   string `json:"Type"`
+			Target string `json:"Target"`
+		} `json:"Results"`
+	}
+	if err := json.Unmarshal(data, &report); err != nil {
+		return fmt.Errorf("invalid Trivy artifact JSON")
+	}
+	matched := false
+	for _, result := range report.Results {
+		if result.Class != "lang-pkgs" || result.Type != expected || strings.TrimSpace(result.Target) == "" {
+			return fmt.Errorf("Trivy artifact result does not match selected analyzer")
+		}
+		matched = true
+	}
+	if !matched {
+		return fmt.Errorf("Trivy did not analyze selected artifact")
+	}
+	return nil
 }

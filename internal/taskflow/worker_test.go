@@ -117,6 +117,96 @@ func TestWorkerReportsOnlyDeliberatePublicExecutionErrors(t *testing.T) {
 	}
 }
 
+func TestAutoWorkerFailureReportsSystemScanStatus(t *testing.T) {
+	var received Report
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/worker/claim":
+			_ = json.NewEncoder(w).Encode(Task{ID: "auto-failure", AssetID: "asset-fixture", Engines: []string{"auto"}, Chunks: []Chunk{{Targets: []string{"192.0.2.20"}}}})
+		case "/api/v1/worker/report":
+			if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+				t.Error(err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			if received.SystemScanStatus != SystemScanNotStarted {
+				http.Error(w, "auto task system status is required", http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+
+	worker := Worker{ServerURL: server.URL, ID: "worker", Client: server.Client(), AutoScan: func(context.Context, Task) (AutoResult, error) {
+		return AutoResult{}, &ExecutionError{UserMessage: "HTTP 根路径只读检查未完成，扫描任务将标记失败，请检查目标服务和 Worker 日志"}
+	}}
+	worked, err := worker.ProcessOne(context.Background())
+	if err != nil || !worked {
+		t.Fatalf("automatic task failure was not reported: worked=%v err=%v", worked, err)
+	}
+	if received.Status != "FAILED" || received.SystemScanStatus != SystemScanNotStarted || received.Error == "" {
+		t.Fatalf("unexpected automatic failure report: %+v", received)
+	}
+}
+
+func TestAutoWorkerPreservesApplicationCoverageOnFailureAndPause(t *testing.T) {
+	for _, test := range []struct {
+		name, status string
+		err          error
+	}{
+		{"failure", "FAILED", fmt.Errorf("fixture analyzer failure")},
+		{"pause", "PAUSED_WINDOW", context.DeadlineExceeded},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var received Report
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/worker/claim":
+					_ = json.NewEncoder(w).Encode(Task{ID: "auto-app", Engines: []string{"auto"}, Chunks: []Chunk{{Targets: []string{"192.0.2.20"}}}})
+				case "/api/v1/worker/report":
+					if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+						t.Error(err)
+					}
+				default:
+					w.WriteHeader(http.StatusBadRequest)
+				}
+			}))
+			defer server.Close()
+			worker := Worker{ServerURL: server.URL, ID: "worker", Client: server.Client(), AutoScan: func(context.Context, Task) (AutoResult, error) {
+				return AutoResult{SystemStatus: SystemScanCompleted, ApplicationStatus: ApplicationScanAnalysisFailed,
+					ApplicationResults: []ApplicationResult{{Alias: "demo", Status: ApplicationScanAnalysisFailed, SelectedCount: 2, AnalyzedCount: 1}},
+					Findings:           []Detection{{Title: "partial result"}}}, test.err
+			}}
+			if worked, err := worker.ProcessOne(context.Background()); err != nil || !worked {
+				t.Fatalf("worked=%v err=%v", worked, err)
+			}
+			if received.Status != test.status || received.ApplicationScanStatus != ApplicationScanAnalysisFailed || len(received.ApplicationResults) != 1 || received.ApplicationResults[0].AnalyzedCount != 1 || received.SystemScanStatus != SystemScanCompleted || len(received.Findings) != 0 {
+				t.Fatalf("unexpected report: %+v", received)
+			}
+		})
+	}
+}
+
+func TestInternalArtifactRequirementsAreNotSerialized(t *testing.T) {
+	data, err := json.Marshal(Task{RequireInputSnapshot: true, ExpectedArtifactType: "gobinary"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "gobinary") || strings.Contains(string(data), "Snapshot") {
+		t.Fatalf("internal flags leaked: %s", data)
+	}
+	var task Task
+	if err := json.Unmarshal([]byte(`{"RequireInputSnapshot":true,"ExpectedArtifactType":"gobinary"}`), &task); err != nil {
+		t.Fatal(err)
+	}
+	if task.RequireInputSnapshot || task.ExpectedArtifactType != "" {
+		t.Fatalf("internal flags accepted from node API: %+v", task)
+	}
+}
+
 func TestWorkerReportsPortProbeResultsWithoutFindings(t *testing.T) {
 	var received Report
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

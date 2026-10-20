@@ -13,13 +13,30 @@
 | PoC #1 Linux 围栏与受限启动预备代码（2026-10-16） | 本地模拟通过，实验待验证 | nftables 原子规则、默认 DROP、精确协议+IP:端口白名单，netns 父句柄检查及 setpriv 去特权启动参数已实现；未接入 cmd/worker，未在 Linux 实测 nft 和 setpriv。必须人工核对 Linux 工具版本、ns 隔离有效性、内核行为、实际无外联和 DROP 统计。 |
 | 引擎受限启动硬闸（2026-10-16） | 默认阻断，待参数验证 | 未接入 `internal/executor` 经版本锁定的参数白名单前，`RestrictedExec.Launch` 显式拒绝真正运行 Nuclei/Trivy；当前 setpriv 仅验证参数构造，未实测进程 UID/capabilities。 |
 | GitHub Actions 六平台 CI / Release（2026-10-16） | 本地 actionlint、YAML、Go 测试和六平台交叉编译/压缩包校验通过；GitHub 云端未运行 | CI 可复用且覆盖六类原生 Runner；标签构建只有完整 CI 通过才打包；发布权限仅 Release Job，标签仅创建 Draft + Pre-release。Go 工具链以 go.mod 的 1.26.0 为准；本地 actionlint 1.7.12。运行 GitHub Actions 后需查看各 Runner 实际日志与 Release 草稿资产。 |
-| 漏洞库 GitHub Actions Ed25519 签名 | 工作流已补充，云端未运行 | 之前工作流只有文件哈希校验，没有签名步骤。现要求 `vulnerability-data-signing` 环境密钥，仅在 `main` 签名并在打包前自验；当前仓库尚未配置该环境的私钥/公钥变量。平台规则导入仍未实现验签。 |
+| 漏洞库 Ed25519 签名与平台验签 | 工作流已有签名；本地平台实现与隔离测试通过；本轮未核查云端运行结果 | 普通导入、下载与激活要求包外受信公钥，对原始 manifest 字节和 raw64 签名验签后再检查内容。显式本机准备使用同一实例的一次性本地激活记录，历史 unsigned 签名状态为 false。单公钥轮换、多密钥过渡与完整引擎兼容矩阵仍未完成。 |
+| SSH 指定目录 Java/Go 应用 | 代码与隔离测试通过；未部署到当前测试实例 | 配置内产物逐文件采集、快照校验、Trivy 类型确认及别名覆盖计数；任何应用未完成则任务失败，不入库部分发现。真实 SSH/Java 索引/Go 产物及独立挂载目录场景仍待实验验收。 |
+| 自动综合扫描 HTTP 失败状态回报 | Worker/Server 回归与 V4 排除端口验证通过；最新 V5 任务界面显示已完成，结果仍待逐项复核 | HTTP 错误保持 FAILED 并保存明确的系统包阶段状态。此前路由阻塞记录为历史状态；本轮开发期间未重启原测试实例，新应用能力不属于该次实扫验收范围。 |
 | 正式客户端签名/公证和供应链证明 | 未实施 | Phase 0 归档仅是占位骨架。缺少 Windows 代码签名、macOS 签名/公证及 Artifact Attestation；不能直接当作受信任的可部署产品发布。 |
 | PoC #2 租约守护（2026-10-16） | 本地模拟单测通过；Server/Worker 联调未执行 | 根据最后确认租约截止和本地 hard deadline 取消工作，网络超时/失联不延长租期，未确认停止时返回 shutdown timeout；必须在真实进程层验证强杀、Node API 身份/时间戳与租约刷新。 |
-| PoC #2 GC 两阶段安全判定（2026-10-16） | 本地模拟单测通过；Updater 文件操作未执行 | 当前和最近备用版本保护、>=2h 宽限期、每阶段向 Server 复核本节点 RUNNING 任务；仅校验，尚未实现 .trash rename、fsync、CURRENT 原子替换、Windows 实机重试及并发 TOCTOU 验收。 |
+| PoC #2 GC 两阶段文件操作（2026-10-20） | 本地文件实现与隔离竞态单测通过；真实 Updater 集成未执行 | 当前和最近备用版本保护、>=2h 退役宽限期、每阶段向 Server 复核本节点 RUNNING 任务；使用限定目录的 rename、持久隔离记录和二次检查后删除。缺少可信退役状态或隔离记录时拒绝回收；完整激活协调、真实 Node API 和 Windows 实机行为仍待集成验证。 |
 | 四入口与本地只读 API 骨架（2026-10-16） | 仅搭建结构，本轮按用户要求暂未运行测试 | 增加统一启动入口、Portable 编译入口、Server/Portable loopback 只读诊断 API 和数据库接口定义。业务接口 501，readyz 503，未启用 Node API、数据库、扫描或规则激活。须后续完成跨平台编译、API/安全边界测试与接口联调。 |
 | UI 用户管理契约与前端发布构建（2026-10-16） | 本地前端双模式、Go、YAML/actionlint 通过；GitHub 云端未运行 | 新增用户/角色演示页面，GET `/api/v1/users` 仅返回 501；用户写入/认证/RBAC/审计不开放。CI 纳入 Node.js 22 npm ci + 双模式打包检查；Release 仅构建一次 Server-mode UI 作为 `web/` 静态资产加入每个平台的归档，不表示 Server 已支持 UI 静态服务。 |
 | SQLite 账号管理（2026-10-16） | 单元/竞态及本机 HTTP 联调通过；远程部署未验收 | 使用纯 Go SQLite、bcrypt、HttpOnly/SameSite Cookie，账号 CRUD 需 admin 且写审计；本机测试包含初始化、登录、新增/停用、越权拒绝、登出。仅用于 loopback 开发，不表示平台扫描或节点 API 已可用。 |
+
+## 2026-10-20：自动综合扫描失败回报修复与靶场进度
+
+- 修复 HTTP 只读检查失败后自动任务报告缺少 SSH 系统包阶段状态的问题。失败与暂停报告保留明确的“尚未开始”状态，Server 对失败任务也持久化该状态；不会将未完成任务记为成功。Worker/Server 针对性 race 回归、`make test`、`make build`、`make lint`、Server 模式前端构建通过。
+- V4 排除端口靶场验证通过：任务明细确认任务级排除生效、排除端口未进入 HTTP 检查，范围内 SSH 采集链路正常。结果明细保留在本机任务记录。
+- V5 全 TCP 端口实扫仍待验收。用户已授权仅扫描单一靶机容器 IP；宿主机与 OrbStack 的直连路由冲突，需解决后再执行，不能将开发机回环地址上的其他服务归入靶场结果。
+- 平台已用现有 SSH 配置重启，`/healthz` 与 `/readyz` 返回就绪；任务记录仍保存在本地 SQLite。
+
+### V5 路由检查补充
+
+- 用户已授权将 OrbStack 靶机容器的单个 IPv4 登记为独立资产，并仅以温和强度扫描该地址的 TCP `1–65535`。
+- 用户也授权调整 OrbStack 全局 Docker 地址池并重启引擎。曾临时配置文档保留网段 `203.0.113.0/24` 中的独立地址池并重启 OrbStack；靶机获得新地址后，宿主机仍将该网段路由到 Wi‑Fi 网关，直连未恢复。该尝试不能作为对端可达的证据。
+- 已把 `~/.orbstack/config/docker.json` 恢复为原先的空配置并再次重启 OrbStack；靶场 Compose 文件也恢复为仓库原配置。容器现已恢复运行，平台保持停止，避免周期性可达性检查继续访问路由不明的目标。
+- 之前曾对实验地址的 SSH 端口做一次 TCP 建连探测，路由显示经过 VPN，无法确认对端身份；没有发送 SSH 握手、凭据或扫描请求。当前没有创建 V5 任务，也没有运行全端口探测或扫描引擎。
+- V5 需等宿主机网络/VPN 路由可让 OrbStack 的容器直连功能启用，并在直连后核验 SSH 主机指纹，再对登记的单个靶机 IP 扫描。OrbStack 会在容器网段与 VPN/其他网络冲突时自动关闭容器 IP 直连；本机当前同时存在覆盖私网地址的 Wi‑Fi/VPN 路由，单独更改 Docker 地址池没有消除冲突。
 
 
 ## 2026-10-16：本地普通功能修复与非探测功能接通
@@ -112,3 +129,40 @@
 - 第三方 GitHub Actions 已固定到提交 SHA，并在行尾保留版本注释；YAML 解析通过，未使用 `pull_request_target`。
 - 当前代理实际运行并通过：`make build`、`make lint`、`make test`、`make verify-flags`、`make test-local`、`make test-engines-local`、Server 模式前端构建、Windows/Linux/macOS 交叉编译，以及 HTML/XLSX/DOCX 合成报告结构检查。
 - 仍未连接真实业务服务器、真实 CentOS 7/银河麒麟主机、生产 PostgreSQL、Microsoft Word/Excel 或生产网络围栏；本地引擎回归仅使用回环夹具、临时数据库和本地漏洞库，未读取真实资产或扫描结果。
+
+## 2026-10-20：Nuclei 范围代理默认端口规范化
+
+- HTTP(S) 代理请求缺少 URL 默认端口时，仅按 scheme 补齐 80/443 后与已授权的精确 IP:端口比较；HTTPS CONNECT 仍要求显式端口，不解析域名、不扩大授权集合。
+- Worker 对代理拒绝记录固定原因类别和计数，不记录目标地址或原始请求。
+- `go test -race ./internal/executor -run 'TestScopeProxy'`、`go test -race ./internal/executor`、`make build`、`make lint` 通过。另用本地假拨号器验证省略 HTTP 默认端口的请求只拨向匹配的授权端点；没有从该回归夹具连接外部主机。
+
+## 2026-10-20：规则版本两阶段 GC 文件实现（隔离测试）
+
+- 新增 `GCFiles.Quarantine` 和 `Delete` 两个显式入口，每个阶段重新读取本地 CURRENT、可信备用/退役状态和 Server 本节点的 RUNNING 数量。使用 Go 1.26 `os.Root` 限定文件操作目录，拒绝路径穿越、链接、目录替换、目标碰撞和查询期间的状态变化。
+- 隔离后原子发布版本、节点、退役时间和隔离时间记录；缺失、损坏或不匹配的记录不允许自动删除。取消、查询失败或出现新保护状态时保持已有文件。删除部分失败不代表回滚，记录丢失的残留隔离目录需人工核查。
+- 开发侧运行 `go test -race ./internal/versionmgr ./internal/scheduler` 通过；独立验证实际运行 `go test -race -count=1 ./internal/versionmgr ./internal/scheduler ./internal/workerfence`、对应包的 `go vet` 和目标文件 `git diff --check`，均通过。
+- 方案使用 GPT-6 Sol，开发使用 GPT-6.1 Sol，独立验证配置 GPT-6 Luna。检查只使用临时目录和模拟 Server；未重启运行中的平台，未修改运行数据库、规则盘、SSH、靶机或网络。
+- 这两个入口尚未接入真实 Updater/Node API，不启用自动回收。部署依赖单 Updater 独占规则根目录、完整激活与回收协调、Server 不再为退役版本发放新租约；真实进程联调、跨系统竞态、Windows 实机和断电持久性仍待验收。
+
+## 2026-10-20：外部规则包 Ed25519 验签（隔离测试）
+
+- Updater 新增包外受信公钥配置；普通 Import/Fetch/Activate 验证原始 manifest 与独立 raw64 Ed25519 签名，缺少信任、签名错误或内容不符均拒绝，CURRENT 不变。不会从包内取得公钥，也不会给已有 unsigned 版本自动补签。公钥仅支持严格 PKIX Ed25519 PUBLIC KEY PEM，受大小、普通文件、路径和目录身份检查约束。
+- 本地 PrepareDefault 通过同一 Manager 实例中绑定根目录、版本和摘要的一次性记录执行专用激活；普通导入不能产生该记录，重启或失败尝试不会继承能力。历史无签名数据仍可只读展示，但不会声称已验签。页面依据实际签名字段显示状态，未验签版本禁用普通激活/回滚。
+- Go 单测运行时生成测试密钥；Python/OpenSSL 打包的 raw64 签名已实际由 Go Import/Activate 接受。失败路径覆盖缺签名、签名长度/公钥错误、manifest 原始字节变化、激活前修改、旧版本冲突、本地准备能力复用、目录大小写别名，以及私钥混入打包目录或硬链接输入。
+- 开发和独立验证均运行 `go test -race -count=1 ./internal/rules ./internal/versionmgr ./internal/bootstrap ./internal/executor` 通过；独立 `go vet` 与差异检查通过。主代理实际运行 `go build ./...`、`make lint`、`make test`（全仓 race 和 11 项 Python 采集测试）、前端 `tsc --noEmit`、`bash -n scripts/dev.sh`，均通过。编译未覆盖运行中的 dist，未执行 make dev、真实扫描、规则导入或规则切换。
+- 分工：方案 GPT-6 Sol、开发 GPT-6.1 Sol、独立验证配置 GPT-6 Luna。只修改启动脚本的可选公钥文件路径传递，未配置或重启当前平台。完整业务实例/真实签名包联调、GitHub 云端执行、密钥轮换和完整引擎兼容矩阵仍待验收；无副作用的 `--status` 只报告模式，不验证运行配置。
+
+## 2026-10-20：SSH 指定部署目录 Java/Go 应用（隔离测试）
+
+- 按用户选择实现 Worker 本地 profile 的 `apps`，每项显式配置别名、具体部署目录及 Java/Go 类型。沿用同一数字 IP、明确选中且开放的 SSH 端口和固定 SSH 安全参数；无 apps 不增加连接，排除范围之外不尝试采集。原始部署路径不进入 Server 报告。
+- Python 通过有界安全 token 接收配置，以目录句柄、O_NOFOLLOW、文件身份复核进行有界读取。每文件独立快照，Go 校验 tar 路径、类型、数量、SHA-256 与固定结构；Java ZIP 路径/中央目录/展开/嵌套均有预算，ELF 必须通过 Go build info。超限、空目录、变化、链接和不支持的产物明确失败，不静默截断。
+- 每个文件顺序执行 Trivy，扫描前后检查快照；只有 Class=lang-pkgs、Type=jar/gobinary、非空 Target 才计为已分析，零漏洞可以完成。类型依据锁定 Trivy v0.76.0 的官方 [analyzer 常量](https://github.com/aquasecurity/trivy/blob/v0.76.0/pkg/fanal/analyzer/const.go)、[报告结构](https://github.com/aquasecurity/trivy/blob/v0.76.0/pkg/types/report.go) 和 [JSON writer](https://github.com/aquasecurity/trivy/blob/v0.76.0/pkg/report/json.go)，未新增引擎参数。
+- Worker/Server/清册贯穿固定应用状态及选中/已分析计数，Server 限定最多 8 个别名、每项 16 文件、总计 32 文件；完成状态要求每项非空且全部分析。失败与暂停保存覆盖状态和系统包状态，失败报告不插入部分漏洞；兼容旧 Worker 无应用字段，界面明确显示旧任务没有应用覆盖记录。指纹继续使用稳定主机与包字段。
+- 独立首轮回归发现 Java ZIP 的 `../escape` 可绕过单独 path.Clean 检查，开发显式拒绝父路径前缀后独立复验通过；未放松原检查。最后增补 C1 控制字符拒绝与种子回归。
+- 主代理全仓 `make test`（race 与 18 项 Python 合成测试）、`make lint`、`go build ./...`、web 下 `tsc --noEmit`、OpenAPI YAML/全部本地 schema 引用检查、`bash -n scripts/dev.sh` 和差异检查通过。新增目录解析与 Trivy 类型门槛各实际 fuzz 2 秒通过。Windows amd64、Linux arm64 的 `go build ./...` 交叉编译通过，编译未生成或覆盖 dist/web/dist。
+- 独立验证实际运行 `go test -race -count=1 ./internal/sshcollect ./internal/executor ./internal/taskflow ./internal/repo`、对应包 vet、无输出构建、web 类型检查、Python 18 项与差异检查，均通过。分工：方案 GPT-6 Sol、开发 GPT-6.1 Sol、独立验证配置 GPT-6 Luna；协调代理完成协议/持久化/前端贯穿与全仓检查。
+- 未重启服务、修改当前运行数据库/规则/SSH 配置/靶机/网络，未执行真实 SSH、扫描引擎或 lab。本批拒绝根设备之外的独立挂载目录，无法通过设备号区分同设备 bind mount；ZIP64、分卷、较大归档及超限目录仍不支持。完整应用安全覆盖、真实凭据/索引/产物联调均需后续隔离靶场验收，当前实例尚未启用这批新代码。
+
+### 开发期间原测试状态补充
+
+- 本轮结束前只读查看任务清册，原有全端口任务已显示“已完成”。这只确认平台终态，不据此宣布 V5 全部验收项通过，也不算新增应用采集能力的实机验证；结果完整性和覆盖仍待单独复核。未将地址、任务 ID 或扫描发现写入本文。

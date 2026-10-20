@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"scanner-platform/internal/repo"
 	"scanner-platform/internal/taskflow"
@@ -9,10 +10,11 @@ import (
 func registerLocalHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui func(bool, http.HandlerFunc) http.HandlerFunc, admin func(http.HandlerFunc) http.HandlerFunc, actor func(*http.Request) string) {
 	mux.HandleFunc("POST /api/v1/nodes/heartbeat", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			ID          string                  `json:"id"`
-			Kind        string                  `json:"kind"`
-			CurrentTask string                  `json:"currentTask"`
-			Engines     []taskflow.EngineStatus `json:"engines"`
+			ID          string                   `json:"id"`
+			Kind        string                   `json:"kind"`
+			CurrentTask string                   `json:"currentTask"`
+			Engines     []taskflow.EngineStatus  `json:"engines"`
+			Progress    *taskflow.ProgressUpdate `json:"progress,omitempty"`
 		}
 		if !runtimeDecode(w, r, &body) {
 			return
@@ -21,10 +23,26 @@ func registerLocalHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui func
 			bad(w, 400, "invalid_node")
 			return
 		}
+		if body.Progress != nil {
+			if body.Kind != "worker" || body.CurrentTask == "" || body.Progress.TaskID != body.CurrentTask {
+				bad(w, 400, "invalid_task_progress")
+				return
+			}
+		}
 		if !runtimeStoreError(w, store.TouchNode(r.Context(), body.ID, body.Kind, body.CurrentTask, body.Engines)) {
 			state := ""
 			if body.CurrentTask != "" && body.Kind == "worker" {
 				state = store.TaskStateForWorker(r.Context(), body.CurrentTask, body.ID)
+			}
+			if body.Progress != nil {
+				if err := store.UpdateRuntimeTaskProgress(r.Context(), body.ID, *body.Progress); err != nil {
+					// Keep cancellation and deadline heartbeats usable: a stale progress
+					// update must not hide the task's non-running status from its Worker.
+					if !errors.Is(err, repo.ErrTaskConflict) || state == "RUNNING" {
+						runtimeStoreError(w, err)
+						return
+					}
+				}
 			}
 			runtimeJSON(w, 200, map[string]string{"state": "alive", "taskStatus": state})
 		}

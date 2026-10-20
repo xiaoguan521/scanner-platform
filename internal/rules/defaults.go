@@ -11,6 +11,12 @@ import (
 	"path/filepath"
 )
 
+type preparedRelease struct {
+	root   string
+	digest string
+	owner  *Manager
+}
+
 // BaselineTemplates are original read-only checks, not an exploit template pack.
 func BaselineTemplates() map[string][]byte {
 	definitions := []struct{ id, name, header, severity string }{
@@ -30,10 +36,18 @@ func BaselineTemplates() map[string][]byte {
 // PrepareDefault installs a bundle built by Updater from the original baseline
 // templates and the database downloaded using the pinned Trivy binary.
 func (m *Manager) PrepareDefault(ctx context.Context, version, trivyCache string, includeJava bool) (Bundle, error) {
+	m.preparedMu.Lock()
+	defer m.preparedMu.Unlock()
+	delete(m.prepared, version)
 	if !ValidateVersion(version) {
 		return Bundle{}, fmt.Errorf("invalid prepared rule version")
 	}
 	if err := m.initialize(); err != nil {
+		return Bundle{}, err
+	}
+	if _, err := os.Lstat(filepath.Join(m.Root, "releases", version)); err == nil {
+		return Bundle{}, fmt.Errorf("prepared version already exists")
+	} else if !os.IsNotExist(err) {
 		return Bundle{}, err
 	}
 	manifest := Manifest{Version: version, Engines: []string{"nuclei"}, Files: map[string]string{}}
@@ -144,7 +158,47 @@ func (m *Manager) PrepareDefault(ctx context.Context, version, trivyCache string
 	if _, err := decodeManifest(data); err != nil {
 		return Bundle{}, err
 	}
-	return m.publishStage(ctx, stage, manifest, data)
+	bundle, err := m.publishStage(ctx, stage, manifest, data, nil)
+	if err != nil {
+		return Bundle{}, err
+	}
+	root, err := canonicalRuleRoot(m.Root)
+	if err != nil {
+		return Bundle{}, err
+	}
+	if m.prepared == nil {
+		m.prepared = make(map[string]preparedRelease)
+	}
+	m.prepared[version] = preparedRelease{root: root, digest: bundle.ManifestSHA256, owner: m}
+	return bundle, nil
+}
+
+// ActivatePreparedLocal consumes a one-use capability created only by this
+// Manager's successful local preparation. It does not trust historical unsigned
+// imports, survive restart, or enable ordinary unsigned activation.
+func (m *Manager) ActivatePreparedLocal(ctx context.Context, version string) error {
+	m.preparedMu.Lock()
+	defer m.preparedMu.Unlock()
+	prepared, ok := m.prepared[version]
+	delete(m.prepared, version)
+	if !ok || prepared.owner != m {
+		return fmt.Errorf("version was not freshly prepared by this Manager")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	root, err := canonicalRuleRoot(m.Root)
+	if err != nil || root != prepared.root {
+		return fmt.Errorf("prepared rule root changed")
+	}
+	bundle, err := m.Inspect(ctx, version)
+	if err != nil {
+		return err
+	}
+	if bundle.ManifestSHA256 != prepared.digest {
+		return fmt.Errorf("prepared manifest changed")
+	}
+	return m.activateCurrent(ctx, version, false)
 }
 
 type preparedReader struct {

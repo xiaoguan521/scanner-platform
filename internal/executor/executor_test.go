@@ -1,10 +1,13 @@
 package executor
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -90,6 +93,99 @@ func TestScopeProxyRejectsUnlistedAuthorities(t *testing.T) {
 	}
 	if called != 1 {
 		t.Fatalf("unexpected target calls: %d", called)
+	}
+	blocked, failed, summary := proxy.blockedSummary()
+	if blocked != 3 || failed != 0 || summary != "invalid_authority=1,endpoint_not_authorized=1,request_not_allowed=1" {
+		t.Fatalf("unexpected redacted proxy diagnostics: blocked=%d failed=%d summary=%q", blocked, failed, summary)
+	}
+	if strings.Contains(summary, "192.0.2.12") || strings.Contains(summary, "example.com") {
+		t.Fatalf("proxy diagnostics leaked an authority: %q", summary)
+	}
+}
+
+func TestScopeProxyCanonicalizesDefaultPortsWithoutConnecting(t *testing.T) {
+	tests := []struct {
+		name       string
+		target     string
+		allowed    string
+		wantTarget string
+		wantReason string
+	}{
+		{name: "http default port", target: "http://192.0.2.20/", allowed: "192.0.2.20:80", wantTarget: "192.0.2.20:80"},
+		{name: "https default port", target: "https://[2001:db8::20]/", allowed: "[2001:db8::20]:443", wantTarget: "[2001:db8::20]:443"},
+		{name: "explicit port retained", target: "http://192.0.2.20:8080/", allowed: "192.0.2.20:8080", wantTarget: "192.0.2.20:8080"},
+		{name: "default does not widen port scope", target: "http://192.0.2.20/", allowed: "192.0.2.20:8080", wantReason: "endpoint_not_authorized"},
+		{name: "hostname rejected", target: "http://audit.example.test/", allowed: "192.0.2.20:80", wantReason: "invalid_authority"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, test.target, nil)
+			proxy := &scopeProxy{allowed: map[string]bool{test.allowed: true}}
+			got, reason := proxy.authorizeRequest(request)
+			if got != test.wantTarget || reason != test.wantReason {
+				t.Fatalf("authorizeRequest() = (%q, %q), want (%q, %q)", got, reason, test.wantTarget, test.wantReason)
+			}
+		})
+	}
+}
+
+func TestScopeProxyForwardsDefaultHTTPPortToExactEndpoint(t *testing.T) {
+	const endpoint = "192.0.2.20:80"
+	proxy, err := startScopeProxy(context.Background(), []string{endpoint})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer proxy.Close()
+	dialed := make(chan string, 1)
+	proxy.transport.DialContext = func(_ context.Context, network, address string) (net.Conn, error) {
+		if network != "tcp" {
+			return nil, fmt.Errorf("unexpected network %q", network)
+		}
+		dialed <- address
+		clientConn, serverConn := net.Pipe()
+		go func() {
+			defer serverConn.Close()
+			request, readErr := http.ReadRequest(bufio.NewReader(serverConn))
+			if readErr != nil {
+				return
+			}
+			if request.Body != nil {
+				_, _ = io.Copy(io.Discard, request.Body)
+				_ = request.Body.Close()
+			}
+			_, _ = io.WriteString(serverConn, "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+		}()
+		return clientConn, nil
+	}
+	proxyURL, err := url.Parse(proxy.URL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport := &http.Transport{Proxy: http.ProxyURL(proxyURL), DisableKeepAlives: true}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport}
+	response, err := client.Get("http://192.0.2.20/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("unexpected response status: %d", response.StatusCode)
+	}
+	if got := <-dialed; got != endpoint {
+		t.Fatalf("proxy dialed %q, want exact authorized endpoint %q", got, endpoint)
+	}
+	blocked, failed, summary := proxy.blockedSummary()
+	if blocked != 0 || failed != 0 || summary != "" {
+		t.Fatalf("default-port request was rejected: blocked=%d failed=%d summary=%q", blocked, failed, summary)
+	}
+}
+
+func TestScopeProxyRequiresExplicitConnectPort(t *testing.T) {
+	for _, authority := range []string{"192.0.2.20", "[2001:db8::20]"} {
+		if _, err := canonicalProxyTarget(authority, "https", true); err == nil {
+			t.Fatalf("CONNECT authority without a port was accepted: %q", authority)
+		}
 	}
 }
 

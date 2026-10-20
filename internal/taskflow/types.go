@@ -2,6 +2,7 @@
 package taskflow
 
 import (
+	"context"
 	"encoding/json"
 	"scanner-platform/internal/inventory"
 	"scanner-platform/internal/portprobe"
@@ -37,6 +38,7 @@ type Schedule struct {
 const SyntheticTitle = "模拟发现项：任务链路已完成（未执行真实扫描）"
 
 const (
+	SystemScanNotStarted       = "未采集：自动综合扫描在系统包检查前失败或中止"
 	SystemScanNotConfigured    = "未配置 Worker 本地 SSH 采集"
 	SystemScanPortOutOfScope   = "未采集：配置的 SSH 端口不在本次明确范围内"
 	SystemScanPortClosed       = "未采集：SSH 端口未探测为开放"
@@ -53,6 +55,26 @@ const (
 )
 
 const MaxReportBytes = 32 << 20
+
+// Application scan reports contain configured aliases and bounded counters,
+// never remote deployment paths, file names, credentials or engine output.
+const (
+	ApplicationScanNotConfigured    = "not_configured"
+	ApplicationScanNotStarted       = "not_started"
+	ApplicationScanPortOutOfScope   = "port_out_of_scope"
+	ApplicationScanCollecting       = "collecting"
+	ApplicationScanCollectionFailed = "collection_failed"
+	ApplicationScanScanning         = "scanning"
+	ApplicationScanAnalysisFailed   = "analysis_failed"
+	ApplicationScanCompleted        = "completed"
+)
+
+type ApplicationResult struct {
+	Alias         string `json:"alias"`
+	Status        string `json:"status"`
+	SelectedCount int    `json:"selectedCount"`
+	AnalyzedCount int    `json:"analyzedCount"`
+}
 
 // ExecutionError exposes a deliberate, static user-facing explanation. Do not
 // construct UserMessage from engine output, paths, credentials or raw requests.
@@ -74,39 +96,80 @@ type Chunk struct {
 }
 
 type Task struct {
-	EffectiveExclusions []portprobe.Range  `json:"effectiveExclusions,omitempty"`
-	QuarantinedPorts    []int              `json:"quarantinedPorts,omitempty"`
-	ID                  string             `json:"id"`
-	ScopeID             string             `json:"scopeId"`
-	ScopeName           string             `json:"scopeName"`
-	Engines             []string           `json:"engines"`
-	Status              string             `json:"status"`
-	Archived            bool               `json:"archived,omitempty"`
-	FindingCount        int                `json:"findingCount"`
-	HardDeadline        string             `json:"hardDeadline"`
-	TotalChunks         int                `json:"totalChunks"`
-	CompletedChunks     int                `json:"completedChunks"`
-	TargetCount         int                `json:"targetCount"`
-	CreatedAt           time.Time          `json:"createdAt"`
-	Chunks              []Chunk            `json:"chunks"`
-	Synthetic           bool               `json:"synthetic"`
-	SkippedTargets      []string           `json:"skippedTargets"`
-	TimeWindows         []scheduler.Window `json:"timeWindows"`
-	RuleVersion         string             `json:"ruleVersion"`
-	InputPath           string             `json:"inputPath,omitempty"`
-	InputKind           string             `json:"inputKind,omitempty"`
-	Scheme              string             `json:"scheme,omitempty"`
-	AssetID             string             `json:"assetId,omitempty"`
-	PortProbeConfig     portprobe.Config   `json:"portProbeConfig,omitempty"`
-	PortProbePorts      []int              `json:"portProbePorts,omitempty"`
-	PortProbeResults    []PortProbeResult  `json:"portProbeResults,omitempty"`
-	VulnerabilityPorts  []int              `json:"vulnerabilityPorts,omitempty"`
-	CustomTemplates     []json.RawMessage  `json:"customTemplates,omitempty"`
-	CustomRuleCount     int                `json:"customRuleCount,omitempty"`
-	ServiceResults      []ServiceResult    `json:"serviceResults,omitempty"`
-	SystemScanStatus    string             `json:"systemScanStatus,omitempty"`
-	AssetProfile        inventory.Profile  `json:"assetProfile,omitempty"`
-	Error               string             `json:"error,omitempty"`
+	EffectiveExclusions   []portprobe.Range   `json:"effectiveExclusions,omitempty"`
+	QuarantinedPorts      []int               `json:"quarantinedPorts,omitempty"`
+	ID                    string              `json:"id"`
+	ScopeID               string              `json:"scopeId"`
+	ScopeName             string              `json:"scopeName"`
+	Engines               []string            `json:"engines"`
+	Status                string              `json:"status"`
+	Archived              bool                `json:"archived,omitempty"`
+	FindingCount          int                 `json:"findingCount"`
+	HardDeadline          string              `json:"hardDeadline"`
+	TotalChunks           int                 `json:"totalChunks"`
+	CompletedChunks       int                 `json:"completedChunks"`
+	TargetCount           int                 `json:"targetCount"`
+	CreatedAt             time.Time           `json:"createdAt"`
+	Chunks                []Chunk             `json:"chunks"`
+	Synthetic             bool                `json:"synthetic"`
+	SkippedTargets        []string            `json:"skippedTargets"`
+	TimeWindows           []scheduler.Window  `json:"timeWindows"`
+	RuleVersion           string              `json:"ruleVersion"`
+	InputPath             string              `json:"inputPath,omitempty"`
+	InputKind             string              `json:"inputKind,omitempty"`
+	Scheme                string              `json:"scheme,omitempty"`
+	AssetID               string              `json:"assetId,omitempty"`
+	PortProbeConfig       portprobe.Config    `json:"portProbeConfig,omitempty"`
+	PortProbePorts        []int               `json:"portProbePorts,omitempty"`
+	PortProbeResults      []PortProbeResult   `json:"portProbeResults,omitempty"`
+	VulnerabilityPorts    []int               `json:"vulnerabilityPorts,omitempty"`
+	CustomTemplates       []json.RawMessage   `json:"customTemplates,omitempty"`
+	CustomRuleCount       int                 `json:"customRuleCount,omitempty"`
+	ServiceResults        []ServiceResult     `json:"serviceResults,omitempty"`
+	SystemScanStatus      string              `json:"systemScanStatus,omitempty"`
+	ApplicationScanStatus string              `json:"applicationScanStatus,omitempty"`
+	ApplicationResults    []ApplicationResult `json:"applicationResults,omitempty"`
+	RequireInputSnapshot  bool                `json:"-"`
+	ExpectedArtifactType  string              `json:"-"`
+	Progress              *TaskProgress       `json:"progress,omitempty"`
+	AssetProfile          inventory.Profile   `json:"assetProfile,omitempty"`
+	Error                 string              `json:"error,omitempty"`
+}
+
+// TaskProgress is advisory execution telemetry. It never changes scan scope,
+// authorization, findings, or task completion state.
+type TaskProgress struct {
+	Phase     string    `json:"phase"`
+	Completed int       `json:"completed"`
+	Total     int       `json:"total"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// ProgressUpdate is sent by a Worker in its existing heartbeat.
+type ProgressUpdate struct {
+	TaskID    string `json:"taskId"`
+	Phase     string `json:"phase"`
+	Completed int    `json:"completed"`
+	Total     int    `json:"total"`
+}
+
+type ProgressReporter func(TaskProgress)
+
+type progressReporterKey struct{}
+
+// WithProgressReporter adds an in-memory progress callback to a task context.
+func WithProgressReporter(ctx context.Context, reporter ProgressReporter) context.Context {
+	return context.WithValue(ctx, progressReporterKey{}, reporter)
+}
+
+// ReportProgress publishes bounded phase telemetry when a Worker installed a
+// reporter. It intentionally does not retain any scan output or target data.
+func ReportProgress(ctx context.Context, phase string, completed, total int) {
+	reporter, ok := ctx.Value(progressReporterKey{}).(ProgressReporter)
+	if !ok || reporter == nil {
+		return
+	}
+	reporter(TaskProgress{Phase: phase, Completed: completed, Total: total, UpdatedAt: time.Now().UTC()})
 }
 
 // PortProbeResult records only a successful TCP connection. It contains no
@@ -189,25 +252,29 @@ type Detection struct {
 }
 
 type Report struct {
-	TaskID           string            `json:"taskId"`
-	WorkerID         string            `json:"workerId"`
-	Target           string            `json:"target"`
-	Title            string            `json:"title"`
-	Status           string            `json:"status,omitempty"`
-	Error            string            `json:"error,omitempty"`
-	Findings         []Detection       `json:"findings,omitempty"`
-	PortProbeResults []PortProbeResult `json:"portProbeResults,omitempty"`
-	ServiceResults   []ServiceResult   `json:"serviceResults,omitempty"`
-	SystemScanStatus string            `json:"systemScanStatus,omitempty"`
-	AssetProfile     inventory.Profile `json:"assetProfile,omitempty"`
+	TaskID                string              `json:"taskId"`
+	WorkerID              string              `json:"workerId"`
+	Target                string              `json:"target"`
+	Title                 string              `json:"title"`
+	Status                string              `json:"status,omitempty"`
+	Error                 string              `json:"error,omitempty"`
+	Findings              []Detection         `json:"findings,omitempty"`
+	PortProbeResults      []PortProbeResult   `json:"portProbeResults,omitempty"`
+	ServiceResults        []ServiceResult     `json:"serviceResults,omitempty"`
+	SystemScanStatus      string              `json:"systemScanStatus,omitempty"`
+	ApplicationScanStatus string              `json:"applicationScanStatus,omitempty"`
+	ApplicationResults    []ApplicationResult `json:"applicationResults,omitempty"`
+	AssetProfile          inventory.Profile   `json:"assetProfile,omitempty"`
 }
 
 type AutoResult struct {
-	Findings     []Detection
-	Ports        []PortProbeResult
-	Services     []ServiceResult
-	SystemStatus string
-	AssetProfile inventory.Profile
+	Findings           []Detection
+	Ports              []PortProbeResult
+	Services           []ServiceResult
+	SystemStatus       string
+	ApplicationStatus  string
+	ApplicationResults []ApplicationResult
+	AssetProfile       inventory.Profile
 }
 
 // EngineStatus is based on local binary and data checks, not a successful scan.

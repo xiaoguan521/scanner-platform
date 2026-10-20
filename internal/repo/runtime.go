@@ -1,6 +1,7 @@
 package repo
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"database/sql"
@@ -29,6 +30,7 @@ type RuntimeRepository interface {
 	CreateSyntheticTask(context.Context) (taskflow.Task, error)
 	ListRuntimeTasks(context.Context) ([]taskflow.Task, error)
 	ClaimRuntimeTask(context.Context, string) (*taskflow.Task, error)
+	UpdateRuntimeTaskProgress(context.Context, string, taskflow.ProgressUpdate) error
 	CompleteRuntimeTask(context.Context, taskflow.Report) error
 	ListRuntimeFindings(context.Context) ([]taskflow.Finding, error)
 }
@@ -187,6 +189,8 @@ func readRuntimeTask(row rowScanner) (taskflow.Task, error) {
 	task.VulnerabilityPorts = detail.VulnPorts
 	task.ServiceResults = detail.Services
 	task.SystemScanStatus = detail.SystemStatus
+	task.ApplicationScanStatus = detail.ApplicationStatus
+	task.ApplicationResults = detail.ApplicationResults
 	task.AssetProfile = detail.AssetProfile
 	task.EffectiveExclusions = detail.EffectiveExclusions
 	for _, service := range detail.Services {
@@ -242,7 +246,157 @@ func (s *RuntimeStore) ListRuntimeTasks(ctx context.Context) ([]taskflow.Task, e
 	for index := range items {
 		items[index].FindingCount = counts[items[index].ID]
 	}
+	progress, err := s.runtimeTaskProgress(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for index := range items {
+		if current, ok := progress[items[index].ID]; ok {
+			items[index].Progress = &current
+		}
+	}
 	return items, nil
+}
+
+func (s *RuntimeStore) runtimeTaskProgress(ctx context.Context) (map[string]taskflow.TaskProgress, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT task_id,phase,completed,total,updated_at FROM scan_task_progress`)
+	if err != nil {
+		return nil, fmt.Errorf("list task progress: %w", err)
+	}
+	defer rows.Close()
+	progress := map[string]taskflow.TaskProgress{}
+	for rows.Next() {
+		var taskID, phase, updatedAt string
+		var completed, total int
+		if err := rows.Scan(&taskID, &phase, &completed, &total, &updatedAt); err != nil {
+			return nil, fmt.Errorf("read task progress: %w", err)
+		}
+		updated, err := time.Parse(time.RFC3339Nano, updatedAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse task progress time: %w", err)
+		}
+		progress[taskID] = taskflow.TaskProgress{Phase: phase, Completed: completed, Total: total, UpdatedAt: updated}
+	}
+	return progress, rows.Err()
+}
+
+// UpdateRuntimeTaskProgress persists advisory progress only for the Worker
+// currently owning a running task. The progress never affects authorization.
+func (s *RuntimeStore) UpdateRuntimeTaskProgress(ctx context.Context, worker string, update taskflow.ProgressUpdate) error {
+	if update.TaskID == "" || len(update.TaskID) > 128 || worker == "" || len(worker) > 64 {
+		return ErrInvalidTask
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin task progress update: %w", err)
+	}
+	defer tx.Rollback()
+	var status, owner, rawDetails string
+	err = tx.QueryRowContext(ctx, `SELECT status,worker_id,details FROM scan_tasks WHERE id=?`, update.TaskID).Scan(&status, &owner, &rawDetails)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrTaskConflict
+		}
+		return err
+	}
+	if status != "RUNNING" || owner != worker {
+		return ErrTaskConflict
+	}
+	var detail struct {
+		Input struct {
+			Engine string `json:"engine"`
+		} `json:"input"`
+		ProbePorts json.RawMessage `json:"probePorts"`
+	}
+	if err := json.Unmarshal([]byte(rawDetails), &detail); err != nil {
+		return fmt.Errorf("decode task progress metadata: %w", err)
+	}
+	portTotal := 0
+	if update.Phase == "tcp_probe" {
+		portTotal, err = countJSONItems(detail.ProbePorts)
+		if err != nil {
+			return fmt.Errorf("count dispatched probe ports: %w", err)
+		}
+	}
+	if !validRuntimeTaskProgress(detail.Input.Engine, portTotal, update) {
+		return ErrInvalidTask
+	}
+	var oldWorker, oldPhase string
+	var oldCompleted, oldTotal int
+	readErr := tx.QueryRowContext(ctx, `SELECT worker_id,phase,completed,total FROM scan_task_progress WHERE task_id=?`, update.TaskID).Scan(&oldWorker, &oldPhase, &oldCompleted, &oldTotal)
+	if readErr != nil && !errors.Is(readErr, sql.ErrNoRows) {
+		return fmt.Errorf("read previous task progress: %w", readErr)
+	}
+	if readErr == nil && oldWorker == worker {
+		oldRank := runtimeProgressRank(detail.Input.Engine, oldPhase)
+		newRank := runtimeProgressRank(detail.Input.Engine, update.Phase)
+		if newRank < oldRank || update.Phase == oldPhase && (update.Completed < oldCompleted || update.Total != oldTotal) {
+			return ErrInvalidTask
+		}
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO scan_task_progress(task_id,worker_id,phase,completed,total,updated_at)
+		VALUES (?,?,?,?,?,?) ON CONFLICT(task_id) DO UPDATE SET worker_id=excluded.worker_id,phase=excluded.phase,
+		completed=excluded.completed,total=excluded.total,updated_at=excluded.updated_at`,
+		update.TaskID, worker, update.Phase, update.Completed, update.Total, now); err != nil {
+		return fmt.Errorf("save task progress: %w", err)
+	}
+	return tx.Commit()
+}
+
+func validRuntimeTaskProgress(engine string, portTotal int, update taskflow.ProgressUpdate) bool {
+	if update.Completed < 0 || update.Total < 0 || update.Completed > update.Total {
+		return false
+	}
+	switch update.Phase {
+	case "tcp_probe":
+		return (engine == "auto" || engine == "port-probe") && update.Total == portTotal && update.Total > 0
+	case "service_identification", "http_scan", "ssh_collection", "trivy_scan":
+		return engine == "auto" && update.Completed == 0 && update.Total == 0
+	case "engine_scan":
+		return (engine == "nuclei" || engine == "zap" || engine == "trivy") && update.Completed == 0 && update.Total == 0
+	default:
+		return false
+	}
+}
+
+func runtimeProgressRank(engine, phase string) int {
+	switch engine {
+	case "auto":
+		return map[string]int{"tcp_probe": 1, "service_identification": 2, "http_scan": 3, "ssh_collection": 4, "trivy_scan": 5}[phase]
+	case "port-probe":
+		if phase == "tcp_probe" {
+			return 1
+		}
+	case "nuclei", "zap", "trivy":
+		if phase == "engine_scan" {
+			return 1
+		}
+	}
+	return 0
+}
+
+func countJSONItems(raw json.RawMessage) (int, error) {
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		return 0, nil
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	token, err := decoder.Token()
+	if err != nil || token != json.Delim('[') {
+		return 0, fmt.Errorf("expected JSON array")
+	}
+	count := 0
+	for decoder.More() {
+		var value int
+		if err := decoder.Decode(&value); err != nil {
+			return 0, err
+		}
+		count++
+	}
+	if _, err := decoder.Token(); err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 func (s *RuntimeStore) runtimeTaskFindingCounts(ctx context.Context) (map[string]int, error) {
@@ -375,6 +529,9 @@ func (s *RuntimeStore) claimRuntimeTask(ctx context.Context, worker string) (*ta
 	if err != nil {
 		return nil, fmt.Errorf("claim task: %w", err)
 	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM scan_task_progress WHERE task_id=?`, task.ID); err != nil {
+		return nil, fmt.Errorf("reset task progress: %w", err)
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -399,6 +556,19 @@ func (s *RuntimeStore) CompleteRuntimeTask(ctx context.Context, report taskflow.
 	}
 	chunk := task.Chunks[0]
 	if task.Status == "RUNNING" && chunk.WorkerNodeID == report.WorkerID && report.Status == "PAUSED_WINDOW" {
+		if !validApplicationReport(report, len(task.Engines) == 1 && task.Engines[0] == "auto") {
+			return ErrInvalidTask
+		}
+		if len(task.Engines) == 1 && task.Engines[0] == "auto" {
+			if !validSystemScanStatus(report.SystemScanStatus) {
+				return ErrInvalidTask
+			}
+			if err := persistAutoScanStatus(ctx, tx, task.ID, report); err != nil {
+				return err
+			}
+		} else if report.SystemScanStatus != "" {
+			return ErrInvalidTask
+		}
 		if _, err := tx.ExecContext(ctx, "UPDATE scan_tasks SET status='PAUSED_WINDOW',worker_id='' WHERE id=?", task.ID); err != nil {
 			return err
 		}

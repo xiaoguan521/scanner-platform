@@ -142,7 +142,24 @@ export interface ScanTask {
   vulnerabilityPorts?: number[];
   serviceResults?: ServiceResult[];
   systemScanStatus?: string;
+  applicationScanStatus?: string;
+  applicationResults?: ApplicationResult[];
+  progress?: TaskProgress;
   customRuleCount?: number;
+}
+
+export interface ApplicationResult {
+  alias: string;
+  status: string;
+  selectedCount: number;
+  analyzedCount: number;
+}
+
+export interface TaskProgress {
+  phase: string;
+  completed: number;
+  total: number;
+  updatedAt: string;
 }
 
 export interface PortProbeRange { start: number; end: number }

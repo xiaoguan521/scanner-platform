@@ -26,7 +26,7 @@ export const NodesPage:React.FC=()=>{
   const removeRule=(rule:CustomRule)=>Modal.confirm({title:'删除自定义规则',content:`删除“${rule.name}”后新建任务将不再使用它；已创建任务保留创建时的规则快照。`,okText:'删除',okButtonProps:{danger:true},cancelText:'取消',onOk:async()=>{try{await deleteCustomRule(rule.id);setCustomRules(prev=>prev.filter(item=>item.id!==rule.id));message.success('自定义规则已删除');}catch(e){message.error(e instanceof Error?e.message:String(e));throw e;}}});
   return <div style={{display:'flex',flexDirection:'column',gap:16}}>
     <CollectionNotice loading={loading||customRulesLoading} error={error||bundleError||jobError||customRulesError}/>
-    <Alert type="info" showIcon message="本地节点与规则包" description="Worker 和 Updater 通过本机 API 工作，只有 Updater 写入规则目录。导入检查 ZIP 路径、manifest 和文件 SHA-256；当前未验签；真实任务在执行前校验固定规则版本。引擎程序由 make engines 安装，只有明确创建的真实任务才会连接目标。"/>
+    <Alert type="info" showIcon message="本地节点与规则包" description="Worker 和 Updater 通过本机 API 工作，只有 Updater 写入规则目录。外部规则包导入和激活需要受信任公钥验证签名，并检查文件 SHA-256；未验签的历史版本可查看，不能通过此页面激活。真实任务在执行前校验固定规则版本。"/>
     <ScanPolicySettings/>
     <Card title="节点心跳"><Table<NodeInfo> dataSource={nodes} rowKey="id" pagination={false} scroll={{x:850}} columns={[
       {title:'节点',dataIndex:'id'},{title:'类型',dataIndex:'kind'},
@@ -37,14 +37,14 @@ export const NodesPage:React.FC=()=>{
     ]}/></Card>
     <Card title="扫描引擎"><Table dataSource={nodes.flatMap(n=>(n.engines??[]).map(e=>({...e,nodeId:n.id,online:n.status!=='OFFLINE'})))} rowKey={e=>e.nodeId+'-'+e.name} pagination={false} columns={[{title:'引擎',dataIndex:'name',render:(v:string)=>v.toUpperCase()},{title:'固定版本',dataIndex:'version'},{title:'节点',dataIndex:'nodeId'},{title:'状态',render:(_,e)=><Tag color={e.online&&e.ready?'green':'default'}>{!e.online?'节点离线':e.ready?'本地就绪':e.installed?'缺少数据 / 运行环境':'未安装'}</Tag>},{title:'说明',dataIndex:'message'}]}/></Card>
     <Card title="规则包版本" extra={<Space wrap><input aria-label="选择离线规则包" type="file" accept=".zip" disabled={!canWrite} onChange={e=>setFile(e.target.files?.[0]??null)}/><Button disabled={!canWrite||!file} loading={busy} onClick={()=>void run(()=>importRules(file!))}>离线导入 ZIP</Button><Button disabled={!canWrite} onClick={()=>setFetchOpen(true)}>从规则源下载</Button></Space>}>
-      <Typography.Paragraph type="secondary">ZIP 须包含 manifest.json 和 nuclei/、trivy/ 下声明的规则文件。下载后或离线导入后，点击“激活”切换当前版本。</Typography.Paragraph>
+      <Typography.Paragraph type="secondary">ZIP 须包含 manifest.json、manifest.json.sig 和 nuclei/、trivy/ 下声明的规则文件。Updater 需先配置包外的受信任公钥；导入并验证后可点击“激活”切换当前版本。</Typography.Paragraph>
       <Table<RuleBundle> dataSource={bundles} rowKey="version" scroll={{x:1000}} columns={[
         {title:'版本',dataIndex:'version',render:(v:string,b)=><Space><Typography.Text strong>{v}</Typography.Text>{b.isCurrent&&<Tag color="success">CURRENT</Tag>}</Space>},
         {title:'引擎数据',render:(_,b)=>b.engines?.join('、')||'—'},
-        {title:'完整性 / 引擎验证',render:(_,b)=><Space direction="vertical"><Tag>{b.integrityVerified?'文件哈希已验证':'未验证'}</Tag><Typography.Text type="secondary">未验签 · 引擎兼容性未验证</Typography.Text></Space>},
+        {title:'完整性 / 签名 / 兼容性',render:(_,b)=><Space direction="vertical"><Tag>{b.integrityVerified?'文件哈希已验证':'文件哈希未验证'}</Tag><Tag color={b.signatureVerified?'success':'default'}>{b.signatureVerified?'签名已验证':'签名未验证'}</Tag><Typography.Text type="secondary">{b.engineValidated?'引擎兼容性已验证':'引擎兼容性未验证'}</Typography.Text></Space>},
         {title:'Manifest SHA-256',dataIndex:'manifestSha256',ellipsis:true},
         {title:'导入时间',dataIndex:'publishedAt',render:(v:string)=>new Date(v).toLocaleString()},
-        {title:'操作',render:(_,b)=><Space><Button disabled={!canWrite||b.isCurrent} loading={busy} onClick={()=>void run(()=>activateRules(b.version,false))}>激活</Button><Button danger disabled={!canWrite||b.isCurrent} onClick={()=>Modal.confirm({title:'显式回滚到 '+b.version+'？',content:'将切换本地规则指针并记录审计。当前不会启动扫描。',onOk:()=>run(()=>activateRules(b.version,true))})}>显式回滚</Button></Space>},
+        {title:'操作',render:(_,b)=><Space><Button disabled={!canWrite||b.isCurrent||!b.signatureVerified} loading={busy} onClick={()=>void run(()=>activateRules(b.version,false))}>激活</Button><Button danger disabled={!canWrite||b.isCurrent||!b.signatureVerified} onClick={()=>Modal.confirm({title:'显式回滚到 '+b.version+'？',content:'将切换本地规则指针并记录审计。当前不会启动扫描。',onOk:()=>run(()=>activateRules(b.version,true))})}>显式回滚</Button></Space>},
       ]}/>
     </Card>
     <Card title="自定义漏洞规则" extra={<Button type="primary" disabled={!canWrite} onClick={()=>{setEditingRule(null);ruleForm.resetFields();ruleForm.setFieldsValue({severity:'medium',matchType:'word',part:'body',enabled:true});setRuleOpen(true);}}>新增规则</Button>}>

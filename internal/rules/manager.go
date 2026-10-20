@@ -5,6 +5,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -20,6 +21,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"scanner-platform/internal/versionmgr"
@@ -72,8 +74,12 @@ type Report struct {
 	Bundles []Bundle `json:"bundles"`
 }
 type Manager struct {
-	Root   string
-	Client *http.Client
+	Root        string
+	Client      *http.Client
+	trustedKey  ed25519.PublicKey
+	trustedRoot string
+	preparedMu  sync.Mutex
+	prepared    map[string]preparedRelease
 }
 
 func ValidateVersion(version string) bool { return versionPattern.MatchString(version) }
@@ -158,6 +164,12 @@ func readLimited(r io.Reader, max int64) ([]byte, error) {
 }
 
 func (m *Manager) Import(ctx context.Context, data []byte) (Bundle, error) {
+	if err := ctx.Err(); err != nil {
+		return Bundle{}, err
+	}
+	if err := m.requireTrust(); err != nil {
+		return Bundle{}, err
+	}
 	if len(data) == 0 || len(data) > MaxArchive {
 		return Bundle{}, fmt.Errorf("ZIP 大小须在 1 字节至 256 MiB 之间")
 	}
@@ -172,7 +184,7 @@ func (m *Manager) Import(ctx context.Context, data []byte) (Bundle, error) {
 		return Bundle{}, fmt.Errorf("ZIP 文件数量过多")
 	}
 	entries := map[string]*zip.File{}
-	var manifestData []byte
+	var manifestData, signatureData []byte
 	for _, f := range zr.File {
 		if f.FileInfo().IsDir() {
 			continue
@@ -181,23 +193,35 @@ func (m *Manager) Import(ctx context.Context, data []byte) (Bundle, error) {
 			return Bundle{}, fmt.Errorf("规则包含链接或重复文件")
 		}
 		entries[f.Name] = f
-		if f.Name == "manifest.json" {
+		if f.Name == manifestName || f.Name == signatureName {
 			r, err := f.Open()
 			if err != nil {
 				return Bundle{}, err
 			}
-			manifestData, err = readLimited(r, 8<<20)
+			limit := int64(8 << 20)
+			if f.Name == signatureName {
+				limit = ed25519.SignatureSize
+			}
+			value, readErr := readLimited(r, limit)
 			r.Close()
-			if err != nil {
-				return Bundle{}, err
+			if readErr != nil {
+				return Bundle{}, readErr
+			}
+			if f.Name == manifestName {
+				manifestData = value
+			} else {
+				signatureData = value
 			}
 		}
+	}
+	if err := m.verifySignature(manifestData, signatureData); err != nil {
+		return Bundle{}, err
 	}
 	manifest, err := decodeManifest(manifestData)
 	if err != nil {
 		return Bundle{}, err
 	}
-	if len(entries) != len(manifest.Files)+1 {
+	if len(entries) != len(manifest.Files)+2 {
 		return Bundle{}, fmt.Errorf("ZIP 文件与 manifest 不一致")
 	}
 	stage, err := os.MkdirTemp(m.Root, ".import-")
@@ -256,12 +280,12 @@ func (m *Manager) Import(ctx context.Context, data []byte) (Bundle, error) {
 		}
 
 	}
-	return m.publishStage(ctx, stage, manifest, manifestData)
+	return m.publishStage(ctx, stage, manifest, manifestData, signatureData)
 }
 
 // publishStage is shared by ZIP import and Updater's streaming local DB
 // preparation. Neither path changes CURRENT until a separate activation.
-func (m *Manager) publishStage(ctx context.Context, stage string, manifest Manifest, manifestData []byte) (Bundle, error) {
+func (m *Manager) publishStage(ctx context.Context, stage string, manifest Manifest, manifestData, signatureData []byte) (Bundle, error) {
 	if err := ctx.Err(); err != nil {
 		return Bundle{}, err
 	}
@@ -281,8 +305,33 @@ func (m *Manager) publishStage(ctx context.Context, stage string, manifest Manif
 	if closeErr != nil {
 		return Bundle{}, closeErr
 	}
+	if signatureData != nil {
+		output, err := os.OpenFile(filepath.Join(stage, signatureName), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		if err != nil {
+			return Bundle{}, err
+		}
+		_, writeErr := output.Write(signatureData)
+		syncErr := output.Sync()
+		closeErr := output.Close()
+		if writeErr != nil {
+			return Bundle{}, writeErr
+		}
+		if syncErr != nil {
+			return Bundle{}, syncErr
+		}
+		if closeErr != nil {
+			return Bundle{}, closeErr
+		}
+	}
 	destination := filepath.Join(m.Root, "releases", manifest.Version)
 	if _, err := os.Lstat(destination); err == nil {
+		oldSignature, sigErr := readRuleMetadata(destination, signatureName, ed25519.SignatureSize)
+		if sigErr != nil && !(errors.Is(sigErr, os.ErrNotExist) && signatureData == nil) {
+			return Bundle{}, fmt.Errorf("版本已存在，签名不可覆盖或补写")
+		}
+		if !bytes.Equal(oldSignature, signatureData) {
+			return Bundle{}, fmt.Errorf("版本已存在，签名不可覆盖")
+		}
 		old, err := m.inspect(ctx, manifest.Version)
 		if err != nil {
 			return Bundle{}, err
@@ -301,6 +350,13 @@ func (m *Manager) publishStage(ctx context.Context, stage string, manifest Manif
 }
 
 func (m *Manager) inspect(ctx context.Context, version string) (Bundle, error) {
+	return m.inspectBundle(ctx, version, false)
+}
+
+func (m *Manager) inspectBundle(ctx context.Context, version string, requireSignature bool) (Bundle, error) {
+	if err := ctx.Err(); err != nil {
+		return Bundle{}, err
+	}
 	if !ValidateVersion(version) {
 		return Bundle{}, fmt.Errorf("版本无效")
 	}
@@ -312,9 +368,21 @@ func (m *Manager) inspect(ctx context.Context, version string) (Bundle, error) {
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return Bundle{}, fmt.Errorf("规则版本目录无效")
 	}
-	data, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
+	data, err := readRuleMetadata(dir, manifestName, 8<<20)
 	if err != nil {
 		return Bundle{}, err
+	}
+	signatureVerified := false
+	if requireSignature || len(m.trustedKey) != 0 {
+		signature, sigErr := readRuleMetadata(dir, signatureName, ed25519.SignatureSize)
+		if sigErr == nil {
+			if err := m.verifySignature(data, signature); err != nil {
+				return Bundle{}, err
+			}
+			signatureVerified = true
+		} else if requireSignature || !errors.Is(sigErr, os.ErrNotExist) {
+			return Bundle{}, fmt.Errorf("规则 manifest 签名读取失败: %w", sigErr)
+		}
 	}
 	manifest, err := decodeManifest(data)
 	if err != nil || manifest.Version != version {
@@ -348,7 +416,7 @@ func (m *Manager) inspect(ctx context.Context, version string) (Bundle, error) {
 		}
 
 	}
-	return Bundle{Version: version, Engines: manifest.Engines, Channel: "local", ManifestSHA256: hashBytes(data), PublishedAt: info.ModTime().UTC().Format(time.RFC3339Nano), IntegrityVerified: true}, nil
+	return Bundle{Version: version, Engines: manifest.Engines, Channel: "local", ManifestSHA256: hashBytes(data), PublishedAt: info.ModTime().UTC().Format(time.RFC3339Nano), IntegrityVerified: true, SignatureVerified: signatureVerified}, nil
 }
 
 // Inspect verifies an already installed version without creating any directory.
@@ -367,12 +435,23 @@ func older(a, b string) bool {
 	return ai < bi
 }
 func (m *Manager) Activate(ctx context.Context, version string, rollback bool) error {
+	if err := m.requireTrust(); err != nil {
+		return err
+	}
 	if err := m.initialize(); err != nil {
 		return err
 	}
-	if _, err := m.inspect(ctx, version); err != nil {
+	bundle, err := m.inspectBundle(ctx, version, true)
+	if err != nil {
 		return err
 	}
+	if !bundle.SignatureVerified {
+		return fmt.Errorf("普通激活要求有效的 manifest Ed25519 签名")
+	}
+	return m.activateCurrent(ctx, version, rollback)
+}
+
+func (m *Manager) activateCurrent(ctx context.Context, version string, rollback bool) error {
 	current, err := versionmgr.ReadLocalCurrent(ctx, m.Root)
 	if err != nil && !errors.Is(err, versionmgr.ErrWaitingForRules) {
 		return err
@@ -416,6 +495,9 @@ func (m *Manager) List(ctx context.Context) ([]Bundle, error) {
 	return out, nil
 }
 func (m *Manager) Fetch(ctx context.Context, raw, expected string) (Bundle, error) {
+	if err := m.requireTrust(); err != nil {
+		return Bundle{}, err
+	}
 	if err := ValidateSource(raw, expected); err != nil {
 		return Bundle{}, err
 	}

@@ -1508,6 +1508,8 @@ paths:
                   maxItems: 3
                   items:
                     "$ref": "#/components/schemas/EngineStatus"
+                progress:
+                  "$ref": "#/components/schemas/WorkerProgressUpdate"
               required: []
   "/api/v1/detection-capabilities":
     get:
@@ -2533,13 +2535,74 @@ components:
           maximum: 20
         systemScanStatus:
           type: string
-          description: Fixed Worker result status for optional local SSH package collection; never contains credentials or raw remote output.
+          description: Fixed Worker result status for optional local SSH package collection; includes an explicit not-started state when automatic scanning fails or stops before package collection, and never contains credentials or raw remote output.
+        applicationScanStatus:
+          "$ref": "#/components/schemas/ApplicationScanStatus"
+        applicationResults:
+          type: array
+          maxItems: 8
+          items:
+            "$ref": "#/components/schemas/ApplicationResult"
+        progress:
+          "$ref": "#/components/schemas/TaskProgress"
         error:
           type: string
         effectiveExclusions: {"type": "array", "items": {"$ref": "#/components/schemas/PortRange"}}
         quarantinedPorts: {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 65535}, "maxItems": 65535}
         assetProfile: {"$ref": "#/components/schemas/AssetProfile"}
         vulnerabilityPorts: {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 65535}, "maxItems": 65535}
+    ApplicationScanStatus:
+      type: string
+      enum: [not_configured, not_started, port_out_of_scope, collecting, collection_failed, scanning, analysis_failed, completed]
+      description: Optional SSH application coverage. Older Workers omit this field. A completed task cannot claim success for unfinished configured application analysis.
+    ApplicationResult:
+      type: object
+      additionalProperties: false
+      required: [alias, status, selectedCount, analyzedCount]
+      properties:
+        alias:
+          type: string
+          pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$'
+        status:
+          "$ref": "#/components/schemas/ApplicationScanStatus"
+        selectedCount: {type: integer, minimum: 0, maximum: 16}
+        analyzedCount: {type: integer, minimum: 0, maximum: 16}
+      description: Configured alias only, without remote paths. Analyzed count must not exceed selected count; total selected count across applications is at most 32. Completed coverage requires equal counts for every alias.
+    TaskProgress:
+      type: object
+      required: [phase, completed, total, updatedAt]
+      properties:
+        phase:
+          type: string
+          enum: [tcp_probe, service_identification, http_scan, ssh_collection, trivy_scan, engine_scan]
+        completed:
+          type: integer
+          minimum: 0
+          description: For tcp_probe, number of finished connection attempts, including refused or timed-out ports; otherwise zero.
+        total:
+          type: integer
+          minimum: 0
+          description: For tcp_probe, exactly the frozen dispatched port count; otherwise zero.
+        updatedAt:
+          type: string
+          format: date-time
+    WorkerProgressUpdate:
+      type: object
+      description: Advisory telemetry only; Server validates Worker/task ownership and the frozen TCP port count before persistence.
+      required: [taskId, phase, completed, total]
+      properties:
+        taskId:
+          type: string
+          maxLength: 128
+        phase:
+          type: string
+          enum: [tcp_probe, service_identification, http_scan, ssh_collection, trivy_scan, engine_scan]
+        completed:
+          type: integer
+          minimum: 0
+        total:
+          type: integer
+          minimum: 0
     Finding:
       type: object
       required:
@@ -2737,6 +2800,7 @@ components:
           type: boolean
         signatureVerified:
           type: boolean
+          description: True only when the Updater verified the installed manifest bytes and detached Ed25519 signature against its separately configured trusted public key. A signature file alone or locally prepared unsigned data does not set this flag.
         engineValidated:
           type: boolean
     PortRange:
@@ -3070,7 +3134,16 @@ components:
           items:
             "$ref": "#/components/schemas/PortProbeResult"
         serviceResults: {"type": "array", "items": {"$ref": "#/components/schemas/ServiceResult"}}
-        systemScanStatus: {"type": "string"}
+        systemScanStatus:
+          type: string
+          description: Fixed Worker result status for optional local SSH package collection; includes an explicit not-started state when automatic scanning fails or stops before package collection, and never contains credentials or raw remote output.
+        applicationScanStatus:
+          "$ref": "#/components/schemas/ApplicationScanStatus"
+        applicationResults:
+          type: array
+          maxItems: 8
+          items:
+            "$ref": "#/components/schemas/ApplicationResult"
         assetProfile: {"$ref": "#/components/schemas/AssetProfile"}
     AssetProfile:
       type: object

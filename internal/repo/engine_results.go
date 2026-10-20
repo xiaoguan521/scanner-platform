@@ -133,7 +133,7 @@ func validServiceResults(results []taskflow.ServiceResult, task taskflow.Task, o
 
 func validSystemScanStatus(value string) bool {
 	switch value {
-	case taskflow.SystemScanNotConfigured, taskflow.SystemScanPortOutOfScope, taskflow.SystemScanPortClosed,
+	case taskflow.SystemScanNotStarted, taskflow.SystemScanNotConfigured, taskflow.SystemScanPortOutOfScope, taskflow.SystemScanPortClosed,
 		taskflow.SystemScanClientMissing, taskflow.SystemScanHostKeyMismatch, taskflow.SystemScanAuthFailed,
 		taskflow.SystemScanPythonMissing, taskflow.SystemScanCollectionFailed, taskflow.SystemScanInvalidSnapshot,
 		taskflow.SystemScanTrivyUnavailable, taskflow.SystemScanUnsupportedOS, taskflow.SystemScanTrivyFailed, taskflow.SystemScanCompleted:
@@ -141,6 +141,28 @@ func validSystemScanStatus(value string) bool {
 	default:
 		return false
 	}
+}
+
+func persistAutoScanStatus(ctx context.Context, tx *sql.Tx, taskID string, report taskflow.Report) error {
+	var raw string
+	if err := tx.QueryRowContext(ctx, `SELECT details FROM scan_tasks WHERE id=?`, taskID).Scan(&raw); err != nil {
+		return err
+	}
+	var detail taskDetails
+	if err := json.Unmarshal([]byte(raw), &detail); err != nil {
+		return err
+	}
+	detail.SystemStatus = report.SystemScanStatus
+	detail.ApplicationStatus = report.ApplicationScanStatus
+	detail.ApplicationResults = append([]taskflow.ApplicationResult(nil), report.ApplicationResults...)
+	encoded, err := json.Marshal(detail)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE scan_tasks SET details=? WHERE id=?`, string(encoded), taskID); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *RuntimeStore) completeEngineTask(ctx context.Context, report taskflow.Report) error {
@@ -161,6 +183,9 @@ func (s *RuntimeStore) completeEngineTask(ctx context.Context, report taskflow.R
 	}
 	portProbeTask := len(task.Engines) == 1 && task.Engines[0] == "port-probe"
 	autoTask := len(task.Engines) == 1 && task.Engines[0] == "auto"
+	if !validApplicationReport(report, autoTask) {
+		return ErrInvalidTask
+	}
 	if autoTask && !validSystemScanStatus(report.SystemScanStatus) || !autoTask && report.SystemScanStatus != "" {
 		return ErrInvalidTask
 	}
@@ -221,6 +246,11 @@ func (s *RuntimeStore) completeEngineTask(ctx context.Context, report taskflow.R
 	if report.Status == "FAILED" && (len(report.PortProbeResults) != 0 || len(report.ServiceResults) != 0) {
 		return ErrInvalidTask
 	}
+	if autoTask && report.Status != "COMPLETED" {
+		if err := persistAutoScanStatus(ctx, tx, task.ID, report); err != nil {
+			return err
+		}
+	}
 	if report.Status == "COMPLETED" {
 		var details string
 		if err := tx.QueryRowContext(ctx, "SELECT details FROM scan_tasks WHERE id=?", task.ID).Scan(&details); err != nil {
@@ -234,6 +264,8 @@ func (s *RuntimeStore) completeEngineTask(ctx context.Context, report taskflow.R
 			detail.ProbeResults = append([]taskflow.PortProbeResult{}, report.PortProbeResults...)
 			detail.Services = append([]taskflow.ServiceResult{}, report.ServiceResults...)
 			detail.SystemStatus = report.SystemScanStatus
+			detail.ApplicationStatus = report.ApplicationScanStatus
+			detail.ApplicationResults = append([]taskflow.ApplicationResult(nil), report.ApplicationResults...)
 			detail.AssetProfile = report.AssetProfile
 			encoded, err := json.Marshal(detail)
 			if err != nil {

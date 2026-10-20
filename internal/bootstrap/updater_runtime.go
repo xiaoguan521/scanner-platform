@@ -22,6 +22,7 @@ func RunUpdater(args []string, stdout, stderr io.Writer) int {
 	server := flags.String("server", "http://127.0.0.1:8080", "Local Server URL")
 	id := flags.String("id", "updater-local", "Updater identifier")
 	root := flags.String("rules-dir", "vuln-data", "Updater-owned rule directory")
+	trustedKey := flags.String("trusted-rule-public-key", "", "External Ed25519 PUBLIC KEY PEM file for rule import and activation")
 	prepare := flags.Bool("prepare-engines", false, "Install and activate baseline templates and Trivy DB; no scans")
 	skipDownload := flags.Bool("skip-db-download", false, "Use the existing Trivy DB cache during preparation")
 	withJava := flags.Bool("with-java-db", false, "Include Java artifact index in explicit engine preparation")
@@ -46,6 +47,14 @@ func RunUpdater(args []string, stdout, stderr io.Writer) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	manager := &rules.Manager{Root: *root}
+	if *trustedKey != "" {
+		manager, err = rules.NewVerifiedManager(*root, *trustedKey)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+	}
 	if *prepare {
 		absolute := func(path string) string { p, _ := filepath.Abs(path); return p }
 		if !*skipDownload {
@@ -62,12 +71,11 @@ func RunUpdater(args []string, stdout, stderr io.Writer) int {
 				}
 			}
 		}
-		manager := rules.Manager{Root: absolute(*root)}
 		version := time.Now().UTC().Format("20060102.150405")
 		fmt.Fprintln(stdout, "Packaging, hashing and installing local engine rules...")
 		bundle, err := manager.PrepareDefault(ctx, version, absolute(*dbCache), *withJava)
 		if err == nil {
-			err = manager.Activate(ctx, bundle.Version, false)
+			err = manager.ActivatePreparedLocal(ctx, bundle.Version)
 		}
 		if err != nil {
 			fmt.Fprintln(stderr, err)
@@ -79,7 +87,7 @@ func RunUpdater(args []string, stdout, stderr io.Writer) int {
 		}
 		return 0
 	}
-	agent := rules.Agent{ServerURL: *server, ID: *id, Manager: &rules.Manager{Root: *root}}
+	agent := rules.Agent{ServerURL: *server, ID: *id, Manager: manager}
 	if err := agent.Run(ctx, *once); err != nil && !errors.Is(err, context.Canceled) {
 		fmt.Fprintf(stderr, "updater stopped: %v\n", err)
 		return 1

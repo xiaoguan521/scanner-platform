@@ -163,7 +163,9 @@ func (r *Runner) ProbePorts(ctx context.Context, task taskflow.Task) ([]taskflow
 	if !validProbePortPlan(task.PortProbeConfig, task.PortProbePorts) {
 		return nil, fmt.Errorf("invalid TCP port probe task")
 	}
-	open, err := portprobe.ScanConfigured(ctx, task.Chunks[0].Targets[0], task.PortProbePorts, task.PortProbeConfig)
+	open, err := portprobe.ScanConfiguredWithProgress(ctx, task.Chunks[0].Targets[0], task.PortProbePorts, task.PortProbeConfig, func(completed, total int) {
+		taskflow.ReportProgress(ctx, "tcp_probe", completed, total)
+	})
 	if err != nil {
 		return nil, err
 	}

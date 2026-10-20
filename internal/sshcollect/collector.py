@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Collect explicit local Linux inputs for offline Trivy tasks; never run a scan."""
 import argparse
+import base64
 import datetime as dt
 import hashlib
 import json
@@ -191,6 +192,142 @@ def named(value):
     return name, target
 
 
+
+SSH_APP_MAX_FILE = 512 << 20
+SSH_APP_MAX_TOTAL = 2 << 30
+
+
+def ssh_app_directory(value):
+    if not isinstance(value, str) or len(value.encode()) > 512 or not value.startswith('/') or value == '/':
+        return False
+    if any(ord(ch) < 32 or 127 <= ord(ch) <= 159 for ch in value) or any(part in ('', '.', '..') for part in value.split('/')[1:]):
+        return False
+    denied = ('/proc', '/sys', '/dev', '/run', '/tmp', '/net', '/mnt', '/media')
+    if any(value == root or value.startswith(root + '/') for root in denied):
+        return False
+    return value not in ('/opt', '/srv', '/home', '/root', '/etc', '/usr', '/usr/local', '/var', '/var/lib', '/var/www', '/var/opt', '/var/local', '/bin', '/sbin', '/lib', '/lib64', '/boot')
+
+
+def decode_ssh_apps(token):
+    if sys.version_info < (3, 7):
+        raise ValueError('SSH application collection requires Python 3.7+')
+    if len(token) > 8192 or not re.fullmatch(r'x[A-Za-z0-9_-]+', token):
+        raise ValueError('Invalid SSH application token')
+    encoded = token[1:]
+    raw = base64.b64decode(encoded + '=' * (-len(encoded) % 4), altchars=b'-_', validate=True)
+    if base64.urlsafe_b64encode(raw).decode().rstrip('=') != encoded:
+        raise ValueError('Noncanonical application token')
+    apps = json.loads(raw)
+    if not isinstance(apps, list) or not 1 <= len(apps) <= 8:
+        raise ValueError('Invalid SSH application count')
+    seen = set()
+    for app in apps:
+        if not isinstance(app, dict) or set(app) != {'alias', 'directory', 'includeJava', 'includeGo'}:
+            raise ValueError('Invalid SSH application shape')
+        alias = app['alias']
+        if not isinstance(alias, str) or not ALIAS.fullmatch(alias) or alias in seen or not ssh_app_directory(app['directory']):
+            raise ValueError('Invalid SSH application alias or deployment directory')
+        if type(app['includeJava']) is not bool or type(app['includeGo']) is not bool or not (app['includeJava'] or app['includeGo']):
+            raise ValueError('Select Java or Go application artifacts')
+        seen.add(alias)
+    return apps
+
+
+def ssh_file_identity(info):
+    return (info.st_dev, info.st_ino, info.st_mode, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
+def collect_ssh_apps(root, staging, apps, source, collected):
+    # Directory descriptors keep every lookup beneath the explicitly selected
+    # fixture/root. O_NOFOLLOW rejects symlinks at every path component.
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    root_fd = os.open(str(root), flags)
+    total = [0, 0, 0]  # bytes, selected artifacts, examined entries
+    try:
+        root_dev = os.fstat(root_fd).st_dev
+        for app in apps:
+            app_fd = os.dup(root_fd)
+            try:
+                for part in app['directory'].split('/')[1:]:
+                    next_fd = os.open(part, flags, dir_fd=app_fd)
+                    os.close(app_fd)
+                    app_fd = next_fd
+                    if os.fstat(app_fd).st_dev != root_dev:
+                        raise ValueError('Application directory crosses a filesystem boundary')
+                count = [0]
+                def walk(fd, depth):
+                    before_dir = os.fstat(fd)
+                    with os.scandir(fd) as iterator:
+                        entries = []
+                        for entry in iterator:
+                            total[2] += 1
+                            if total[2] > 4096:
+                                raise ValueError('SSH application entry limit exceeded')
+                            entries.append(entry.name)
+                    for name in sorted(entries):
+                        before = os.stat(name, dir_fd=fd, follow_symlinks=False)
+                        if before.st_dev != root_dev or stat.S_ISLNK(before.st_mode):
+                            raise ValueError('Application contains a symlink or filesystem boundary')
+                        if stat.S_ISDIR(before.st_mode):
+                            if depth >= 3:
+                                raise ValueError('Application directory depth exceeds 3')
+                            child = os.open(name, flags, dir_fd=fd)
+                            try:
+                                if ssh_file_identity(before) != ssh_file_identity(os.fstat(child)):
+                                    raise ValueError('Application directory changed')
+                                walk(child, depth + 1)
+                            finally:
+                                os.close(child)
+                            continue
+                        if not stat.S_ISREG(before.st_mode):
+                            raise ValueError('Application contains a special file')
+                        selected_java = app['includeJava'] and deployed_file(name)
+                        # Read only explicitly enabled artifact candidates.
+                        if not selected_java and not app['includeGo']:
+                            continue
+                        file_fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+                        with os.fdopen(file_fd, 'rb') as stream:
+                            if ssh_file_identity(before) != ssh_file_identity(os.fstat(stream.fileno())):
+                                raise ValueError('Application artifact changed before reading')
+                            elf = stream.read(4) == b'\x7fELF'
+                            if not selected_java and not (app['includeGo'] and elf):
+                                continue
+                            if before.st_size > SSH_APP_MAX_FILE or count[0] >= 16 or total[1] >= 32 or total[0] + before.st_size > SSH_APP_MAX_TOTAL:
+                                raise ValueError('SSH application artifact limit exceeded')
+                            # Fixed output names never expose deployment filenames.
+                            suffix = Path(name).suffix.lower() if selected_java else '.elf'
+                            destination = staging / 'apps' / app['alias'] / ('%04d' % count[0]) / ('artifact' + suffix)
+                            destination.parent.mkdir(parents=True, mode=0o700)
+                            stream.seek(0)
+                            copied = 0
+                            with destination.open('xb') as output:
+                                while True:
+                                    chunk = stream.read(128 << 10)
+                                    if not chunk:
+                                        break
+                                    copied += len(chunk)
+                                    if copied > before.st_size:
+                                        raise ValueError('Application artifact grew')
+                                    output.write(chunk)
+                            if copied != before.st_size or ssh_file_identity(before) != ssh_file_identity(os.fstat(stream.fileno())) or ssh_file_identity(before) != ssh_file_identity(os.stat(name, dir_fd=fd, follow_symlinks=False)):
+                                raise ValueError('Application artifact changed during collection')
+                            destination.chmod(0o600)
+                            stable_source = 'app-' + hashlib.sha256((source + '\x00' + app['alias'] + '\x00' + app['directory']).encode()).hexdigest()[:32]
+                            snapshot(destination.parent, stable_source, 'artifact', collected)
+                            count[0] += 1
+                            total[0] += copied
+                            total[1] += 1
+                    if ssh_file_identity(before_dir) != ssh_file_identity(os.fstat(fd)):
+                        raise ValueError('Application directory changed during collection')
+                walk(app_fd, 0)
+                if not count[0]:
+                    raise ValueError('Application directory has no enabled Java or Go artifact')
+            finally:
+                os.close(app_fd)
+    finally:
+        os.close(root_fd)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', required=True, help='Stable private host alias, e.g. lab-a (no auto-discovery)')
@@ -201,7 +338,11 @@ def main(argv=None):
     parser.add_argument('--image-archive', action='append', type=named, default=[], help='Explicit alias=previously exported Docker/OCI tar, including containerd exports')
     parser.add_argument('--docker-socket', type=Path, default=Path('/var/run/docker.sock'), help='Explicit local Unix socket; no remote Docker contexts')
     parser.add_argument('--archive-stdout', action='store_true', help=argparse.SUPPRESS)
+    parser.add_argument('--ssh-apps-b64', help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
+    ssh_apps = decode_ssh_apps(args.ssh_apps_b64) if args.ssh_apps_b64 else None
+    if ssh_apps and (args.app or args.image or args.image_archive):
+        parser.error('SSH application mode cannot combine other collection modes')
     if not ALIAS.fullmatch(args.source):
         parser.error('--source must be an alphanumeric alias (hyphen/underscore allowed, maximum 64 characters)')
     if args.rootfs == Path('/') and platform.system() != 'Linux':
@@ -217,9 +358,13 @@ def main(argv=None):
     old_umask = os.umask(0o077)
     try:
         collected = dt.datetime.now(dt.timezone.utc).isoformat(timespec='seconds')
-        components = [{'name': 'os', 'kind': 'rootfs', 'path': 'os'}]
-        collect_os(args.rootfs.resolve(strict=True), staging / 'os')
-        snapshot(staging / 'os', args.source, 'rootfs', collected)
+        components = []
+        if ssh_apps:
+            collect_ssh_apps(args.rootfs, staging, ssh_apps, args.source, collected)
+        else:
+            components = [{'name': 'os', 'kind': 'rootfs', 'path': 'os'}]
+            collect_os(args.rootfs.resolve(strict=True), staging / 'os')
+            snapshot(staging / 'os', args.source, 'rootfs', collected)
         for name, path in args.app:
             destination = staging / 'apps' / name
             kinds = collect_application(Path(path).absolute(), destination)
@@ -274,12 +419,14 @@ def main(argv=None):
                    'coverage': ['OS package database snapshot; not live kernel or process verification',
                                 'Only explicitly selected application dependency files and image archives',
                                 'Image writable layers, volumes and unregistered native binaries are not covered']}
-        (staging / 'collection.json').write_text(json.dumps(receipt, indent=2) + '\n')
-        (staging / 'collection.json').chmod(0o600)
+        if not ssh_apps:
+            (staging / 'collection.json').write_text(json.dumps(receipt, indent=2) + '\n')
+            (staging / 'collection.json').chmod(0o600)
         # Keep the private inventory out of Git even if the operator selects an
         # output directory beneath a checkout instead of the usual runtime/.
-        (staging / '.gitignore').write_text('*\n')
-        (staging / '.gitignore').chmod(0o600)
+        if not ssh_apps:
+            (staging / '.gitignore').write_text('*\n')
+            (staging / '.gitignore').chmod(0o600)
         # Recheck to avoid replacing an output created during collection.
         if output.exists():
             raise ValueError('Output appeared during collection; refusing to overwrite it')

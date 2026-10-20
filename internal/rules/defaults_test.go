@@ -55,7 +55,7 @@ func TestStreamingPreparationIncludesJavaAndRequiresExplicitActivation(t *testin
 	if manifest.Files["trivy/java-db/trivy-java.db"] == "" || len(manifest.Files) != 8 {
 		t.Fatal("Java index missing from manifest", manifest)
 	}
-	if err := manager.Activate(context.Background(), bundle.Version, false); err != nil {
+	if err := manager.ActivatePreparedLocal(context.Background(), bundle.Version); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(cache, "db", "trivy.db"), []byte("changed DB fixture"), 0600); err != nil {
@@ -77,7 +77,7 @@ func TestPreparationFailureDoesNotPublishOrSwitchCurrent(t *testing.T) {
 			if _, err := manager.PrepareDefault(context.Background(), "20261019.01", cache, false); err != nil {
 				t.Fatal(err)
 			}
-			if err := manager.Activate(context.Background(), "20261019.01", false); err != nil {
+			if err := manager.ActivatePreparedLocal(context.Background(), "20261019.01"); err != nil {
 				t.Fatal(err)
 			}
 			ctx, cancel := context.WithCancel(context.Background())

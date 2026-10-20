@@ -124,7 +124,7 @@ func (a *Agent) ProcessOne(ctx context.Context) (bool, error) {
 	default:
 		err = fmt.Errorf("unknown update operation")
 	}
-	report := Report{JobID: job.ID, NodeID: a.ID, Status: "COMPLETED", Version: bundle.Version, Message: "操作完成；仅验证文件完整性，未执行扫描引擎"}
+	report := Report{JobID: job.ID, NodeID: a.ID, Status: "COMPLETED", Version: bundle.Version, Message: "操作完成；已验证规则签名及文件完整性，未执行扫描引擎"}
 	if err != nil {
 		report.Status = "FAILED"
 		report.Message = err.Error()

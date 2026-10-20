@@ -137,8 +137,10 @@ func TestAutomaticTaskAllowsOnlySelectedOpenPortsAndStoresSafeSystemStatus(t *te
 		t.Fatalf("auto task claim failed: %+v %v", claimed, err)
 	}
 	report := taskflow.Report{TaskID: task.ID, WorkerID: "auto-worker", Status: "COMPLETED", SystemScanStatus: taskflow.SystemScanCompleted,
-		PortProbeResults: []taskflow.PortProbeResult{{Port: 22}, {Port: 80}},
-		ServiceResults:   []taskflow.ServiceResult{{Port: 22, Kind: "OTHER"}, {Port: 80, Kind: "HTTP", Scheme: "http"}},
+		ApplicationScanStatus: taskflow.ApplicationScanCompleted,
+		ApplicationResults:    []taskflow.ApplicationResult{{Alias: "demo", Status: taskflow.ApplicationScanCompleted, SelectedCount: 2, AnalyzedCount: 2}},
+		PortProbeResults:      []taskflow.PortProbeResult{{Port: 22}, {Port: 80}},
+		ServiceResults:        []taskflow.ServiceResult{{Port: 22, Kind: "OTHER"}, {Port: 80, Kind: "HTTP", Scheme: "http"}},
 		Findings: []taskflow.Detection{
 			{Engine: "trivy", Target: "192.0.2.20:22", TemplateID: "CVE-2099-0001", Title: "fixture package issue", Severity: "HIGH", Package: "fixture", InstalledVersion: "1.0"},
 			{Engine: "nuclei", Target: "192.0.2.20:80", TemplateID: "fixture-header", Title: "fixture web issue", Severity: "LOW", MatchedPath: "/"},
@@ -159,12 +161,57 @@ func TestAutomaticTaskAllowsOnlySelectedOpenPortsAndStoresSafeSystemStatus(t *te
 		t.Fatal(err)
 	}
 	tasks, err := store.ListRuntimeTasks(ctx)
-	if err != nil || len(tasks) != 1 || tasks[0].SystemScanStatus != taskflow.SystemScanCompleted || len(tasks[0].ServiceResults) != 2 {
+	if err != nil || len(tasks) != 1 || tasks[0].SystemScanStatus != taskflow.SystemScanCompleted || len(tasks[0].ServiceResults) != 2 || tasks[0].ApplicationScanStatus != taskflow.ApplicationScanCompleted || len(tasks[0].ApplicationResults) != 1 || tasks[0].ApplicationResults[0].AnalyzedCount != 2 {
 		t.Fatalf("auto scan status/results not persisted: %+v %v", tasks, err)
 	}
 	findings, err := store.ListRuntimeFindings(ctx)
 	if err != nil || len(findings) != 2 {
 		t.Fatalf("auto scan findings not stored: %+v %v", findings, err)
+	}
+}
+
+func TestAutomaticFailureStatusIsAcceptedAndPersisted(t *testing.T) {
+	store, actor := localFixture(t)
+	ctx := context.Background()
+	bundle, _ := json.Marshal(rules.Bundle{Version: "20261019.01", Engines: []string{"nuclei", "trivy"}, IsCurrent: true, IntegrityVerified: true})
+	if _, err := store.db.ExecContext(ctx, "INSERT INTO local_rule_bundles(version,data) VALUES(?,?)", "20261019.01", string(bundle)); err != nil {
+		t.Fatal(err)
+	}
+	var assetID string
+	if err := store.db.QueryRowContext(ctx, "SELECT id FROM assets WHERE address=?", "192.0.2.20").Scan(&assetID); err != nil {
+		t.Fatal(err)
+	}
+	input := taskflow.TaskInput{Engine: "auto", AssetID: assetID, Targets: []string{}, PortProbe: portprobe.Config{Preset: "custom", Ranges: []portprobe.Range{{Start: 80, End: 80}}, OpsApproved: true}}
+	task, err := store.CreateLocalTask(ctx, input, actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := store.ClaimRuntimeTask(ctx, "auto-worker")
+	if err != nil || claimed == nil || claimed.ID != task.ID {
+		t.Fatalf("auto task claim failed: %+v %v", claimed, err)
+	}
+	report := taskflow.Report{TaskID: task.ID, WorkerID: "auto-worker", Status: "FAILED", Error: "应用分析未完成", SystemScanStatus: taskflow.SystemScanCompleted, ApplicationScanStatus: taskflow.ApplicationScanAnalysisFailed,
+		ApplicationResults: []taskflow.ApplicationResult{{Alias: "demo", Status: taskflow.ApplicationScanAnalysisFailed, SelectedCount: 2, AnalyzedCount: 1}}}
+	missingStatus := report
+	missingStatus.SystemScanStatus = ""
+	if err := store.CompleteRuntimeTask(ctx, missingStatus); !errors.Is(err, ErrInvalidTask) {
+		t.Fatalf("auto failure without system status was accepted: %v", err)
+	}
+	partial := report
+	partial.Findings = []taskflow.Detection{{Engine: "nuclei", Target: "192.0.2.20:80", TemplateID: "fixture-header", Title: "partial finding", Severity: "LOW", MatchedPath: "/"}}
+	if err := store.CompleteRuntimeTask(ctx, partial); !errors.Is(err, ErrInvalidTask) {
+		t.Fatalf("partial findings in failed report accepted: %v", err)
+	}
+	if err := store.CompleteRuntimeTask(ctx, report); err != nil {
+		t.Fatalf("auto failure report was rejected: %v", err)
+	}
+	tasks, err := store.ListRuntimeTasks(ctx)
+	if err != nil || len(tasks) != 1 || tasks[0].Status != "FAILED" || tasks[0].SystemScanStatus != taskflow.SystemScanCompleted || tasks[0].ApplicationScanStatus != taskflow.ApplicationScanAnalysisFailed || len(tasks[0].ApplicationResults) != 1 || tasks[0].ApplicationResults[0].AnalyzedCount != 1 || tasks[0].Error != report.Error {
+		t.Fatalf("failed automatic status was not persisted: %+v %v", tasks, err)
+	}
+	findings, err := store.ListRuntimeFindings(ctx)
+	if err != nil || len(findings) != 0 {
+		t.Fatalf("failed task stored partial findings: %+v %v", findings, err)
 	}
 }
 

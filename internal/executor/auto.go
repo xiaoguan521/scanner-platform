@@ -39,6 +39,7 @@ func (r *Runner) AutoScan(ctx context.Context, task taskflow.Task) (taskflow.Aut
 	if err != nil {
 		return taskflow.AutoResult{}, err
 	}
+	taskflow.ReportProgress(ctx, "service_identification", 0, 0)
 	allowed := make(map[int]bool, len(task.VulnerabilityPorts))
 	for _, port := range task.VulnerabilityPorts {
 		allowed[port] = true
@@ -50,8 +51,9 @@ func (r *Runner) AutoScan(ctx context.Context, task taskflow.Task) (taskflow.Aut
 		}
 	}
 	services := identifyServices(ctx, task.Chunks[0].Targets[0], openApproved, task.PortProbeConfig)
+	result := taskflow.AutoResult{Ports: open, Services: services, Findings: []taskflow.Detection{}, SystemStatus: taskflow.SystemScanNotStarted, ApplicationStatus: taskflow.ApplicationScanNotStarted, AssetProfile: inferProfile(services)}
 	if err := ctx.Err(); err != nil {
-		return taskflow.AutoResult{}, err
+		return result, err
 	}
 	byScheme := map[string][]string{"http": {}, "https": {}}
 	for _, service := range services {
@@ -60,7 +62,6 @@ func (r *Runner) AutoScan(ctx context.Context, task taskflow.Task) (taskflow.Aut
 			byScheme[service.Scheme] = append(byScheme[service.Scheme], target)
 		}
 	}
-	result := taskflow.AutoResult{Ports: open, Services: services, Findings: []taskflow.Detection{}, SystemStatus: taskflow.SystemScanNotConfigured, AssetProfile: inferProfile(services)}
 	for _, scheme := range []string{"http", "https"} {
 		targets := byScheme[scheme]
 		if len(targets) == 0 {
@@ -73,27 +74,30 @@ func (r *Runner) AutoScan(ctx context.Context, task taskflow.Task) (taskflow.Aut
 			subtask.Scheme = scheme
 			subtask.Chunks = append([]taskflow.Chunk(nil), task.Chunks...)
 			subtask.Chunks[0].Targets = targets[start:end]
+			taskflow.ReportProgress(ctx, "http_scan", 0, 0)
 			findings, err := r.Execute(ctx, subtask)
 			if err != nil {
-				return taskflow.AutoResult{}, err
+				return result, err
 			}
 			result.Findings = append(result.Findings, findings...)
 			if r.zapReady() {
+				taskflow.ReportProgress(ctx, "http_scan", 0, 0)
 				subtask.Engines = []string{"zap"}
 				findings, err = r.Execute(ctx, subtask)
 				if err != nil {
-					return taskflow.AutoResult{}, err
+					return result, err
 				}
 				result.Findings = append(result.Findings, findings...)
 			}
 		}
 	}
+	taskflow.ReportProgress(ctx, "ssh_collection", 0, 0)
 	sshPort, configured := r.SSHCollector.ProfilePort(task.Chunks[0].Targets[0])
 	if configured {
 		rootfsPath, cleanup, status, collectErr := r.SSHCollector.CollectRootfs(ctx, task.Chunks[0].Targets[0], task.VulnerabilityPorts, openPorts(open), r.RuntimeDir, r.InputsDir)
 		result.SystemStatus = status
 		if ctx.Err() != nil {
-			return taskflow.AutoResult{}, ctx.Err()
+			return result, ctx.Err()
 		}
 		if collectErr == nil && rootfsPath != "" {
 			defer cleanup()
@@ -109,13 +113,14 @@ func (r *Runner) AutoScan(ctx context.Context, task taskflow.Task) (taskflow.Aut
 			if !trivyReady {
 				result.SystemStatus = taskflow.SystemScanTrivyUnavailable
 			} else {
+				taskflow.ReportProgress(ctx, "trivy_scan", 0, 0)
 				subtask := task
 				subtask.Engines = []string{"trivy"}
 				subtask.InputKind = "rootfs"
 				subtask.InputPath = rootfsPath
 				findings, scanErr := r.Execute(ctx, subtask)
 				if ctx.Err() != nil {
-					return taskflow.AutoResult{}, ctx.Err()
+					return result, ctx.Err()
 				}
 				if scanErr != nil {
 					var publicError *taskflow.ExecutionError
@@ -134,8 +139,13 @@ func (r *Runner) AutoScan(ctx context.Context, task taskflow.Task) (taskflow.Aut
 				}
 			}
 		}
+	} else {
+		result.SystemStatus = taskflow.SystemScanNotConfigured
 	}
 	result.SystemStatus = boundedSystemStatus(result.SystemStatus)
+	if err := r.scanApplications(ctx, task, &result); err != nil {
+		return result, err
+	}
 	return result, nil
 }
 

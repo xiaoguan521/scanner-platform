@@ -210,5 +210,123 @@ class CollectorTest(unittest.TestCase):
         self.assertEqual(list(self.root.glob('.scanner-collect-*')), [])
 
 
+
+class SSHApplicationCollectorTest(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix='scanner-app-test-')
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.linux = self.root / 'fixture'
+        self.appdir = self.linux / 'opt/demo'
+        self.appdir.mkdir(parents=True)
+        self.apps = [{'alias': 'demo', 'directory': '/opt/demo', 'includeJava': True, 'includeGo': False}]
+
+    def token(self):
+        import base64
+        return 'x' + base64.urlsafe_b64encode(json.dumps(self.apps, separators=(',', ':')).encode()).decode().rstrip('=')
+
+    def collect(self):
+        output = self.root / 'output'
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            collector.main(['--source', 'target-fixture', '--rootfs', str(self.linux), '--output', str(output), '--ssh-apps-b64=' + self.token()])
+        return output
+
+    def test_ssh_selects_only_explicit_deployment_and_enabled_types(self):
+        (self.appdir / 'service.jar').write_bytes(b'fixture-jar')
+        (self.appdir / 'settings.yaml').write_text('fixture: true')
+        (self.appdir / 'native').write_bytes(b'\x7fELFfixture')
+        other = self.linux / 'opt/other'
+        other.mkdir()
+        (other / 'other.jar').write_bytes(b'excluded')
+        output = self.collect()
+        files = sorted(p.relative_to(output).as_posix() for p in output.rglob('*') if p.is_file())
+        self.assertEqual(files, ['apps/demo/0000/.scanner-input.json', 'apps/demo/0000/artifact.jar'])
+        manifest = json.loads((output / files[0]).read_text())
+        self.assertEqual(manifest['kind'], 'artifact')
+        self.assertEqual(manifest['files'], {'artifact.jar': hashlib.sha256(b'fixture-jar').hexdigest()})
+        self.assertEqual((output / files[1]).stat().st_mode & 0o777, 0o600)
+
+    def test_ssh_rejects_symlink_and_excess_depth_without_publishing(self):
+        for kind in ('file-link', 'directory-link', 'ancestor-link', 'depth'):
+            with self.subTest(kind=kind):
+                path = self.appdir / 'service.jar'
+                path.write_bytes(b'fixture')
+                if kind == 'file-link':
+                    path.unlink()
+                    path.symlink_to(self.root / 'not-read')
+                elif kind == 'directory-link':
+                    (self.appdir / 'link').symlink_to(self.root, target_is_directory=True)
+                elif kind == 'ancestor-link':
+                    path.unlink()
+                    self.appdir.rmdir()
+                    self.appdir.symlink_to(self.root, target_is_directory=True)
+                else:
+                    (self.appdir / 'one/two/three/four').mkdir(parents=True)
+                with self.assertRaises(SystemExit):
+                    self.collect()
+                self.assertFalse((self.root / 'output').exists())
+                if self.appdir.is_symlink():
+                    self.appdir.unlink()
+                    self.appdir.mkdir()
+                else:
+                    import shutil
+                    shutil.rmtree(self.appdir)
+                    self.appdir.mkdir()
+
+    def test_ssh_limits_fail_instead_of_truncating(self):
+        (self.appdir / 'service.jar').write_bytes(b'fixture')
+        with mock.patch.dict(collector.collect_ssh_apps.__globals__, {'SSH_APP_MAX_FILE': 2}):
+            with self.assertRaises(SystemExit):
+                self.collect()
+        (self.appdir / 'service.jar').unlink()
+        for n in range(17):
+            (self.appdir / ('%02d.jar' % n)).write_bytes(b'fixture')
+        with self.assertRaises(SystemExit):
+            self.collect()
+        self.assertFalse((self.root / 'output').exists())
+
+    def test_ssh_no_matching_files_is_failure(self):
+        (self.appdir / 'settings.yaml').write_text('fixture: true')
+        with self.assertRaises(SystemExit):
+            self.collect()
+        self.assertFalse((self.root / 'output').exists())
+
+    def test_ssh_revalidates_payload_paths_types_and_count(self):
+        for directory in ('/', '/opt', '/var/lib', '/opt/../etc', '/opt//demo', '/proc/demo', '/mnt/demo', '/opt/demo\n', '/opt/demo\u0085'):
+            self.apps[0]['directory'] = directory
+            with self.assertRaises(ValueError):
+                collector.decode_ssh_apps(self.token())
+        self.apps[0]['directory'] = '/opt/demo'
+        self.apps[0]['includeJava'] = 'yes'
+        with self.assertRaises(ValueError):
+            collector.decode_ssh_apps(self.token())
+
+
+    def test_ssh_file_mutation_is_rejected(self):
+        path = self.appdir / 'service.jar'
+        path.write_bytes(b'fixture-java')
+        original = collector.ssh_file_identity
+        checks = [0]
+        def changed(info):
+            checks[0] += 1
+            value = original(info)
+            # Simulate a descriptor changing after its contents were copied.
+            if checks[0] == 3:
+                return value[:-1] + (value[-1] + 1,)
+            return value
+        with mock.patch.dict(collector.collect_ssh_apps.__globals__, {'ssh_file_identity': changed}):
+            with self.assertRaises(SystemExit):
+                self.collect()
+        self.assertFalse((self.root / 'output').exists())
+
+    def test_ssh_entry_limit_fails_without_truncating(self):
+        (self.appdir / 'service.jar').write_bytes(b'fixture')
+        for n in range(4096):
+            (self.appdir / ('entry-%04d.txt' % n)).write_text('fixture')
+        with self.assertRaises(SystemExit):
+            self.collect()
+        self.assertFalse((self.root / 'output').exists())
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -1,6 +1,6 @@
 # Linux：Docker 与直接部署的检查
 
-任务中心的“自动综合扫描”可先检查单台已登记主机的授权端口范围、开放 HTTP(S) 服务和选定自定义只读规则；Worker 按 [SSH 采集指南](ssh-collection.md) 配置后，还可临时采集系统软件包数据库并在本地用 Trivy 分析。需要检查直接部署的应用、Go/Java 文件、依赖清单和容器镜像时，继续按下表手工选择/传入明确的离线输入；当前不会自动遍历服务器目录、容器或 Kubernetes 工作负载。
+任务中心的“自动综合扫描”可先检查单台已登记主机的授权端口范围、开放 HTTP(S) 服务和选定自定义只读规则；Worker 按 [SSH 采集指南](ssh-collection.md) 配置后，还可临时采集系统软件包数据库，并按 Worker 本地 `apps` 配置采集明确部署目录内启用的 Java/Go 产物，在本地逐文件用 Trivy 分析。需要检查依赖清单、容器镜像或手工传入产物时，继续按下表选择离线输入；不会发现未指定目录、容器或 Kubernetes 工作负载。
 
 同一台 Linux 服务器的离线输入按内容分四种，均在已有任务页选择 Trivy：
 
@@ -10,6 +10,8 @@
 | 应用项目依赖 | 指定目录中的依赖清单、lock 文件 | 应用依赖清单（filesystem） | `lab-a/apps/web` |
 | 直接部署的 Java 中间件、Go 应用 | 指定 JAR/WAR/EAR/PAR 或 Go ELF | 已部署应用（artifact） | `lab-a/apps/java` |
 | Docker 部署的应用和中间件 | 指定本地镜像的 `docker image save` 归档 | 镜像归档（image-archive） | `lab-a/images/middleware.tar` |
+
+SSH 自动采集应用须使用 Python 3.7+、同一已登记 IP 的授权开放 SSH 端口、最多 8 个明确目录及每目录启用的 Java/Go 类型；每文件独立校验与分析，详情显示选中/已分析计数。应用采集、Go 类型确认、Java 索引或任一分析失败会使整体任务失败且不插入部分发现。端口超出本次范围时不连接。目录与解包限制见 [SSH 采集指南](ssh-collection.md#指定部署目录应用)。旧 profile 不配置 `apps` 时不增加连接。
 
 ## 在服务器采集，再交给 Worker
 
@@ -42,7 +44,7 @@ runtime/inputs/lab-a/images/middleware.tar
 runtime/inputs/lab-a/images/middleware.tar.scanner-input.json
 ```
 
-运行 `make dev`，在任务页选 Trivy，按上表分别创建系统包、依赖清单、已部署应用、镜像任务。自动综合扫描也可在 Worker 配好 SSH 后采集系统包。网页会显示排队、执行、完成或失败；发现项包含 CVE、软件包、安装版本、修复版本，以及快照别名与采集时间。系统包去重使用稳定输入路径、包名、安装版本和 CVE；重复检查不制造重复发现。没有可分析的软件包数据库时任务失败，不当作“未发现漏洞”。
+运行 `make dev`，在任务页选 Trivy，按上表分别创建系统包、依赖清单、已部署应用、镜像任务。自动综合扫描也可在 Worker 配好 SSH 后采集系统包，并在显式配置 `apps` 时逐文件检查 Java/Go 产物。网页会显示排队、执行、完成或失败；发现项包含 CVE、软件包、安装版本、修复版本，以及快照别名与采集时间。系统包去重使用稳定输入路径、包名、安装版本和 CVE；重复检查不制造重复发现。没有可分析的软件包数据库时任务失败，不当作“未发现漏洞”。
 
 每个组件带文件 SHA-256 清单，Worker 在扫描前后核对；漏传、改动、符号链接、越界路径或未列出的文件会拒绝。清单用于传输完整性核对，不能证明来源可信。现有手工准备的依赖目录/镜像和 rootfs 仍可使用，无清单时没有这项快照校验。每个带清单的组件最多 10000 文件、单文件 16 GiB、总计 32 GiB；扫描输出另受现有报告上限约束，过大应按组件拆分。
 
@@ -63,7 +65,7 @@ runtime/inputs/lab-a/images/middleware.tar.scanner-input.json
 | CentOS 7 | Trivy 有系统包支持，但其公告参考 RHEL，修复版本不保证在 CentOS 仓库可用；系统已结束常规维护，结果不能代表仍有完整持续更新的覆盖。需要真实 RPM 数据联调。 |
 | 麒麟 | 当前未适配发行版漏洞源。rootfs 明确失败，不使用 `ID_LIKE=centos/rhel` 替换厂商判定；应用依赖可以单独检查。需明确产品线、版本、CPU 架构后接厂商公告。 |
 | Tomcat、Kafka、ZooKeeper、Nacos 与 Java 应用 | 采集明确目录内 JAR/WAR/EAR，以 Java 组件漏洞检查为主；先 `make engines-java` 准备索引。不表示已覆盖全部安装版本、配置、权限与业务漏洞。 |
-| Go / Node.js | 每个 Go ELF 用独立 `--app 名称=/path/to/elf` 显式选择，目录输入只选已知依赖清单与 Java 归档；Node.js 以 lock 文件记录的安装版本为依据。仅源码目录或无版本清单不能认为覆盖完整。 |
+| Go / Node.js | 手工采集时每个 Go ELF 用独立 `--app 名称=/path/to/elf` 显式选择，手工目录输入只选已知依赖清单与 Java 归档；SSH `apps` 可在指定部署目录内有界选择启用的 Go ELF，并要求可读 Go build info。Node.js 以 lock 文件记录的安装版本为依据。仅源码目录或无版本清单不能认为覆盖完整。 |
 | Nginx、RabbitMQ、MySQL、PostgreSQL | 系统包或镜像中受支持的软件包由其对应公告源检查；源码安装、独立压缩包、第三方 RPM 及运行配置需要分别适配与核对，当前不宣称产品级完整覆盖。 |
 | 国产数据库 | 需要具体产品和版本以选择厂商公告/版本判定，当前未实现通用国产数据库漏洞检测。 |
 | Kubernetes 管理的 Docker / containerd | 已选镜像归档的离线分析；挂载应用与 Linux 宿主机分开采集。没有集群自动发现或 Kubernetes 配置审计。 |

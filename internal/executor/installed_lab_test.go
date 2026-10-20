@@ -33,7 +33,7 @@ func TestInstalledEnginesOnLoopbackFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.Activate(context.Background(), bundle.Version, false); err != nil {
+	if err := manager.ActivatePreparedLocal(context.Background(), bundle.Version); err != nil {
 		t.Fatal(err)
 	}
 	var requests atomic.Int32

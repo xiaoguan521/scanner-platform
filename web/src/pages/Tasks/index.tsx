@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Card, Checkbox, Form, Input, InputNumber, message, Modal, Select, Space, Table, Tag, Typography } from 'antd';
+import { Alert, Button, Card, Checkbox, Form, Input, InputNumber, message, Modal, Progress, Select, Space, Spin, Table, Tag, Typography } from 'antd';
 import { PlusOutlined } from '@ant-design/icons';
 import { useCollection } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
@@ -12,6 +12,12 @@ import type { CustomRule, PortProbeRange, ScanTask, Schedule, TaskInput, ScanPol
 import { parsePortRanges, showRanges, coversAllPorts, presetLabels, summarizePorts } from './policy';
 const dayOptions=['周日','周一','周二','周三','周四','周五','周六'].map((label,value)=>({label,value}));
 const names:Record<string,string>={PENDING:'待领取',RUNNING:'执行中',WAITING_WINDOW:'等待时间窗',PAUSED_WINDOW:'窗口结束，等待恢复',COMPLETED:'已完成',CANCELED:'已取消',FAILED:'失败'};
+const progressPhases:Record<string,string>={tcp_probe:'TCP 端口探测',service_identification:'服务识别',http_scan:'HTTP 基线扫描',ssh_collection:'SSH 信息采集',trivy_scan:'Trivy 系统包与应用分析',engine_scan:'引擎扫描'};
+const applicationStatuses:Record<string,string>={not_configured:'未配置部署目录',not_started:'尚未开始',port_out_of_scope:'未采集：SSH 端口不在本次范围',collecting:'采集中',collection_failed:'采集未完成',scanning:'分析中',analysis_failed:'分析未完成',completed:'已完成'};
+const ApplicationCoverage:React.FC<{task:ScanTask}>=({task})=><>
+  <Typography.Text>Java / Go 应用：{task.applicationScanStatus?applicationStatuses[task.applicationScanStatus]??'状态未知':'等待 Worker 回报（旧任务未记录应用覆盖）'}</Typography.Text>
+  {task.applicationResults?.map(app=><Typography.Text key={app.alias} type={['collection_failed','analysis_failed'].includes(app.status)?'danger':undefined}>应用 {app.alias}：{applicationStatuses[app.status]??'状态未知'}；已分析 {app.analyzedCount} / 选中 {app.selectedCount} 个文件</Typography.Text>)}
+</>;
 type Values={engine:'auto'|'synthetic'|'nuclei'|'trivy'|'zap'|'port-probe';scheme:'http'|'https';inputPath:string;inputKind:'filesystem'|'image-archive'|'rootfs'|'artifact';targets:string[];assetId:string;portPreset:'common'|'custom'|'common-and-custom'|'registered'|'full';intensity:'gentle'|'standard'|'aggressive';portRanges:string;portExclusions:string;opsApproved:boolean;customRuleIds:string[];mode:'now'|'schedule';name:string;nextRun:string;intervalMinutes:number;window:boolean;weekdays:number[];start:string;end:string;timeZone:string};
 function validateProbeRanges(text?:string):void{
   const ranges=parsePortRanges(text);
@@ -91,9 +97,21 @@ export const TasksPage:React.FC=()=>{
     setEditingSchedule(null);setOpen(true);
   };
   const removeSchedule=(schedule:Schedule)=>Modal.confirm({title:'删除定时任务',content:`删除“${schedule.name}”后将停止后续调度，已创建的扫描任务和结果会保留。`,okText:'删除',okButtonProps:{danger:true},cancelText:'取消',onOk:async()=>{try{await deleteSchedule(schedule.id);setSchedules(prev=>prev.filter(item=>item.id!==schedule.id));message.success('定时任务已删除');}catch(cause){message.error(cause instanceof Error?cause.message:'删除失败');throw cause;}}});
+  const renderProgress=(task:ScanTask)=>{
+    const current=task.progress;
+    if(task.status==='COMPLETED')return <div><Typography.Text type="success">扫描完成</Typography.Text><Progress percent={100} size="small" status="success"/></div>;
+    if(current?.phase==='tcp_probe'&&current.total>0){
+      const percent=Math.max(0,Math.min(100,Math.floor(current.completed/current.total*100)));
+      const status=task.status==='FAILED'||task.status==='CANCELED'?'exception':task.status==='RUNNING'?'active':'normal';
+      return <div><Typography.Text>{progressPhases[current.phase]} {current.completed.toLocaleString()} / {current.total.toLocaleString()}</Typography.Text><Progress percent={percent} size="small" status={status}/></div>;
+    }
+    if(task.status==='RUNNING')return <Space size={6}><Spin size="small"/><Typography.Text>{current?`${progressPhases[current.phase]??'扫描'}进行中`:'Worker 执行中，等待进度上报'}</Typography.Text></Space>;
+    if(current)return <Typography.Text type="secondary">{progressPhases[current.phase]??'扫描'} · {current.completed} / {current.total}</Typography.Text>;
+    return `${task.completedChunks} / ${task.totalChunks}`;
+  };
   return <div style={{display:'flex',flexDirection:'column',gap:16}}>
     <CollectionNotice loading={loading||scheduleLoading} error={error||scheduleError}/>
-    <Alert type="info" showIcon message="自动综合扫描" description="选择一台已登记主机并填写端口范围或排除端口，平台会并发探测范围内的 TCP 端口，再对开放的 HTTP(S) 服务自动执行只读基线和选中的自定义规则。Worker 配置了该主机的 SSH 只读档案、known_hosts 和密钥文件或 SSH Agent，且 SSH 端口包含在本次范围时，还会临时采集 Linux 软件包快照并用本地 Trivy 漏洞库分析。SSH 凭据只留在 Worker。"/>
+    <Alert type="info" showIcon message="自动综合扫描" description="选择一台已登记主机并填写端口范围或排除端口，平台会并发探测范围内的 TCP 端口，再对开放的 HTTP(S) 服务自动执行只读基线和选中的自定义规则。Worker 配置了该主机的 SSH 只读档案、known_hosts 和密钥文件或 SSH Agent，且 SSH 端口包含在本次范围时，还会临时采集 Linux 软件包快照并用本地 Trivy 漏洞库分析。如还配置了 Java/Go 应用的具体部署目录，将逐个采集支持的产物并分析其依赖。SSH 凭据和部署目录只留在 Worker。"/>
     <Card title="扫描任务" extra={<Space wrap>
       <Button type="primary" icon={<PlusOutlined/>} disabled={!canWrite} onClick={()=>openCreate('now')}>创建扫描任务</Button>
       <Button disabled={!canWrite} onClick={()=>openCreate('schedule')}>创建定时任务</Button>
@@ -106,12 +124,12 @@ export const TasksPage:React.FC=()=>{
         <Tag>{showArchived?'归档任务':'未归档任务'} {tasks.length}</Tag><Tag color="processing">执行中 {tasks.filter(task=>task.status==='RUNNING').length}</Tag><Tag color="gold">待执行 {tasks.filter(task=>['PENDING','WAITING_WINDOW','PAUSED_WINDOW'].includes(task.status)).length}</Tag><Tag color="success">已完成 {tasks.filter(task=>task.status==='COMPLETED').length}</Tag>
       </Space>
       <Table<ScanTask> dataSource={filteredTasks} rowKey="id" loading={loading} tableLayout="fixed" scroll={{x:1420}} locale={{emptyText:taskFilter||statusFilter!=='all'||engineFilter!=='all'?'没有符合筛选条件的任务':showArchived?'暂无归档任务':'暂无任务，请从右上角创建扫描任务或定时任务'}} pagination={{pageSize:10,showSizeChanger:true,pageSizeOptions:[10,20,50],showTotal:total=>`共 ${total} 个任务`}}
-        expandable={{expandedRowRender:t=><Space direction="vertical"><Typography.Text>下发目标：{(()=>{const all=t.chunks?.flatMap(c=>c.targets)??[];return all.length>20?`${all.slice(0,20).join('、')} ……（共 ${all.length} 个）`:all.join('、')||'无';})()}</Typography.Text>{(t.engines?.[0]==='port-probe'||t.engines?.[0]==='auto')&&<><Typography.Text>探测配置：{presetLabels[t.portProbeConfig?.preset??'common']}；范围 {showRanges(t.portProbeConfig?.ranges)}；任务排除 {showRanges(t.portProbeConfig?.exclusions)}；合并排除 {showRanges(t.effectiveExclusions??t.portProbeConfig?.exclusions)}；隔离端口 {summarizePorts(t.quarantinedPorts)}；强度 {({gentle:'温和',standard:'标准',aggressive:'积极'})[t.portProbeConfig?.intensity??'gentle']}</Typography.Text><Typography.Text>实际探测：{t.portProbePorts?.length??0} 个 TCP 端口；发现开放候选：{t.portProbeResults?.length??0} 个{t.portProbeResults?.length?`（${t.portProbeResults.slice(0,20).map(p=>p.port).join(', ')}${t.portProbeResults.length>20?' …':''}）`:''}</Typography.Text>{t.engines[0]==='auto'&&<><Typography.Text>HTTP(S) 服务：{t.serviceResults?.filter(item=>item.kind==='HTTP').length??0} 个；自定义规则：{t.customRuleCount??0} 条</Typography.Text><Typography.Text>Linux 系统包：{t.systemScanStatus??'等待 Worker 回报'}</Typography.Text><Typography.Text type="secondary">开放端口候选仅用于这次明确授权的范围，不会自动登记成长期授权端口。</Typography.Text></>}</>}{t.inputKind&&<Typography.Text>离线输入：{t.inputKind==='rootfs'?'Linux 系统包':t.inputKind==='image-archive'?'Docker / OCI 镜像':t.inputKind==='artifact'?'已部署 JAR / Go 文件':'应用依赖清单'} · {t.inputPath}</Typography.Text>}<Typography.Text>跳过目标：{t.skippedTargets?.join('、')||'无'}</Typography.Text><Typography.Text>规则版本：{t.ruleVersion||'无需外部规则包'}</Typography.Text>{t.error&&<Alert type="error" message={t.error}/>}</Space>}}
+        expandable={{expandedRowRender:t=><Space direction="vertical"><Typography.Text>下发目标：{(()=>{const all=t.chunks?.flatMap(c=>c.targets)??[];return all.length>20?`${all.slice(0,20).join('、')} ……（共 ${all.length} 个）`:all.join('、')||'无';})()}</Typography.Text>{(t.engines?.[0]==='port-probe'||t.engines?.[0]==='auto')&&<><Typography.Text>探测配置：{presetLabels[t.portProbeConfig?.preset??'common']}；范围 {showRanges(t.portProbeConfig?.ranges)}；任务排除 {showRanges(t.portProbeConfig?.exclusions)}；合并排除 {showRanges(t.effectiveExclusions??t.portProbeConfig?.exclusions)}；隔离端口 {summarizePorts(t.quarantinedPorts)}；强度 {({gentle:'温和',standard:'标准',aggressive:'积极'})[t.portProbeConfig?.intensity??'gentle']}</Typography.Text><Typography.Text>实际探测：{t.portProbePorts?.length??0} 个 TCP 端口；发现开放候选：{t.portProbeResults?.length??0} 个{t.portProbeResults?.length?`（${t.portProbeResults.slice(0,20).map(p=>p.port).join(', ')}${t.portProbeResults.length>20?' …':''}）`:''}</Typography.Text>{t.engines[0]==='auto'&&<><Typography.Text>HTTP(S) 服务：{t.serviceResults?.filter(item=>item.kind==='HTTP').length??0} 个；自定义规则：{t.customRuleCount??0} 条</Typography.Text><Typography.Text>Linux 系统包：{t.systemScanStatus??'等待 Worker 回报'}</Typography.Text><ApplicationCoverage task={t}/><Typography.Text type="secondary">开放端口候选仅用于这次明确授权的范围，不会自动登记成长期授权端口。</Typography.Text></>}</>}{t.inputKind&&<Typography.Text>离线输入：{t.inputKind==='rootfs'?'Linux 系统包':t.inputKind==='image-archive'?'Docker / OCI 镜像':t.inputKind==='artifact'?'已部署 JAR / Go 文件':'应用依赖清单'} · {t.inputPath}</Typography.Text>}<Typography.Text>跳过目标：{t.skippedTargets?.join('、')||'无'}</Typography.Text><Typography.Text>规则版本：{t.ruleVersion||'无需外部规则包'}</Typography.Text>{t.error&&<Alert type="error" message={t.error}/>}</Space>}}
         columns={[
           {title:'任务 ID',dataIndex:'id',width:230,ellipsis:true},
           {title:'执行方式',width:140,render:(_,t)=><Tag color={t.synthetic?'default':'blue'}>{t.synthetic?'模拟 Worker':t.engines[0]==='auto'?'自动综合扫描':t.engines[0]==='port-probe'?'旧版 TCP 探测':t.engines.join('、').toUpperCase()}</Tag>},
           {title:'目标 / 探测端口',width:165,render:(_,t)=>t.engines[0]==='port-probe'||t.engines[0]==='auto'?`${t.targetCount} 台主机 / ${t.portProbePorts?.length??0} 端口`:`${t.targetCount} / 跳过 ${t.skippedTargets?.length??0}`},
-          {title:'进度',width:90,render:(_,t)=>`${t.completedChunks} / ${t.totalChunks}`},
+          {title:'进度',width:220,render:(_,t)=>renderProgress(t)},
           {title:'状态',dataIndex:'status',width:150,render:(s:string,t)=><Space wrap><Tag color={s==='COMPLETED'?'success':s==='RUNNING'?'processing':'default'}>{names[s]??s}</Tag>{t.archived&&<Tag>已归档</Tag>}</Space>},
           {title:'本地截止时间',dataIndex:'hardDeadline',width:190,render:(v:string)=>v?new Date(v).toLocaleString():'—'},
           {title:'操作',width:330,render:(_,t)=>{const terminal=['COMPLETED','CANCELED','FAILED'].includes(t.status);return <Space wrap>{!terminal&&<Button size="small" danger disabled={!canWrite} onClick={()=>void stop(t.id)}>取消</Button>}{terminal&&<Button size="small" disabled={!canWrite} onClick={()=>void setArchived(t.id,!t.archived)}>{t.archived?'恢复':'归档'}</Button>}{terminal&&<Button size="small" disabled={!canWrite} onClick={()=>copyTask(t)}>按此配置新建</Button>}{terminal&&canDelete&&t.findingCount===0&&<Button size="small" danger onClick={()=>removeTask(t)}>彻底删除</Button>}{terminal&&canDelete&&t.findingCount>0&&<Tag>有关联发现，仅可归档</Tag>}</Space>}},

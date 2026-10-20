@@ -44,11 +44,12 @@ var (
 // Profile identifies a single numeric IP. Private key contents, passwords and
 // agent data are never serialized in the config or sent to Server.
 type Profile struct {
-	IP             string `json:"ip"`
-	SSHPort        int    `json:"sshPort"`
-	User           string `json:"user"`
-	Auth           string `json:"auth"` // "agent" or "private-key"
-	PrivateKeyFile string `json:"privateKeyFile,omitempty"`
+	IP             string        `json:"ip"`
+	SSHPort        int           `json:"sshPort"`
+	User           string        `json:"user"`
+	Auth           string        `json:"auth"` // "agent" or "private-key"
+	PrivateKeyFile string        `json:"privateKeyFile,omitempty"`
+	Apps           []Application `json:"apps,omitempty"`
 }
 
 type fileConfig struct {
@@ -57,9 +58,10 @@ type fileConfig struct {
 }
 
 type Collector struct {
-	knownHosts string
-	baseDir    string
-	profiles   map[string]Profile
+	knownHosts      string
+	baseDir         string
+	profiles        map[string]Profile
+	runApplications func(context.Context, []string, io.Writer, io.Writer) error
 }
 
 //go:embed collector.py
@@ -118,6 +120,9 @@ func Load(configPath string) (*Collector, error) {
 			profile.PrivateKeyFile = key
 		default:
 			return nil, errors.New("SSH auth must be agent or private-key")
+		}
+		if err := validateApplications(profile.Apps); err != nil {
+			return nil, err
 		}
 		collector.profiles[profile.IP] = profile
 	}

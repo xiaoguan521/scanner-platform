@@ -51,14 +51,29 @@ def until(check, timeout=20):
         time.sleep(.15)
     raise AssertionError('Timed out waiting for local state')
 
-def archive(version, corrupt=False):
+def fixture_openssl(arguments):
+    try:
+        subprocess.run(['openssl',*arguments],stdout=subprocess.PIPE,stderr=subprocess.PIPE,check=True)
+    except (OSError,subprocess.CalledProcessError):
+        raise RuntimeError('Disposable rule fixture signing requires OpenSSL Ed25519 support') from None
+
+def archive(version, private_key, corrupt=False):
     files={'nuclei/templates/local.yaml':b'id: local-metadata-fixture\n', 'trivy/db/metadata.json':b'{"localTest":true}\n'}
     manifest={'version':version,'engines':['nuclei','trivy'],'files':{name:hashlib.sha256(data).hexdigest() for name,data in files.items()}}
     if corrupt:
         manifest['files']['nuclei/templates/local.yaml']='0'*64
+    manifest_data=json.dumps(manifest).encode('utf-8')
+    with tempfile.TemporaryDirectory(prefix='scanner-local-sign-') as temporary:
+        manifest_path=Path(temporary)/'manifest.json';manifest_path.write_bytes(manifest_data)
+        signature_path=Path(temporary)/'manifest.json.sig'
+        fixture_openssl(['pkeyutl','-sign','-rawin','-inkey',str(private_key),'-passin','pass:',
+                         '-in',str(manifest_path),'-out',str(signature_path)])
+        signature=signature_path.read_bytes()
+        assert len(signature)==64
     out=io.BytesIO()
     with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED) as z:
-        z.writestr('manifest.json',json.dumps(manifest))
+        z.writestr('manifest.json',manifest_data)
+        z.writestr('manifest.json.sig',signature)
         for name,data in files.items():
             z.writestr(name,data)
     return out.getvalue()
@@ -70,6 +85,12 @@ def main():
     db=directory/'platform.db'
     if db.exists():
         raise SystemExit('Use a NEW QA directory; refusing to modify an existing database.')
+    key_storage=tempfile.TemporaryDirectory(prefix='rules-signing-',dir=directory)
+    private_key=Path(key_storage.name)/'private.pem'
+    public_key=Path(key_storage.name)/'public.pem'
+    fixture_openssl(['genpkey','-algorithm','Ed25519','-out',str(private_key)])
+    private_key.chmod(0o600)
+    fixture_openssl(['pkey','-in',str(private_key),'-pubout','-out',str(public_key)])
     with socket.socket() as listener:
         listener.bind(('127.0.0.1',0));port=listener.getsockname()[1]
     base=f'http://127.0.0.1:{port}'
@@ -81,7 +102,7 @@ def main():
             args+=['--listen',f'127.0.0.1:{port}','--db',str(db),'--ui-dir',str(ROOT/'web/dist'),'--seed-demo']
         else:
             args+=['--server',base]
-            if name=='updater':args+=['--rules-dir',str(directory/'rules')]
+            if name=='updater':args+=['--rules-dir',str(directory/'rules'),'--trusted-rule-public-key',str(public_key)]
             if name=='worker':args+=['--rules-dir',str(directory/'rules'),'--runtime-dir',str(directory/'worker'),'--inputs-dir',str(directory/'inputs')]
         processes[name]=subprocess.Popen(args,cwd=ROOT,stdout=log,stderr=log)
     def ready():
@@ -171,7 +192,7 @@ def main():
         checkpoint('automatic scheduled firing, one-shot state, schedule enable/disable and outside-window waiting')
         def import_zip(version,corrupt=False):
             boundary='scanner-local-boundary'
-            data=(f'--{boundary}\r\nContent-Disposition: form-data; name="bundle"; filename="rules.zip"\r\nContent-Type: application/zip\r\n\r\n'.encode()+archive(version,corrupt)+f'\r\n--{boundary}--\r\n'.encode())
+            data=(f'--{boundary}\r\nContent-Disposition: form-data; name="bundle"; filename="rules.zip"\r\nContent-Type: application/zip\r\n\r\n'.encode()+archive(version,private_key,corrupt)+f'\r\n--{boundary}--\r\n'.encode())
             return api.call('POST','/api/v1/rules/import',expect=202,data=data,content_type='multipart/form-data; boundary='+boundary)
         def job_done(job):
             item=next(j for j in api.call('GET','/api/v1/rule-jobs')['items'] if j['id']==job['id'])
@@ -188,7 +209,7 @@ def main():
         expect_job(api.call('POST','/api/v1/rules/20261016.01/activate',{'rollback':True},expect=202))
         assert (directory/'rules/CURRENT').read_text()=='20261016.01\n'
         catalog=api.call('GET','/api/v1/rules')['items']
-        assert len(catalog)==2 and all(b['integrityVerified'] and not b['signatureVerified'] and not b['engineValidated'] for b in catalog)
+        assert len(catalog)==2 and all(b['integrityVerified'] and b['signatureVerified'] and not b['engineValidated'] for b in catalog)
         api.call('POST','/api/v1/rules/fetch',{'url':'http://rules.example.com/bundle.zip','expectedSha256':'0'*64},expect=400)
         viewer.call('POST','/api/v1/rules/20261016.01/activate',{'rollback':True},expect=403)
         checkpoint('offline ZIP import, Updater-only writes, activation, failed-hash rejection and explicit rollback')
@@ -250,6 +271,7 @@ def main():
             try:process.wait(timeout=8)
             except subprocess.TimeoutExpired:process.kill();process.wait()
         for log in logs:log.close()
+        key_storage.cleanup()
 
 if __name__=='__main__':
     main()

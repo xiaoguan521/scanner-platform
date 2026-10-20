@@ -178,7 +178,7 @@ func (r *Runner) nuclei(ctx context.Context, task taskflow.Task, dir string) ([]
 	// Check reachability with the same bounded, no-redirect root GET used by ZAP.
 	for _, raw := range urls {
 		if _, err := fetchRoot(ctx, raw, r.Timeout); err != nil {
-			return nil, fmt.Errorf("target did not return an HTTP response: %w", err)
+			return nil, &taskflow.ExecutionError{UserMessage: "HTTP 根路径只读检查未完成，扫描任务将标记失败，请检查目标服务和 Worker 日志"}
 		}
 	}
 	var output bytes.Buffer
@@ -189,15 +189,15 @@ func (r *Runner) nuclei(ctx context.Context, task taskflow.Task, dir string) ([]
 	if info, err := os.Stat(errorFile); err == nil && info.Size() > 0 {
 		return nil, fmt.Errorf("Nuclei reported request errors; scan is incomplete")
 	}
-	proxy.mu.Lock()
-	blocked := proxy.blocked
-	failed := proxy.failed
-	proxy.mu.Unlock()
-	if failed > 0 {
-		return nil, fmt.Errorf("engine proxy encountered a failed or incomplete target response")
+	blocked, failed, blockedSummary := proxy.blockedSummary()
+	if blocked > 0 && failed > 0 {
+		return nil, fmt.Errorf("engine scope proxy blocked requests (%s) and recorded %d failed or incomplete target responses", blockedSummary, failed)
 	}
 	if blocked > 0 {
-		return nil, fmt.Errorf("engine attempted a target outside explicit list")
+		return nil, fmt.Errorf("engine request denied by scope proxy (%s)", blockedSummary)
+	}
+	if failed > 0 {
+		return nil, fmt.Errorf("engine proxy encountered a failed or incomplete target response")
 	}
 	parsed, err := ParseNuclei(output.Bytes(), targets)
 	if err != nil {
@@ -205,7 +205,7 @@ func (r *Runner) nuclei(ctx context.Context, task taskflow.Task, dir string) ([]
 	}
 	checks, err := checkWebConfiguration(ctx, task.Scheme, targets, r.Rate, r.Timeout)
 	if err != nil {
-		return nil, err
+		return nil, &taskflow.ExecutionError{UserMessage: "HTTP 只读基线检查未完成，扫描任务将标记失败，请检查目标服务和 Worker 日志"}
 	}
 	keys := map[string]bool{}
 	for _, check := range checks {

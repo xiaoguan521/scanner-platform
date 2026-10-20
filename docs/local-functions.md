@@ -23,6 +23,7 @@
 
 ```text
 manifest.json
+manifest.json.sig            # manifest原始字节的raw64 Ed25519签名，不列入files
 nuclei/...                  # 操作员提供的 Nuclei 模板
 trivy/...                   # 操作员提供的 Trivy 数据；可只带一个引擎
 ```
@@ -36,14 +37,22 @@ manifest 必须且只包含 `version`、`engines`、`files`：
 使用自带工具生成实际清单和哈希（不会下载或执行扫描）：
 
 ```bash
-python3 scripts/package_rules.py --version 20261016.01 --nuclei-dir /路径/模板目录 --trivy-dir /路径/漏洞库目录 --output runtime/rules-20261016.01.zip
+python3 scripts/package_rules.py --version 20261016.01 --nuclei-dir /路径/模板目录 --trivy-dir /路径/漏洞库目录 --signing-private-key /包外/签名私钥.pem --output /导出目录/rules-20261016.01.zip
 ```
 
-省略不需要的引擎参数。ZIP 最多 256 MiB、5 万文件、解压总量 8 GiB、单文件 4 GiB（兼容当前 Trivy 主库）。目录跳转、符号链接、重复文件、清单外文件、错误哈希均拒绝，已有版本内容不能覆盖。导入完成后，在版本列表点击“激活”；切回较旧版本必须使用“显式回滚”。所有操作均留审计。
+省略不需要的引擎参数。工具要求已安装支持 Ed25519 的 OpenSSL，以参数切片调用并核对派生公钥类型，生成和自验原始 64 字节签名。私钥须为最多 4 KiB 的普通非符号链接文件，且位于全部引擎输入目录之外；输入目录中的私钥硬链接也会拒绝，不输出私钥或 OpenSSL 错误详情。
+
+通过可信部署渠道将配对的 PKIX Ed25519 `PUBLIC KEY` PEM 公钥放在 `--rules-dir` 之外。Updater 下次启动时使用 `--trusted-rule-public-key /包外/受信公钥.pem`，或在本地启动脚本中设置 `SCANNER_RULE_PUBLIC_KEY_FILE=/包外/受信公钥.pem make dev`。配置是公钥文件路径；公钥最多 4 KiB、必须是普通非符号链接文件，且只有一个 PUBLIC KEY 块，无额外内容。进程启动时固定加载，不会从规则包获取信任。此配置只在下次启动生效，不会自动调整或重启当前运行实例。
+
+ZIP 最多 256 MiB、5 万文件、解压总量 8 GiB、单文件 4 GiB（兼容当前 Trivy 主库）。普通导入先验证 manifest 原始字节签名，再解析、解压和校验哈希；普通激活再次先验签再校验内容。无公钥、无签名、错误签名、目录跳转、符号链接、重复文件、清单外文件、错误哈希均拒绝，CURRENT 不变。已有版本的 manifest 和签名须完全相同，不能覆盖或给旧 unsigned 自动补签。导入完成后，在版本列表点击“激活”；切回较旧版本必须使用“显式回滚”。所有操作均留审计。
 
 在线更新使用同一种规则 ZIP：选择“从规则源下载”，提供不含凭据/查询参数的 HTTPS ZIP URL 和 ZIP 的 SHA-256，Updater 下载并导入，不跟随重定向。上游原始仓库 ZIP 没有本平台 manifest，需要先由操作员打包；目前不自动抓取 GitHub 最新版本或 OCI 数据库。真实规则源地址尚未配置，HTTPS 下载链路使用本地 TLS 测试源验证。
 
-**当前只验证文件完整性，未做签名验证或 Nuclei/Trivy 兼容性验证。** 激活只切换本地数据版本，不启动扫描；固定引擎已通过本地夹具联调，真实服务器与完整模板库仍待验证。此边界在页面和 API 中明确返回。
+`SignatureVerified` 只表示当前检查实际验签成功。历史 unsigned、或没有配置公钥的只读 Inspect/List 仍可展示完整性状态，但签名状态为 false；配置公钥且存在签名时，错误签名使检查失败。Worker 的无公钥只读检查只验证文件完整性，不声称已经验证签名。未配置公钥时，普通导入、HTTPS 更新和普通激活全部拒绝。
+
+本机 `sec-updater --prepare-engines` 准备流程只允许同一 Manager 实例刚生成的版本经 `ActivatePreparedLocal` 一次性激活，重新检查 manifest 摘要、文件哈希和防回滚。记录绑定规范根目录和版本；尝试时消费，不跨实例或重启恢复，导入/下载不产生该记录。历史 unsigned 版本不能用普通激活启用。
+
+**完整 Nuclei/Trivy 引擎兼容矩阵、密钥轮换协议及多公钥过渡仍未实现。** 当前只有一个启动时固定加载的公钥；更换前须规划现有签名版本的兼容处理。激活只切换本地数据版本，不启动扫描；真实服务器与完整模板库仍待验证。
 
 ## 自动检查
 
@@ -56,6 +65,6 @@ make test-local         # 构建后启动独立临时实例，验证 9 组本地
 
 `make test-local` 创建独立目录、数据库、规则和本机端口，不读取用户运行库、不连接任何目标。验证首次初始化/登录、用户启停、IPv4/IPv6/镜像登记、跳过端口、审批、模拟任务/取消/结果状态、定时触发、规则导入切换/失败、节点离线恢复、重启持久化和退出。结束后停止测试进程，终端打印证据目录。
 
-附加单元测试覆盖领取并发、时间窗边界/跨午夜、到点拒绝结果与恢复、重复定时触发合并、临时修改跳过标记、旧 SQLite 表保留、ZIP 越界/篡改及 HTTPS 包哈希错误。真实服务器扫描、生产部署、PostgreSQL 实例迁移均未验证。引擎自身执行见 `make test-engines-local`。
+附加单元测试覆盖领取并发、时间窗边界/跨午夜、到点拒绝结果与恢复、重复定时触发合并、临时修改跳过标记、旧 SQLite 表保留、ZIP 越界/篡改及 HTTPS 包哈希错误。规则单测在临时目录生成测试 Ed25519 密钥，覆盖公钥文件限制、签名错误与原始字节变化、激活前篡改和本机准备能力边界；本地业务脚本也临时生成并签署夹具。真实服务器扫描、生产部署、PostgreSQL 实例迁移均未验证。引擎自身执行见 `make test-engines-local`。
 
 可用 `SCANNER_PORT`、`SCANNER_DB`、`SCANNER_RULES`、`SCANNER_LOG_DIR` 调整本地端口和路径。`SCANNER_SKIP_BUILD=1 make dev` 只用于已构建的开发调试。普通启动会执行 `npm ci --ignore-scripts`、Server 模式前端构建及三个 Go 二进制构建；任一服务退出，启动脚本会停止其余进程并报告日志目录。

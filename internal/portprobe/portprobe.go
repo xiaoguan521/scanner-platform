@@ -174,6 +174,10 @@ type dialer interface {
 	DialContext(context.Context, string, string) (net.Conn, error)
 }
 
+// ScanProgressFunc receives completed connection attempts, including refused
+// and timed-out ports. It must not be used to infer open-port results.
+type ScanProgressFunc func(completed, total int)
+
 // Scan validates a numeric IP and probes the provided TCP port list by
 // connecting and immediately closing. It never sends protocol data.
 func Scan(ctx context.Context, target string, ports []int) ([]int, error) {
@@ -185,6 +189,10 @@ func scanWithDialer(ctx context.Context, target string, ports []int, d dialer) (
 }
 
 func scanWithPolicy(ctx context.Context, target string, ports []int, d dialer, policy Policy) ([]int, error) {
+	return scanWithPolicyProgress(ctx, target, ports, d, policy, nil)
+}
+
+func scanWithPolicyProgress(ctx context.Context, target string, ports []int, d dialer, policy Policy, reportProgress ScanProgressFunc) ([]int, error) {
 	address, err := netip.ParseAddr(target)
 	if err != nil || address.Zone() != "" || address.IsUnspecified() || address.IsMulticast() || len(ports) == 0 || len(ports) > MaxPorts || d == nil {
 		return nil, ErrInvalidTarget
@@ -210,6 +218,9 @@ func scanWithPolicy(ctx context.Context, target string, ports []int, d dialer, p
 	jobs := make(chan int)
 	open := make(chan int, len(ports))
 	var done sync.WaitGroup
+	var progressMu sync.Mutex
+	progressCompleted, lastProgress := 0, 0
+	progressStep := max(1, len(ports)/1000)
 	for range workers {
 		done.Add(1)
 		go func() {
@@ -223,6 +234,15 @@ func scanWithPolicy(ctx context.Context, target string, ports []int, d dialer, p
 				}
 				if err == nil {
 					open <- port
+				}
+				if reportProgress != nil {
+					progressMu.Lock()
+					progressCompleted++
+					if progressCompleted-lastProgress >= progressStep || progressCompleted == len(ports) {
+						lastProgress = progressCompleted
+						reportProgress(progressCompleted, len(ports))
+					}
+					progressMu.Unlock()
 				}
 			}
 		}()
@@ -291,6 +311,12 @@ func PolicyFor(config Config) (Policy, error) {
 	}
 }
 func ScanConfigured(ctx context.Context, target string, ports []int, config Config) ([]int, error) {
+	return ScanConfiguredWithProgress(ctx, target, ports, config, nil)
+}
+
+// ScanConfiguredWithProgress probes the Server-approved port list and reports
+// completed attempts at a bounded cadence. Progress does not expose results.
+func ScanConfiguredWithProgress(ctx context.Context, target string, ports []int, config Config, reportProgress ScanProgressFunc) ([]int, error) {
 	policy, err := PolicyFor(config)
 	if err != nil {
 		return nil, err
@@ -308,5 +334,5 @@ func ScanConfigured(ctx context.Context, target string, ports []int, config Conf
 			return nil, ErrInvalidConfig
 		}
 	}
-	return scanWithPolicy(ctx, target, ports, &net.Dialer{}, policy)
+	return scanWithPolicyProgress(ctx, target, ports, &net.Dialer{}, policy, reportProgress)
 }

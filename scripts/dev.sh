@@ -8,6 +8,7 @@ SCANNER_LOG_DIR=${SCANNER_LOG_DIR:-runtime}
 SCANNER_BIN=${SCANNER_BIN:-bin}
 SCANNER_INPUTS=${SCANNER_INPUTS:-runtime/inputs}
 SCANNER_SSH_CONFIG=${SCANNER_SSH_CONFIG:-}
+SCANNER_RULE_PUBLIC_KEY_FILE=${SCANNER_RULE_PUBLIC_KEY_FILE:-}
 mkdir -p "$SCANNER_INPUTS"
 mkdir -p "$SCANNER_LOG_DIR" dist
 if [ "${SCANNER_SKIP_BUILD:-0}" != 1 ]; then
@@ -50,7 +51,11 @@ if [[ -n "$SCANNER_SSH_CONFIG" ]]; then
 fi
 ./dist/sec-worker --server "http://127.0.0.1:$SCANNER_PORT" --bin-dir "$SCANNER_BIN" --rules-dir "$SCANNER_RULES" --inputs-dir "$SCANNER_INPUTS" --runtime-dir "$SCANNER_LOG_DIR/worker" "${worker_ssh_args[@]}" >"$SCANNER_LOG_DIR/worker.log" 2>&1 &
 worker_pid=$!
-./dist/sec-updater --server "http://127.0.0.1:$SCANNER_PORT" --rules-dir "$SCANNER_RULES" >"$SCANNER_LOG_DIR/updater.log" 2>&1 &
+updater_trust_args=()
+if [[ -n "$SCANNER_RULE_PUBLIC_KEY_FILE" ]]; then
+  updater_trust_args+=(--trusted-rule-public-key "$SCANNER_RULE_PUBLIC_KEY_FILE")
+fi
+./dist/sec-updater --server "http://127.0.0.1:$SCANNER_PORT" --rules-dir "$SCANNER_RULES" "${updater_trust_args[@]}" >"$SCANNER_LOG_DIR/updater.log" 2>&1 &
 updater_pid=$!
 printf '\n打开：http://127.0.0.1:%s\n首次使用在网页设置管理员；已有账号直接登录。\n模拟任务不连接目标；真实扫描只在网页明确选择引擎并创建任务后执行。\n按 Ctrl+C 停止，SQLite 保留在 %s\n' "$SCANNER_PORT" "$SCANNER_DB"
 while :; do

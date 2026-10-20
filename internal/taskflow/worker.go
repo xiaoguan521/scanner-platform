@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -23,6 +24,27 @@ type Worker struct {
 	ProbePorts   func(context.Context, Task) ([]PortProbeResult, error)
 	AutoScan     func(context.Context, Task) (AutoResult, error)
 	EngineStatus func() []EngineStatus
+}
+
+type workerProgress struct {
+	mu    sync.RWMutex
+	value TaskProgress
+	set   bool
+}
+
+func (p *workerProgress) update(value TaskProgress) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.set && p.value.Phase == value.Phase && value.Completed < p.value.Completed {
+		return
+	}
+	p.value, p.set = value, true
+}
+
+func (p *workerProgress) snapshot() (TaskProgress, bool) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.value, p.set
 }
 
 func (w *Worker) Run(ctx context.Context, once bool) error {
@@ -77,6 +99,8 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 		workCtx, cancel = context.WithDeadline(ctx, deadline)
 	}
 	workCtx, stopWork := context.WithCancel(workCtx)
+	progress := &workerProgress{}
+	workCtx = WithProgressReporter(workCtx, progress.update)
 	heartbeatCtx, stopHeartbeat := context.WithCancel(ctx)
 	defer stopHeartbeat()
 	defer stopWork()
@@ -93,7 +117,11 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 				var state struct {
 					TaskStatus string `json:"taskStatus"`
 				}
-				_, e := w.post(heartbeatCtx, "/api/v1/nodes/heartbeat", map[string]any{"id": w.ID, "kind": "worker", "currentTask": task.ID}, &state)
+				payload := map[string]any{"id": w.ID, "kind": "worker", "currentTask": task.ID}
+				if current, ok := progress.snapshot(); ok {
+					payload["progress"] = ProgressUpdate{TaskID: task.ID, Phase: current.Phase, Completed: current.Completed, Total: current.Total}
+				}
+				_, e := w.post(heartbeatCtx, "/api/v1/nodes/heartbeat", payload, &state)
 				if e != nil {
 					failed++
 				} else {
@@ -110,27 +138,41 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 	var portProbeResults []PortProbeResult
 	var serviceResults []ServiceResult
 	var systemScanStatus string
+	var applicationScanStatus string
+	var applicationResults []ApplicationResult
+	isAutoTask := len(task.Engines) == 1 && task.Engines[0] == "auto"
+	if isAutoTask {
+		systemScanStatus = SystemScanNotStarted
+	}
 	assetProfile := task.AssetProfile
 	if task.Synthetic {
 		err = waitFor(workCtx, w.Delay)
 	} else if len(task.Engines) == 1 && task.Engines[0] == "port-probe" {
+		ReportProgress(workCtx, "tcp_probe", 0, len(task.PortProbePorts))
 		if w.ProbePorts == nil {
 			err = fmt.Errorf("TCP port probe is not configured")
 		} else {
 			portProbeResults, err = w.ProbePorts(workCtx, task)
 		}
 	} else if len(task.Engines) == 1 && task.Engines[0] == "auto" {
+		ReportProgress(workCtx, "tcp_probe", 0, len(task.PortProbePorts))
 		if w.AutoScan == nil {
 			err = fmt.Errorf("automatic scan is not configured")
 		} else {
 			var result AutoResult
 			result, err = w.AutoScan(workCtx, task)
-			detections, portProbeResults, serviceResults, systemScanStatus = result.Findings, result.Ports, result.Services, result.SystemStatus
+			detections, portProbeResults, serviceResults = result.Findings, result.Ports, result.Services
+			if result.SystemStatus != "" {
+				systemScanStatus = result.SystemStatus
+			}
 			assetProfile = result.AssetProfile
+			applicationScanStatus = result.ApplicationStatus
+			applicationResults = result.ApplicationResults
 		}
 	} else if w.Execute == nil {
 		err = fmt.Errorf("scanning engines are not configured")
 	} else {
+		ReportProgress(workCtx, "engine_scan", 0, 0)
 		detections, err = w.Execute(workCtx, task)
 	}
 
@@ -151,17 +193,17 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 		if ctx.Err() != nil {
 			if !task.Synthetic {
 				reportCtx, reportCancel := context.WithTimeout(context.Background(), 3*time.Second)
-				_, _ = w.post(reportCtx, "/api/v1/worker/report", Report{TaskID: task.ID, WorkerID: w.ID, Status: "FAILED", Error: "Worker 已停止，扫描未完成"}, nil)
+				_, _ = w.post(reportCtx, "/api/v1/worker/report", Report{TaskID: task.ID, WorkerID: w.ID, Status: "FAILED", Error: "Worker 已停止，扫描未完成", SystemScanStatus: systemScanStatus, ApplicationScanStatus: applicationScanStatus, ApplicationResults: applicationResults}, nil)
 				reportCancel()
 			}
 			return false, ctx.Err()
 		}
 		if errors.Is(err, context.DeadlineExceeded) {
-			report = Report{TaskID: task.ID, WorkerID: w.ID, Status: "PAUSED_WINDOW"}
+			report = Report{TaskID: task.ID, WorkerID: w.ID, Status: "PAUSED_WINDOW", SystemScanStatus: systemScanStatus}
 		} else if task.Synthetic {
 			return true, err
 		} else {
-			report = Report{TaskID: task.ID, WorkerID: w.ID, Status: "FAILED", Error: "引擎执行失败，请检查节点状态、规则库、输入和 Worker 日志"}
+			report = Report{TaskID: task.ID, WorkerID: w.ID, Status: "FAILED", Error: "引擎执行失败，请检查节点状态、规则库、输入和 Worker 日志", SystemScanStatus: systemScanStatus}
 			var publicError *ExecutionError
 			if errors.As(err, &publicError) && len(publicError.UserMessage) > 0 && len(publicError.UserMessage) <= 500 {
 				report.Error = publicError.UserMessage
@@ -169,13 +211,15 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 			slog.Warn("engine execution failed", "task_id", task.ID, "error", err)
 		}
 	}
+	report.ApplicationScanStatus = applicationScanStatus
+	report.ApplicationResults = applicationResults
 
 	encoded, err := json.Marshal(report)
 	if err != nil {
 		return false, fmt.Errorf("encode result report: %w", err)
 	}
 	if len(encoded) > MaxReportBytes {
-		report = Report{TaskID: task.ID, WorkerID: w.ID, Status: "FAILED", Error: "结果超过单次回报大小限制，请拆分目标或输入后重试"}
+		report = Report{TaskID: task.ID, WorkerID: w.ID, Status: "FAILED", Error: "结果超过单次回报大小限制，请拆分目标或输入后重试", SystemScanStatus: systemScanStatus, ApplicationScanStatus: applicationScanStatus, ApplicationResults: applicationResults}
 	}
 	for {
 		if code, err := w.post(ctx, "/api/v1/worker/report", report, nil); err == nil {
