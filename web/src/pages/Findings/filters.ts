@@ -8,7 +8,7 @@ const filterValues = {
 } as const;
 
 type ClassificationKey = keyof typeof filterValues;
-export type FindingFilters = { [K in ClassificationKey]: (typeof filterValues)[K][number] } & { onlyVerified: boolean };
+export type FindingFilters = { [K in ClassificationKey]: (typeof filterValues)[K][number] } & { onlyVerified: boolean; businessGroup: string; assetId: string };
 
 export function readFindingFilters(params: URLSearchParams): FindingFilters {
   const classification = Object.fromEntries(Object.entries(filterValues).map(([key, allowed]) => {
@@ -16,7 +16,10 @@ export function readFindingFilters(params: URLSearchParams): FindingFilters {
     return [key, values.length === 1 && (allowed as readonly string[]).includes(values[0]) ? values[0] : 'ALL'];
   })) as Pick<FindingFilters, ClassificationKey>;
   const verified = params.getAll('onlyVerified');
-  return { ...classification, onlyVerified: verified.length === 1 && verified[0] === 'true' };
+  const businessGroups = params.getAll('businessGroup');
+  const assets = params.getAll('assetId');
+  const readText = (values: string[]) => values.length === 1 && values[0].trim().length <= 160 ? values[0].trim() : '';
+  return { ...classification, onlyVerified: verified.length === 1 && verified[0] === 'true', businessGroup: readText(businessGroups), assetId: readText(assets) };
 }
 
 // Preserve route parameters owned by other features, but never persist free text.
@@ -29,6 +32,10 @@ export function writeFindingFilters(params: URLSearchParams, filters: FindingFil
   }
   next.delete('onlyVerified');
   if (filters.onlyVerified === true) next.set('onlyVerified', 'true');
+  next.delete('businessGroup');
+  if (filters.businessGroup.trim()) next.set('businessGroup', filters.businessGroup.trim());
+  next.delete('assetId');
+  if (filters.assetId.trim()) next.set('assetId', filters.assetId.trim());
   next.delete('q');
   return next;
 }

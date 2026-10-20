@@ -43,7 +43,7 @@ export const FindingsPage: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const filters = readFindingFilters(searchParams);
   const { severity: severityFilter, status: statusFilter, method: methodFilter,
-    confidence: confidenceFilter, risk: riskFilter, onlyVerified } = filters;
+    confidence: confidenceFilter, risk: riskFilter, onlyVerified, businessGroup, assetId } = filters;
   const search = searchParams.toString();
   useEffect(() => {
     const canonical = writeFindingFilters(searchParams, readFindingFilters(searchParams));
@@ -155,6 +155,8 @@ export const FindingsPage: React.FC = () => {
     if(methodFilter!=='ALL'&&(f.detectMethod??'unknown')!==methodFilter)return false;
     if(confidenceFilter!=='ALL'&&(f.confidence??'unknown')!==confidenceFilter)return false;
     if(riskFilter!=='ALL'&&(f.riskType??'unknown')!==riskFilter)return false;
+    if(businessGroup&&f.businessGroup!==businessGroup)return false;
+    if(assetId&&f.assetId!==assetId)return false;
     if(onlyVerified&&!isVerifiedFinding(f))return false;
     if (severityFilter !== 'ALL' && f.severity !== severityFilter) return false;
     if (statusFilter !== 'ALL' && f.status !== statusFilter) return false;
@@ -231,6 +233,8 @@ export const FindingsPage: React.FC = () => {
         <Select aria-label="置信度筛选" value={confidenceFilter} onChange={confidence => updateFilters({ confidence })} style={{width:180}} options={[{value:'ALL',label:'全部置信度'},...Object.entries(confidenceLabels).map(([value,label])=>({value,label}))]}/>
         <Select aria-label="风险类型筛选" value={riskFilter} onChange={risk => updateFilters({ risk })} style={{width:190}} options={[{value:'ALL',label:'全部类型'},...Object.entries(riskLabels).map(([value,label])=>({value,label}))]}/>
         <Checkbox checked={onlyVerified} onChange={e=>updateFilters({ onlyVerified: e.target.checked })}>仅已验证（原理验证 / 配置检查）</Checkbox>
+        {businessGroup&&<Tag closable onClose={()=>updateFilters({businessGroup:''})}>业务组：{businessGroup}</Tag>}
+        {assetId&&<Tag closable onClose={()=>updateFilters({assetId:''})}>资产：{assetId}</Tag>}
       </Space>
       <Alert showIcon type="info" message="版本推断没有实际验证漏洞。未标注检测方式的历史结果显示为未核实；扫描完整性不等同于原理验证。"/>
       <Input aria-label="按目标、组件或 CVE 筛选" placeholder="按目标、服务器别名、组件或 CVE 筛选" allowClear value={query} onChange={event => setQuery(event.target.value)} style={{maxWidth:480}} />

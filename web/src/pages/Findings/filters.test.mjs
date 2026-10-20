@@ -5,7 +5,7 @@ import ts from 'typescript';
 const source = await readFile(new URL('./filters.ts', import.meta.url), 'utf8');
 const js = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.ESNext } }).outputText;
 const { readFindingFilters: read, writeFindingFilters: write } = await import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`);
-const defaults = { severity: 'ALL', status: 'ALL', method: 'ALL', confidence: 'ALL', risk: 'ALL', onlyVerified: false };
+const defaults = { severity: 'ALL', status: 'ALL', method: 'ALL', confidence: 'ALL', risk: 'ALL', onlyVerified: false, businessGroup: '', assetId: '' };
 assert.deepEqual(read(new URLSearchParams()), defaults);
 const allowed = {
   severity: ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO'],
@@ -36,7 +36,7 @@ for (const value of ['', 'false', '1', 'TRUE', 'yes']) {
 }
 assert.equal(read(new URLSearchParams('onlyVerified=true')).onlyVerified, true);
 assert.equal(read(new URLSearchParams('onlyVerified=true&onlyVerified=true')).onlyVerified, false);
-const combined = { severity: 'HIGH', status: 'OPEN', method: 'version', confidence: 'high', risk: 'system', onlyVerified: true };
+const combined = { severity: 'HIGH', status: 'OPEN', method: 'version', confidence: 'high', risk: 'system', onlyVerified: true, businessGroup: '支付', assetId: 'asset-1' };
 const params = new URLSearchParams('tab=review&tab=other&q=192.0.2.10&severity=ALL&status=bad');
 const canonical = write(params, combined);
 assert.deepEqual(read(canonical), combined, 'combined filters survive reload by parsing the same URL');
@@ -46,6 +46,8 @@ assert.equal(params.get('q'), '192.0.2.10', 'serializer must not mutate router i
 assert.equal(write(canonical, read(canonical)).toString(), canonical.toString(), 'canonicalization is idempotent');
 assert.deepEqual(read(write(canonical, defaults)), defaults, 'reset removes every owned classification');
 assert.equal(write(canonical, defaults).toString(), 'tab=review&tab=other');
+assert.equal(read(new URLSearchParams('businessGroup=%E6%94%AF%E4%BB%98&assetId=asset-1')).businessGroup, '支付');
+assert.equal(read(new URLSearchParams('businessGroup=x&businessGroup=y')).businessGroup, '');
 // Back/forward locations are the only source of filter state; local searches are separate.
 for (const location of ['severity=HIGH', 'status=FIXED&onlyVerified=true', 'severity=HIGH']) {
   const restored = read(new URLSearchParams(location));

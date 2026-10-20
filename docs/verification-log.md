@@ -295,3 +295,8 @@
 - Server 在事务中重新校验登记资产、审批/排除/隔离端口、规则包和时间窗，写入发现项—复测任务关系及不含目标数据的审计记录；活动复测重复提交返回冲突。
 - 合成发现项、误报、父任务未完成、范围外目标和不支持引擎均有失败路径测试；API 覆盖认证、CSRF、角色和严格 JSON。
 - 已运行：`go test -race ./internal/repo ./internal/api`、`make test`、`make lint`、`make build`、`node --test web/src/pages/Findings/*.test.mjs`、`npm --prefix web run build`、Ruby YAML 解析和 `git diff --check`。真实浏览器点击和真实 Worker 执行仍待隔离环境验收。
+## 2026-10-21：总览风险评分、趋势与下钻
+
+- 总览新增 0–100 风险评分、有风险资产数、7/30/90 天活动漏洞趋势、风险业务组和风险资产表；严重度与检测口径数字链接到漏洞筛选。风险评分规则、活动状态和接受风险折扣见 `docs/product/risk-score.md`。
+- 漏洞页新增业务组和资产 ID 的 URL 筛选，保留刷新、前进/后退和筛选标签移除语义；仍只在页面已加载的全量发现项上计算，未新增扫描目标、端口或引擎调用。
+- `node --test web/src/pages/Findings/*.test.mjs`、`node web/src/pages/Dashboard/presentation.test.mjs`、`npm --prefix web run build`、`make test`、`make lint`、`make build`、Ruby YAML 解析和 `git diff --check` 均已通过。真实浏览器点击下钻和服务端大数据量聚合仍待独立验收。

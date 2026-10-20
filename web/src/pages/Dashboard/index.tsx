@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import { Row, Col, Card, Statistic, Progress, Table, Tag, Space, Alert, Typography } from 'antd';
 import {
   SafetyOutlined,
@@ -12,8 +12,10 @@ import { mockAssets, mockFindings, mockTasks, mockRuleBundles } from '../../mock
 import { isDemoMode } from '../../api/client';
 import { useCollection } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
+import { Link } from 'react-router-dom';
 
 import { findingCounts, isVulnerability } from '../Findings/presentation';
+import { isActiveVulnerability, riskAssetCount, riskScore, severityDistribution, topRiskAssets, topRiskGroups, vulnerabilityTrend } from './presentation';
 const { Text } = Typography;
 
 export const DashboardPage: React.FC = () => {
@@ -24,14 +26,18 @@ export const DashboardPage: React.FC = () => {
   const currentRule = ruleBundles.find((r) => r.isCurrent);
   const vulnerabilities=findings.filter(isVulnerability);
   const counts=findingCounts(findings);
-  const criticalCount = vulnerabilities.filter((f) => f.severity === 'CRITICAL' && f.status === 'OPEN').length;
-  const highCount = vulnerabilities.filter((f) => f.severity === 'HIGH' && f.status === 'OPEN').length;
+  const activeVulnerabilities = vulnerabilities.filter(isActiveVulnerability);
+  const criticalCount = activeVulnerabilities.filter((f) => f.severity === 'CRITICAL').length;
+  const highCount = activeVulnerabilities.filter((f) => f.severity === 'HIGH').length;
   const totalFindings = vulnerabilities.length;
-
-  const topRiskGroups = Array.from(new Set(vulnerabilities.map(f=>f.businessGroup).filter(Boolean))).map((group,index)=>{
-    const items=vulnerabilities.filter(f=>f.businessGroup===group&&!['FALSE_POSITIVE','FIXED'].includes(f.status));
-    return {key:String(index+1),group,riskScore:Math.min(100,items.reduce((sum,f)=>sum+({CRITICAL:30,HIGH:20,MEDIUM:10,LOW:3,INFO:1}[f.severity]),0)),openVulns:items.length,owner:items[0]?.owner||'—'};
-  }).sort((a,b)=>b.riskScore-a.riskScore).slice(0,5);
+  const [trendDays, setTrendDays] = useState<7 | 30 | 90>(30);
+  const currentRiskScore = riskScore(findings);
+  const riskyAssets = riskAssetCount(findings);
+  const trend = useMemo(() => vulnerabilityTrend(findings, trendDays), [findings, trendDays]);
+  const maxTrend = Math.max(1, ...trend.map(point => point.count));
+  const distribution = severityDistribution(findings);
+  const riskGroups = useMemo(() => topRiskGroups(findings), [findings]);
+  const riskAssets = useMemo(() => topRiskAssets(assets, findings), [assets, findings]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -45,20 +51,27 @@ export const DashboardPage: React.FC = () => {
         icon={<SafetyOutlined />}
       />
 
-      <Card title="检测结果口径"><Space wrap><Tag color="red">漏洞总数 {counts.vulnerabilities}</Tag><Tag color="blue">登录入口 {counts.loginEntries}</Tag><Tag>历史类型未核实 {counts.unknown}</Tag><Tag color="orange">版本推断 {counts.version}</Tag><Tag color="green">已验证 {counts.verified}</Tag><Tag>弱口令：本次未启用该检测项</Tag></Space><Typography.Paragraph type="secondary" style={{marginTop:12,marginBottom:0}}>漏洞总数仅含系统漏洞与 Web 漏洞。登录入口单独统计；缺少类型的历史记录不纳入漏洞总数。已验证指原理验证或确定性配置检查。</Typography.Paragraph></Card>
+      <Card title="检测结果口径"><Space wrap>
+        <Tag color="red"><Link to="/findings">漏洞总数 {counts.vulnerabilities}</Link></Tag>
+        <Tag color="blue"><Link to="/findings?risk=login_entry">登录入口 {counts.loginEntries}</Link></Tag>
+        <Tag><Link to="/findings?risk=unknown">历史类型未核实 {counts.unknown}</Link></Tag>
+        <Tag color="orange"><Link to="/findings?method=version">版本推断 {counts.version}</Link></Tag>
+        <Tag color="green"><Link to="/findings?onlyVerified=true">已验证 {counts.verified}</Link></Tag>
+        <Tag>弱口令：本次未启用该检测项</Tag>
+      </Space><Typography.Paragraph type="secondary" style={{marginTop:12,marginBottom:0}}>漏洞总数仅含系统漏洞与 Web 漏洞。登录入口单独统计；缺少类型的历史记录不纳入漏洞总数。已验证指原理验证或确定性配置检查。</Typography.Paragraph></Card>
       {/* 关键统计卡片 */}
       <Row gutter={[16, 16]}>
         <Col xs={24} sm={12} lg={6}>
           <Card bordered={false}>
             <Statistic
-              title="受控资产总数"
-              value={assets.length}
-              suffix="个"
-              prefix={<DatabaseOutlined style={{ color: '#1677ff' }} />}
+              title="风险评分"
+              value={currentRiskScore}
+              suffix="/ 100"
+              valueStyle={{ color: currentRiskScore >= 70 ? '#ff4d4f' : currentRiskScore >= 40 ? '#fa8c16' : '#13c2c2' }}
+              prefix={<SafetyOutlined />}
             />
             <div style={{ marginTop: 8, fontSize: 12, color: '#64748b' }}>
-              主机: {assets.filter((a) => a.kind === 'host').length} | 镜像仓:{' '}
-              {assets.filter((a) => a.kind === 'image_repo').length}
+              <Link to="/findings">查看活动漏洞明细</Link>
             </div>
           </Card>
         </Col>
@@ -66,13 +79,27 @@ export const DashboardPage: React.FC = () => {
         <Col xs={24} sm={12} lg={6}>
           <Card bordered={false}>
             <Statistic
-              title="未收敛严重/高危漏洞"
-              value={criticalCount + highCount}
+              title="有风险资产数"
+              value={riskyAssets}
+              suffix="个"
+              prefix={<DatabaseOutlined style={{ color: '#1677ff' }} />}
+            />
+            <div style={{ marginTop: 8, fontSize: 12, color: '#64748b' }}>
+              受控资产总数: {assets.length}；<Link to="/assets">查看资产台账</Link>
+            </div>
+          </Card>
+        </Col>
+
+        <Col xs={24} sm={12} lg={6}>
+          <Card bordered={false}>
+            <Statistic
+              title="漏洞总数"
+              value={totalFindings}
               valueStyle={{ color: '#ff4d4f' }}
               prefix={<AlertOutlined />}
             />
             <div style={{ marginTop: 8, fontSize: 12, color: '#64748b' }}>
-              严重 (Critical): {criticalCount} | 高危 (High): {highCount}
+              <Link to="/findings?severity=CRITICAL">严重 {criticalCount}</Link> · <Link to="/findings?severity=HIGH">高危 {highCount}</Link>
             </div>
           </Card>
         </Col>
@@ -107,21 +134,33 @@ export const DashboardPage: React.FC = () => {
         </Col>
       </Row>
 
+      <Card title="漏洞趋势" bordered={false} extra={<Space.Compact>
+        {[7, 30, 90].map(days => <Tag key={days} color={trendDays === days ? 'blue' : undefined} style={{ cursor: 'pointer' }} onClick={() => setTrendDays(days as 7 | 30 | 90)}>{days} 天</Tag>)}
+      </Space.Compact>}>
+        <div aria-label={`${trendDays} 天漏洞趋势`} style={{ display: 'flex', alignItems: 'end', gap: 4, minHeight: 150, overflowX: 'auto', padding: '8px 0' }}>
+          {trend.map(point => <div key={point.date} title={`${point.date}：${point.count} 个`} style={{ minWidth: trendDays === 90 ? 12 : 24, flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'end', gap: 4 }}>
+            <Link to="/findings" aria-label={`${point.date} ${point.count} 个漏洞`} style={{ width: '100%', height: `${Math.max(4, point.count / maxTrend * 112)}px`, background: '#1677ff', borderRadius: '4px 4px 0 0', display: 'block' }} />
+            {(trendDays <= 30 || point.date.endsWith('-01') || point.date.endsWith('-15')) && <Text type="secondary" style={{ fontSize: 10, whiteSpace: 'nowrap' }}>{point.label}</Text>}
+          </div>)}
+        </div>
+        <Text type="secondary">趋势按每日结束时仍活动的系统/Web 漏洞数计算，详见风险评分口径。</Text>
+      </Card>
+
       {/* 风险分布与风险业务组 */}
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={14}>
-          <Card title="业务组发现项统计（含明确标注的模拟结果）" bordered={false}>
+          <Card title="风险最高业务组" bordered={false}>
             <Table
               scroll={{x:600}}
-              dataSource={topRiskGroups}
+              dataSource={riskGroups}
               pagination={false}
               size="middle"
               columns={[
-                { title: '排名', dataIndex: 'key', width: 60 },
-                { title: '业务组名称', dataIndex: 'group' },
+                { title: '排名', render: (_: unknown, __: unknown, index: number) => index + 1, width: 60 },
+                { title: '业务组名称', dataIndex: 'name', render: (name: string) => <Link to={`/findings?businessGroup=${encodeURIComponent(name)}`}>{name}</Link> },
                 {
                   title: '综合风险指数',
-                  dataIndex: 'riskScore',
+                  dataIndex: 'score',
                   render: (score: number) => (
                     <Progress
                       percent={score}
@@ -132,13 +171,12 @@ export const DashboardPage: React.FC = () => {
                   ),
                 },
                 {
-                  title: '待修复漏洞',
-                  dataIndex: 'openVulns',
+                  title: '活动漏洞',
+                  dataIndex: 'openCount',
                   render: (v: number) => (
                     <Tag color={v > 0 ? 'red' : 'green'}>{v} 个未修复</Tag>
                   ),
                 },
-                { title: '安全负责人', dataIndex: 'owner', width: 120 },
               ]}
             />
           </Card>
@@ -152,9 +190,9 @@ export const DashboardPage: React.FC = () => {
                   <Text type="danger" strong>
                     严重 (Critical)
                   </Text>
-                  <span>{vulnerabilities.filter((f) => f.severity === 'CRITICAL').length} / {totalFindings}</span>
+                    <Link to="/findings?severity=CRITICAL">{distribution.CRITICAL} / {totalFindings}</Link>
                 </div>
-                <Progress percent={totalFindings ? Math.round(vulnerabilities.filter((f) => f.severity === 'CRITICAL').length / totalFindings * 100) : 0} strokeColor="#ff4d4f" showInfo={false} />
+                <Progress percent={totalFindings ? Math.round(distribution.CRITICAL / totalFindings * 100) : 0} strokeColor="#ff4d4f" showInfo={false} />
               </div>
 
               <div>
@@ -162,9 +200,9 @@ export const DashboardPage: React.FC = () => {
                   <Text style={{ color: '#fa8c16' }} strong>
                     高危 (High)
                   </Text>
-                  <span>{vulnerabilities.filter((f) => f.severity === 'HIGH').length} / {totalFindings}</span>
+                  <Link to="/findings?severity=HIGH">{distribution.HIGH} / {totalFindings}</Link>
                 </div>
-                <Progress percent={totalFindings ? Math.round(vulnerabilities.filter((f) => f.severity === 'HIGH').length / totalFindings * 100) : 0} strokeColor="#fa8c16" showInfo={false} />
+                <Progress percent={totalFindings ? Math.round(distribution.HIGH / totalFindings * 100) : 0} strokeColor="#fa8c16" showInfo={false} />
               </div>
 
               <div>
@@ -172,9 +210,9 @@ export const DashboardPage: React.FC = () => {
                   <Text style={{ color: '#faad14' }} strong>
                     中危 (Medium)
                   </Text>
-                  <span>{vulnerabilities.filter((f) => f.severity === 'MEDIUM').length} / {totalFindings}</span>
+                  <Link to="/findings?severity=MEDIUM">{distribution.MEDIUM} / {totalFindings}</Link>
                 </div>
-                <Progress percent={totalFindings ? Math.round(vulnerabilities.filter((f) => f.severity === 'MEDIUM').length / totalFindings * 100) : 0} strokeColor="#faad14" showInfo={false} />
+                <Progress percent={totalFindings ? Math.round(distribution.MEDIUM / totalFindings * 100) : 0} strokeColor="#faad14" showInfo={false} />
               </div>
 
               <div>
@@ -182,15 +220,24 @@ export const DashboardPage: React.FC = () => {
                   <Text style={{ color: '#1677ff' }} strong>
                     低危 (Low)
                   </Text>
-                  <span>{vulnerabilities.filter((f) => f.severity === 'LOW').length} / {totalFindings}</span>
+                  <Link to="/findings?severity=LOW">{distribution.LOW} / {totalFindings}</Link>
                 </div>
-                <Progress percent={totalFindings ? Math.round(vulnerabilities.filter((f) => f.severity === 'LOW').length / totalFindings * 100) : 0} strokeColor="#1677ff" showInfo={false} />
+                <Progress percent={totalFindings ? Math.round(distribution.LOW / totalFindings * 100) : 0} strokeColor="#1677ff" showInfo={false} />
               </div>
-              <div><Text>信息 (Info)：{vulnerabilities.filter(f=>f.severity==='INFO').length} / {totalFindings}</Text><Progress percent={totalFindings?Math.round(vulnerabilities.filter(f=>f.severity==='INFO').length/totalFindings*100):0} showInfo={false}/></div>
+              <div><Text>信息 (Info)：<Link to="/findings?severity=INFO">{distribution.INFO} / {totalFindings}</Link></Text><Progress percent={totalFindings?Math.round(distribution.INFO/totalFindings*100):0} showInfo={false}/></div>
             </div>
           </Card>
         </Col>
       </Row>
+
+      <Card title="风险最高资产" bordered={false}>
+        <Table dataSource={riskAssets} rowKey="id" pagination={false} size="small" columns={[
+          { title: '资产', render: (_: unknown, item: { id: string; name: string; address: string }) => <Link to={`/findings?assetId=${encodeURIComponent(item.id)}`}>{item.name}</Link> },
+          { title: '地址', dataIndex: 'address' },
+          { title: '风险指数', dataIndex: 'score', render: (score: number) => <Progress percent={score} size="small" /> },
+          { title: '活动漏洞', dataIndex: 'openCount' },
+        ]} locale={{ emptyText: '暂无活动漏洞资产' }} />
+      </Card>
 
       {/* 近期扫描任务执行流 */}
       <Card title="正在执行与近期任务" bordered={false}>
