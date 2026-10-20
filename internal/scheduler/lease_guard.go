@@ -17,6 +17,27 @@ var (
 	ErrWorkerStopTimeout = errors.New("worker did not stop within shutdown grace")
 )
 
+// The local Phase 0 lease defaults are deliberately short. A Worker must
+// renew well before the Server lease expires so a temporary API outage cannot
+// silently extend execution past the last Server-confirmed deadline.
+const (
+	DefaultLeaseDuration = 45 * time.Second
+	DefaultRenewInterval = 10 * time.Second
+	DefaultRenewTimeout  = 5 * time.Second
+	DefaultShutdownGrace = 5 * time.Second
+)
+
+// DefaultLeaseGuard returns the safe local defaults used by the real Worker.
+// Tests and embedding callers may replace individual values explicitly.
+func DefaultLeaseGuard() LeaseGuard {
+	return LeaseGuard{
+		RenewInterval:    DefaultRenewInterval,
+		RenewTimeout:     DefaultRenewTimeout,
+		MaxLeaseDuration: DefaultLeaseDuration,
+		ShutdownGrace:    DefaultShutdownGrace,
+	}
+}
+
 // Assignment is a single Server-issued chunk lease, bound to a worker node
 // and a precise local rule-bundle version. It is NOT scan authorization:
 // scope admission and the network fence must also succeed before execution.

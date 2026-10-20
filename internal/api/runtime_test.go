@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +15,7 @@ import (
 
 	"scanner-platform/internal/account"
 	"scanner-platform/internal/assets"
+	"scanner-platform/internal/portprobe"
 	"scanner-platform/internal/repo"
 	"scanner-platform/internal/taskflow"
 )
@@ -267,5 +269,86 @@ func TestRuntimeAcceptsFullRangePortProbePlan(t *testing.T) {
 	tooWide := send(`{"synthetic":false,"engine":"port-probe","assetId":"` + asset.ID + `","portProbe":{"preset":"custom","ranges":[{"start":1,"end":65536}],"opsApproved":true},"targets":[],"timeWindows":[]}`)
 	if tooWide.Code != http.StatusBadRequest {
 		t.Fatalf("invalid port range accepted: %d %s", tooWide.Code, tooWide.Body.String())
+	}
+}
+
+func TestRuntimeWorkerRenewAPIValidatesLeaseBinding(t *testing.T) {
+	ctx := context.Background()
+	accounts, err := account.New(filepath.Join(t.TempDir(), "platform.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer accounts.Close()
+	registry, err := assets.New(accounts.SQLDB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	asset, err := registry.Create(ctx, "local-test", assets.Input{Kind: "host", Address: "192.0.2.20", BusinessGroup: "QA", Owner: "Example"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := repo.NewRuntime(accounts.SQLDB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.LeaseDuration = time.Second
+	created, err := store.CreateLocalTask(ctx, taskflow.TaskInput{
+		Engine: "port-probe", AssetID: asset.ID,
+		PortProbe: portprobe.Config{Preset: portprobe.PresetCustom, Ranges: []portprobe.Range{{Start: 1234, End: 1234}}, OpsApproved: true},
+	}, "local-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	server := httptest.NewServer(NewRuntimeHandler(store, nil, ""))
+	defer server.Close()
+	response, err := server.Client().Post(server.URL+"/api/v1/worker/claim", "application/json", strings.NewReader(`{"workerId":"api-lease-worker"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK {
+		response.Body.Close()
+		t.Fatalf("claim status=%d", response.StatusCode)
+	}
+	var claimed taskflow.Task
+	if err := json.NewDecoder(response.Body).Decode(&claimed); err != nil {
+		response.Body.Close()
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if claimed.ID != created.ID || len(claimed.Chunks) != 1 || claimed.Chunks[0].PinnedRuleVersion == "" || claimed.Chunks[0].LeaseExpiresAt == nil {
+		t.Fatalf("claim omitted lease binding: %+v", claimed)
+	}
+
+	payload := `{"taskId":"` + claimed.ID + `","workerId":"api-lease-worker","pinnedRuleVersion":"` + claimed.Chunks[0].PinnedRuleVersion + `"}`
+	response, err = server.Client().Post(server.URL+"/api/v1/worker/renew", "application/json", strings.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(response.Body)
+		response.Body.Close()
+		t.Fatalf("valid renewal status=%d body=%s", response.StatusCode, body)
+	}
+	var renewed struct {
+		LeaseExpiresAt time.Time `json:"leaseExpiresAt"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&renewed); err != nil {
+		response.Body.Close()
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if renewed.LeaseExpiresAt.IsZero() || !renewed.LeaseExpiresAt.After(*claimed.Chunks[0].LeaseExpiresAt) {
+		t.Fatalf("valid renewal did not extend lease: claimed=%s renewed=%s", claimed.Chunks[0].LeaseExpiresAt, renewed.LeaseExpiresAt)
+	}
+
+	badPayload := strings.Replace(payload, `"pinnedRuleVersion":"`+claimed.Chunks[0].PinnedRuleVersion+`"`, `"pinnedRuleVersion":"wrong-version"`, 1)
+	response, err = server.Client().Post(server.URL+"/api/v1/worker/renew", "application/json", strings.NewReader(badPayload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusConflict {
+		t.Fatalf("wrong version renewal status=%d, want %d", response.StatusCode, http.StatusConflict)
 	}
 }

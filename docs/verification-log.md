@@ -17,7 +17,7 @@
 | SSH 指定目录 Java/Go 应用 | Go 与含 class 的 Java 合成 JAR 隔离路径通过；活动规则已切换到含 Java DB 的版本 | Go ELF 与 Java JAR 均完成 SSH 采集、快照校验、Trivy 类型确认和覆盖计数；缺少 Java 索引时仍明确为 `analysis_failed`，带 Java DB 的规则版本已验证 Java 选中/已分析均为 1。当前活动版本通过 Updater 本地显式准备，`signatureVerified=false`；仅覆盖合成输入，独立挂载目录和真实业务应用仍待验收。 |
 | 自动综合扫描 HTTP 失败状态回报 | Worker/Server 回归与 V4 排除端口验证通过；最新 V5 任务界面显示已完成，结果仍待逐项复核 | HTTP 错误保持 FAILED 并保存明确的系统包阶段状态。此前路由阻塞记录为历史状态；本轮开发期间未重启原测试实例，新应用能力不属于该次实扫验收范围。 |
 | 正式客户端签名/公证和供应链证明 | 未实施 | Phase 0 归档仅是占位骨架。缺少 Windows 代码签名、macOS 签名/公证及 Artifact Attestation；不能直接当作受信任的可部署产品发布。 |
-| PoC #2 租约守护（2026-10-16） | 本地模拟单测通过；Server/Worker 联调未执行 | 根据最后确认租约截止和本地 hard deadline 取消工作，网络超时/失联不延长租期，未确认停止时返回 shutdown timeout；必须在真实进程层验证强杀、Node API 身份/时间戳与租约刷新。 |
+| PoC #2 租约守护与本地任务租约（2026-10-20） | Scheduler、SQLite Server/Worker HTTP 联调及 race 单测通过；生产节点验收未执行 | 真实任务领取时生成 `pinned_rule_version`/`lease_expires_at`，`/worker/renew` 校验任务、Worker、版本、过期和 hard deadline，`Tick` 回收过期任务；Worker 租约失联时停止且不发送陈旧回报。仍需在 TLS/节点令牌、独立进程和强杀路径上实测。 |
 | PoC #2 GC 两阶段文件操作（2026-10-20） | 本地文件实现与隔离竞态单测通过；真实 Updater 集成未执行 | 当前和最近备用版本保护、>=2h 退役宽限期、每阶段向 Server 复核本节点 RUNNING 任务；使用限定目录的 rename、持久隔离记录和二次检查后删除。缺少可信退役状态或隔离记录时拒绝回收；完整激活协调、真实 Node API 和 Windows 实机行为仍待集成验证。 |
 | 四入口与本地只读 API 骨架（2026-10-16） | 仅搭建结构，本轮按用户要求暂未运行测试 | 增加统一启动入口、Portable 编译入口、Server/Portable loopback 只读诊断 API 和数据库接口定义。业务接口 501，readyz 503，未启用 Node API、数据库、扫描或规则激活。须后续完成跨平台编译、API/安全边界测试与接口联调。 |
 | UI 用户管理契约与前端发布构建（2026-10-16） | 本地前端双模式、Go、YAML/actionlint 通过；GitHub 云端未运行 | 新增用户/角色演示页面，GET `/api/v1/users` 仅返回 501；用户写入/认证/RBAC/审计不开放。CI 纳入 Node.js 22 npm ci + 双模式打包检查；Release 仅构建一次 Server-mode UI 作为 `web/` 静态资产加入每个平台的归档，不表示 Server 已支持 UI 静态服务。 |
@@ -29,6 +29,13 @@
 - HTTPS Fetch 改为在 Updater 私有临时文件中流式写入并计算整包 SHA-256，再复用同一签名、路径、文件哈希和防回滚校验；失败/取消清理暂存文件。网页上传仍为 256 MiB，避免 SQLite BLOB 与 JSON/base64 放大。
 - `go test -race ./internal/rules`、`make test`、`make lint`、`make build` 通过；新增普通 ZIP、Actions 目录树 ZIP、超大稀疏文件和符号链接失败路径测试。
 - 使用下载目录的 `vulnerability-data.zip`（约 1.1 GiB）完成本地 Ed25519 签名和全部 manifest 文件哈希校验，成功导入版本 `20261020.113500`。当前 `CURRENT` 仍为 `20261020.120359`，未自动切换；由于导入版本较旧，切换必须由操作员显式执行回滚并按平台审计流程处理。
+
+## 2026-10-20：PoC #2 本地任务租约协议与 Worker 守护
+
+- SQLite `scan_tasks` 新增 `pinned_rule_version`、`lease_expires_at`；旧库启动时自动补列。非模拟任务由 Server 在领取时生成有限租约，规则任务固定领取时的规则版本，端口探测绑定不参与规则回收的 `__no_rules__` 哨兵。
+- 新增 `POST /api/v1/worker/renew`，只允许原任务、Worker 和绑定版本续租。Server 拒绝错误绑定、过期租约和 hard deadline 后续租，并把新到期时间限制在短租期和 hard deadline 内。任务结果回报也校验同一租约；`Tick` 将过期任务回收到 `PENDING` 或 `PAUSED_WINDOW`。
+- Worker 真实启动路径使用 `scheduler.LeaseGuard`；续租失联达到最后确认租期后取消执行，租约错误不会再发送可能被重新分配任务的 FAILED/COMPLETED 回报。缺少真实租约字段时真实 Worker fail closed，旧 fake/synthetic 测试保持兼容。
+- `go test -race ./internal/repo ./internal/api ./internal/taskflow ./internal/scheduler` 通过，覆盖旧 Schema 迁移、claim/renew 绑定、续租边界、Tick 回收、API 200/409、并发续租和 Worker 续租成功/失联自终止。该结果仅证明本地 SQLite 和回环 HTTP 协议；生产 TLS、节点令牌、独立进程强杀及跨节点重分配仍未验收。
 
 ## 2026-10-20：自动综合扫描失败回报修复与靶场进度
 

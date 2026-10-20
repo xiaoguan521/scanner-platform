@@ -85,14 +85,16 @@ type ExecutionError struct {
 func (e *ExecutionError) Error() string { return e.UserMessage }
 
 type Chunk struct {
-	ID             string     `json:"id"`
-	TaskID         string     `json:"taskId"`
-	WorkerNodeID   string     `json:"workerNodeId,omitempty"`
-	Targets        []string   `json:"targets"`
-	Status         string     `json:"status"`
-	CompletedFully bool       `json:"completedFully"`
-	StartedAt      *time.Time `json:"startedAt,omitempty"`
-	FinishedAt     *time.Time `json:"finishedAt,omitempty"`
+	ID                string     `json:"id"`
+	TaskID            string     `json:"taskId"`
+	WorkerNodeID      string     `json:"workerNodeId,omitempty"`
+	PinnedRuleVersion string     `json:"pinnedRuleVersion,omitempty"`
+	LeaseExpiresAt    *time.Time `json:"leaseExpiresAt,omitempty"`
+	Targets           []string   `json:"targets"`
+	Status            string     `json:"status"`
+	CompletedFully    bool       `json:"completedFully"`
+	StartedAt         *time.Time `json:"startedAt,omitempty"`
+	FinishedAt        *time.Time `json:"finishedAt,omitempty"`
 }
 
 type Task struct {

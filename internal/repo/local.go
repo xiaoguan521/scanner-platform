@@ -54,7 +54,7 @@ func (s *RuntimeStore) initLocal(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	found := false
+	foundDetails, foundPinned, foundLease := false, false, false
 	for rows.Next() {
 		var cid, nn, pk int
 		var name, kind string
@@ -63,15 +63,27 @@ func (s *RuntimeStore) initLocal(ctx context.Context) error {
 			rows.Close()
 			return err
 		}
-		found = found || name == "details"
+		foundDetails = foundDetails || name == "details"
+		foundPinned = foundPinned || name == "pinned_rule_version"
+		foundLease = foundLease || name == "lease_expires_at"
 	}
 	err = rows.Err()
 	rows.Close()
 	if err != nil {
 		return err
 	}
-	if !found {
+	if !foundDetails {
 		if _, err := s.db.ExecContext(ctx, `ALTER TABLE scan_tasks ADD COLUMN details TEXT NOT NULL DEFAULT '{}'`); err != nil {
+			return err
+		}
+	}
+	if !foundPinned {
+		if _, err := s.db.ExecContext(ctx, `ALTER TABLE scan_tasks ADD COLUMN pinned_rule_version TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
+	if !foundLease {
+		if _, err := s.db.ExecContext(ctx, `ALTER TABLE scan_tasks ADD COLUMN lease_expires_at TEXT`); err != nil {
 			return err
 		}
 	}
@@ -800,6 +812,9 @@ func (s *RuntimeStore) ToggleSchedule(ctx context.Context, id, actor string, ena
 
 // Tick advances persisted schedules and resumes tasks only within their windows.
 func (s *RuntimeStore) Tick(ctx context.Context, now time.Time) error {
+	if err := s.expireRuntimeLeases(ctx, now); err != nil {
+		return err
+	}
 	schedules, err := s.ListSchedules(ctx)
 	if err != nil {
 		return err

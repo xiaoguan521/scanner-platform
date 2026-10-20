@@ -3,12 +3,16 @@ package taskflow
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"scanner-platform/internal/scheduler"
 )
 
 func TestWorkerPausesLocallyAtDeadline(t *testing.T) {
@@ -264,3 +268,94 @@ func TestWorkerReportsPortProbeResultsWithoutFindings(t *testing.T) {
 		t.Fatalf("unexpected probe report: %+v", received)
 	}
 }
+
+func TestWorkerRenewsRealLeaseBeforeCompleting(t *testing.T) {
+	var renewCount atomic.Int32
+	var received Report
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/worker/claim":
+			_ = json.NewEncoder(w).Encode(Task{
+				ID: "lease-success", RuleVersion: "rules-1", Engines: []string{"nuclei"},
+				HardDeadline: time.Now().Add(time.Second).UTC().Format(time.RFC3339Nano),
+				Chunks:       []Chunk{{Targets: []string{"192.0.2.20:80"}, PinnedRuleVersion: "rules-1", LeaseExpiresAt: timePtr(time.Now().Add(120 * time.Millisecond).UTC())}},
+			})
+		case "/api/v1/worker/renew":
+			var body map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body["taskId"] != "lease-success" || body["workerId"] != "lease-worker" || body["pinnedRuleVersion"] != "rules-1" {
+				http.Error(w, "invalid renewal binding", http.StatusBadRequest)
+				return
+			}
+			renewCount.Add(1)
+			_ = json.NewEncoder(w).Encode(map[string]time.Time{"leaseExpiresAt": time.Now().Add(120 * time.Millisecond).UTC()})
+		case "/api/v1/worker/report":
+			if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+				t.Error(err)
+			}
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+	worker := Worker{
+		ServerURL: server.URL, ID: "lease-worker", Client: server.Client(),
+		LeaseGuard: scheduler.LeaseGuard{RenewInterval: 15 * time.Millisecond, RenewTimeout: 15 * time.Millisecond, MaxLeaseDuration: 200 * time.Millisecond, ShutdownGrace: 100 * time.Millisecond},
+		Execute: func(ctx context.Context, _ Task) ([]Detection, error) {
+			timer := time.NewTimer(80 * time.Millisecond)
+			defer timer.Stop()
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-timer.C:
+				return nil, nil
+			}
+		},
+	}
+	worked, err := worker.ProcessOne(context.Background())
+	if err != nil || !worked {
+		t.Fatalf("real lease task did not complete: worked=%v err=%v", worked, err)
+	}
+	if renewCount.Load() == 0 || received.Status != "COMPLETED" {
+		t.Fatalf("lease renewal/report missing: renewals=%d report=%+v", renewCount.Load(), received)
+	}
+}
+
+func TestWorkerStopsAndDoesNotReportAfterLeaseOutage(t *testing.T) {
+	var reportCount atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/worker/claim":
+			_ = json.NewEncoder(w).Encode(Task{
+				ID: "lease-outage", RuleVersion: "rules-1", Engines: []string{"nuclei"},
+				HardDeadline: time.Now().Add(time.Second).UTC().Format(time.RFC3339Nano),
+				Chunks:       []Chunk{{Targets: []string{"192.0.2.20:80"}, PinnedRuleVersion: "rules-1", LeaseExpiresAt: timePtr(time.Now().Add(70 * time.Millisecond).UTC())}},
+			})
+		case "/api/v1/worker/renew":
+			http.Error(w, "fixture outage", http.StatusServiceUnavailable)
+		case "/api/v1/worker/report":
+			reportCount.Add(1)
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+	worker := Worker{
+		ServerURL: server.URL, ID: "lease-worker", Client: server.Client(),
+		LeaseGuard: scheduler.LeaseGuard{RenewInterval: 10 * time.Millisecond, RenewTimeout: 10 * time.Millisecond, MaxLeaseDuration: 120 * time.Millisecond, ShutdownGrace: 100 * time.Millisecond},
+		Execute: func(ctx context.Context, _ Task) ([]Detection, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+	}
+	worked, err := worker.ProcessOne(context.Background())
+	if worked || !errors.Is(err, scheduler.ErrLeaseExpired) {
+		t.Fatalf("lease outage was not surfaced as expiry: worked=%v err=%v", worked, err)
+	}
+	if reportCount.Load() != 0 {
+		t.Fatalf("stale worker sent %d report(s) after lease expiry", reportCount.Load())
+	}
+}
+
+func timePtr(value time.Time) *time.Time { return &value }

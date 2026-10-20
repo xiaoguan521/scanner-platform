@@ -12,6 +12,15 @@
 
 本轮单测涵盖正常续租、Server 断联、卡住的续约、硬截止、过长/过期租期、意外超长续租、任务取消以及执行器拒绝停止。
 
+## 本轮已实现：SQLite 任务租约协议与 Worker 接入
+
+- 本地 `scan_tasks` 为真实任务保存 `pinned_rule_version` 和 `lease_expires_at`；旧 SQLite 数据库启动时会补齐这两列。领取真实任务时由 Server 生成固定短租约，规则任务绑定领取时的规则版本；不使用规则目录的端口探测任务绑定内部 `__no_rules__` 哨兵，不参与规则 GC 计数。模拟任务保持旧的无租约协议。
+- `POST /api/v1/worker/renew` 只接受原任务、Worker 和绑定版本，拒绝过期、错误绑定或已到 hard deadline 的续租。续租由 Server 计算，不接受 Worker 提交的过期时间，且不超过配置租期和任务 hard deadline。`POST /api/v1/worker/report` 对真实任务同时校验租约，租约失效时拒绝结果。
+- `RuntimeStore.Tick` 会回收已过期的真实任务：hard deadline 尚未到时回到 `PENDING`，否则进入 `PAUSED_WINDOW`，并清除旧 Worker 和规则绑定，避免失联任务永久保持 `RUNNING`。Worker 的真实启动路径启用 `LeaseGuard`，续租连续失败达到最后确认到期时间后停止执行，且不会提交过期的成功/失败回报；停止超时交给进程监督者升级处理。
+- 该批次保留旧 fake/synthetic HTTP 测试的兼容行为；真实 Worker 对缺少租约字段的非模拟任务 fail closed。当前本地回环 API 尚未接入生产 TLS、节点令牌或跨进程强杀。
+
+本批次单测覆盖旧 Schema 迁移、领取绑定、错误 Worker/版本和过期续租拒绝、hard deadline 限制、Tick 回收、API 200/409、并发续租以及 Worker 续租成功/失联自终止。使用 `go test -race ./internal/repo ./internal/api ./internal/taskflow ./internal/scheduler` 运行。
+
 ## 已实现：GC 资格检查
 
 - `internal/versionmgr/gc_policy.go`：不允许清理 `CURRENT` 或最近备用版本，宽限期不得短于 2 小时；无当前/备用快照时失败即拒绝。
@@ -46,7 +55,7 @@ go test -race -count=5 ./internal/scheduler ./internal/versionmgr
 
 ## 未完成，不得视为 PoC 2 验收通过
 
-1. Server 实际记录/续期任务块 `lease_expires_at`、可信节点身份绑定、固定扫描规则版本；以真实 Node API/TLS 实测网络分区、并发任务重新分配及失联进程终止。
+1. 将当前本地 SQLite claim/renew/report/Tick 协议接入真实 Node API/TLS 与独立令牌，实测可信节点身份、网络分区、并发任务重新分配及失联进程终止。当前本地协议已记录 `lease_expires_at`、Worker 绑定和固定扫描规则版本。
 2. Worker 实际消费本地 `CURRENT`；如果不存在，应上报 `WAITING_FOR_RULES` 并退避等待，而不是终止服务。
 3. Updater 验证 manifest 签名、文件 hash、引擎兼容与防回滚；安全实现 `CURRENT` 临时写 → fsync → rename 覆盖，并在 Linux/Windows 实机测试（Windows rename 冲突重试）。
 4. 将本地 GC API 接入真实 Updater 和经过 TLS/节点鉴权的 Server 查询，持久化并提供可信备用/退役元数据，协调完整激活过程；验证单 Updater 写入所有权及只读 Worker 挂载。文件 API 本身已实现，不代表这条实际链路完成。

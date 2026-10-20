@@ -166,6 +166,25 @@ func NewRuntimeHandler(store *repo.RuntimeStore, fallback http.Handler, uiDir st
 			runtimeJSON(w, http.StatusOK, map[string]string{"state": "completed"})
 		}
 	})
+	mux.HandleFunc("POST /api/v1/worker/renew", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			TaskID            string `json:"taskId"`
+			WorkerID          string `json:"workerId"`
+			PinnedRuleVersion string `json:"pinnedRuleVersion"`
+		}
+		if !runtimeDecode(w, r, &body) {
+			return
+		}
+		if !runtimeWorkerID.MatchString(body.WorkerID) || body.TaskID == "" || len(body.TaskID) > 128 || body.PinnedRuleVersion == "" || len(body.PinnedRuleVersion) > 200 {
+			bad(w, http.StatusBadRequest, "invalid_lease")
+			return
+		}
+		expires, err := store.RenewChunkLease(r.Context(), body.TaskID, body.WorkerID, body.PinnedRuleVersion)
+		if runtimeStoreError(w, err) {
+			return
+		}
+		runtimeJSON(w, http.StatusOK, map[string]any{"taskId": body.TaskID, "workerId": body.WorkerID, "pinnedRuleVersion": body.PinnedRuleVersion, "leaseExpiresAt": expires})
+	})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
@@ -208,6 +227,10 @@ func runtimeStoreError(w http.ResponseWriter, err error) bool {
 	}
 	if errors.Is(err, repo.ErrTaskConflict) {
 		runtimeJSON(w, http.StatusConflict, APIError{Error: "task_conflict", Message: "任务或结果与领取记录不一致"})
+		return true
+	}
+	if errors.Is(err, repo.ErrTaskLease) {
+		runtimeJSON(w, http.StatusConflict, APIError{Error: "lease_conflict", Message: "任务租约已失效或绑定不一致"})
 		return true
 	}
 	if errors.Is(err, repo.ErrTaskNotFound) {

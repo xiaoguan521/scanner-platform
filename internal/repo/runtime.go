@@ -24,6 +24,12 @@ var ErrTaskConflict = errors.New("task is not running for this worker")
 var ErrTaskNotFound = errors.New("task not found")
 var ErrTaskNotTerminal = errors.New("task is not terminal")
 var ErrTaskHasFindings = errors.New("task has associated findings")
+var ErrTaskLease = errors.New("task lease is invalid or expired")
+
+// NoRuleLeaseVersion is used for real tasks that do not consume a rule
+// directory (for example bounded TCP probing). They still receive a Server
+// lease, but must never be mistaken for a GC-pinned rules version.
+const NoRuleLeaseVersion = "__no_rules__"
 
 // RuntimeRepository is owned exclusively by Server. Workers use the HTTP API.
 type RuntimeRepository interface {
@@ -36,8 +42,9 @@ type RuntimeRepository interface {
 }
 
 type RuntimeStore struct {
-	db     *sql.DB
-	ownsDB bool
+	db            *sql.DB
+	ownsDB        bool
+	LeaseDuration time.Duration
 }
 
 func OpenRuntime(path string) (*RuntimeStore, error) {
@@ -74,7 +81,8 @@ func NewRuntime(db *sql.DB) (*RuntimeStore, error) {
 		`CREATE TABLE IF NOT EXISTS scan_tasks (
 			id TEXT PRIMARY KEY, status TEXT NOT NULL,
 			worker_id TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
-			started_at TEXT, finished_at TEXT, targets TEXT NOT NULL)`,
+			started_at TEXT, finished_at TEXT, targets TEXT NOT NULL,
+			pinned_rule_version TEXT NOT NULL DEFAULT '', lease_expires_at TEXT)`,
 		`CREATE INDEX IF NOT EXISTS runtime_task_queue ON scan_tasks(status,created_at,id)`,
 		`CREATE TABLE IF NOT EXISTS security_findings (
 			id TEXT PRIMARY KEY, task_id TEXT NOT NULL UNIQUE REFERENCES scan_tasks(id),
@@ -131,22 +139,30 @@ func (s *RuntimeStore) createRuntimeTask(ctx context.Context, id string, targets
 	return readRuntimeTask(s.db.QueryRowContext(ctx, `SELECT `+taskColumns+` FROM scan_tasks WHERE id=?`, id))
 }
 
-const taskColumns = `id,status,worker_id,created_at,started_at,finished_at,targets,details`
+const taskColumns = `id,status,worker_id,created_at,started_at,finished_at,targets,details,pinned_rule_version,lease_expires_at`
 
 type rowScanner interface{ Scan(...any) error }
 
 func readRuntimeTask(row rowScanner) (taskflow.Task, error) {
 	var task taskflow.Task
-	var worker, created, targets, details string
+	var worker, created, targets, details, pinnedRuleVersion string
+	var leaseExpiresAt sql.NullString
 	var started, finished sql.NullString
-	if err := row.Scan(&task.ID, &task.Status, &worker, &created, &started, &finished, &targets, &details); err != nil {
+	if err := row.Scan(&task.ID, &task.Status, &worker, &created, &started, &finished, &targets, &details, &pinnedRuleVersion, &leaseExpiresAt); err != nil {
 		return taskflow.Task{}, fmt.Errorf("read task: %w", err)
 	}
 	var err error
 	if task.CreatedAt, err = time.Parse(time.RFC3339Nano, created); err != nil {
 		return taskflow.Task{}, fmt.Errorf("parse task creation time: %w", err)
 	}
-	chunk := taskflow.Chunk{ID: task.ID + "-chunk", TaskID: task.ID, WorkerNodeID: worker, Status: task.Status}
+	chunk := taskflow.Chunk{ID: task.ID + "-chunk", TaskID: task.ID, WorkerNodeID: worker, Status: task.Status, PinnedRuleVersion: pinnedRuleVersion}
+	if leaseExpiresAt.Valid && leaseExpiresAt.String != "" {
+		parsed, err := time.Parse(time.RFC3339Nano, leaseExpiresAt.String)
+		if err != nil {
+			return taskflow.Task{}, fmt.Errorf("parse task lease expiration: %w", err)
+		}
+		chunk.LeaseExpiresAt = &parsed
+	}
 	if err := json.Unmarshal([]byte(targets), &chunk.Targets); err != nil {
 		return taskflow.Task{}, fmt.Errorf("decode task targets: %w", err)
 	}
@@ -449,6 +465,7 @@ func (s *RuntimeStore) claimRuntimeTask(ctx context.Context, worker string) (*ta
 	if err != nil {
 		return nil, err
 	}
+	var claimedDetail taskDetails
 	defer tx.Rollback()
 	for {
 		var id, data string
@@ -526,11 +543,33 @@ func (s *RuntimeStore) claimRuntimeTask(ctx context.Context, worker string) (*ta
 		if _, err := tx.ExecContext(ctx, "UPDATE scan_tasks SET details=? WHERE id=?", string(encoded), id); err != nil {
 			return nil, err
 		}
+		claimedDetail = detail
 		break
 	}
-	task, err := readRuntimeTask(tx.QueryRowContext(ctx, `UPDATE scan_tasks SET status='RUNNING',worker_id=?,started_at=?
+	claimNow := time.Now().UTC()
+	leaseVersion := ""
+	var leaseExpiry any
+	if !claimedDetail.Input.Synthetic {
+		leaseVersion = claimedDetail.RuleVersion
+		if leaseVersion == "" {
+			leaseVersion = NoRuleLeaseVersion
+		}
+		deadline, err := taskDeadline(claimedDetail.Deadline)
+		if err != nil {
+			return nil, err
+		}
+		expires := claimNow.Add(s.leaseDuration())
+		if !deadline.IsZero() && deadline.Before(expires) {
+			expires = deadline
+		}
+		if !expires.After(claimNow) {
+			return nil, ErrTaskLease
+		}
+		leaseExpiry = expires.Format(time.RFC3339Nano)
+	}
+	task, err := readRuntimeTask(tx.QueryRowContext(ctx, `UPDATE scan_tasks SET status='RUNNING',worker_id=?,started_at=?,pinned_rule_version=?,lease_expires_at=?
 		WHERE id=(SELECT id FROM scan_tasks WHERE status='PENDING' ORDER BY created_at,id LIMIT 1)
-		AND status='PENDING' RETURNING `+taskColumns, worker, time.Now().UTC().Format(time.RFC3339Nano)))
+		AND status='PENDING' RETURNING `+taskColumns, worker, claimNow.Format(time.RFC3339Nano), leaseVersion, leaseExpiry))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -564,6 +603,9 @@ func (s *RuntimeStore) CompleteRuntimeTask(ctx context.Context, report taskflow.
 	}
 	chunk := task.Chunks[0]
 	if task.Status == "RUNNING" && chunk.WorkerNodeID == report.WorkerID && report.Status == "PAUSED_WINDOW" {
+		if err := validateTaskLease(task, report.WorkerID, time.Now().UTC()); err != nil {
+			return err
+		}
 		if !validApplicationReport(report, len(task.Engines) == 1 && task.Engines[0] == "auto") {
 			return ErrInvalidTask
 		}

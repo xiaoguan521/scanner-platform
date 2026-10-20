@@ -1409,6 +1409,27 @@ paths:
           application/json:
             schema:
               "$ref": "#/components/schemas/WorkerReport"
+  "/api/v1/worker/renew":
+    post:
+      summary: Local-only worker lease renewal
+      description: Renews the existing Server-issued task lease for the same worker and pinned rule version. The Server never accepts a requested expiration and caps the renewal at the task hard deadline.
+      responses:
+        '200':
+          description: New bounded lease expiration
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/WorkerLeaseRenewal"
+        '400':
+          description: Invalid lease request
+        '409':
+          description: Task lease expired or binding does not match
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/WorkerLeaseRenewalRequest"
   "/api/v1/updater/claim":
     post:
       summary: Local-only updater/claim
@@ -3164,6 +3185,36 @@ components:
         ruleVersion:
           type: string
           maxLength: 200
+    WorkerLeaseRenewalRequest:
+      type: object
+      additionalProperties: false
+      required: [taskId, workerId, pinnedRuleVersion]
+      properties:
+        taskId:
+          type: string
+          maxLength: 128
+        workerId:
+          type: string
+          pattern: '^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$'
+        pinnedRuleVersion:
+          type: string
+          maxLength: 200
+          description: The exact rule or no-rules binding returned in the claimed TaskChunk.
+    WorkerLeaseRenewal:
+      type: object
+      additionalProperties: false
+      required: [taskId, workerId, pinnedRuleVersion, leaseExpiresAt]
+      properties:
+        taskId:
+          type: string
+        workerId:
+          type: string
+        pinnedRuleVersion:
+          type: string
+        leaseExpiresAt:
+          type: string
+          format: date-time
+          description: Server-confirmed expiration; bounded by the task hard deadline and the configured maximum lease duration.
     AssetProfile:
       type: object
       properties:

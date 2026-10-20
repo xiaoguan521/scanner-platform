@@ -20,6 +20,8 @@ UI 使用 HttpOnly 的 `scanner_session` Cookie，所有写请求携带 `X-Reque
 - `/nodes`：真实本机心跳，10 秒未上报显示离线，并回报固定版本、安装与就绪状态 `engines`。`/nodes/heartbeat`、`/worker/*`、`/updater/*` 仅为绑定回环地址的本机进程协议，不是生产部署接口。
 - `/rules`、`/rule-jobs`：Updater 回报的版本与操作状态。`/rules/import` 上传不超过 256 MiB 的 ZIP；`/rules/fetch` 提交 HTTPS ZIP URL 和包哈希，大签名包由 Updater 流式下载（最多 2 GiB）；`/rules/{version}/activate` 激活或通过 `rollback: true` 显式回滚。人工下载的大签名 ZIP 使用 Updater 的 `--import-bundle-file`，不经过 Server SQLite BLOB。
 
-`/worker/report` 支持真实任务 COMPLETED/FAILED、最多 2000 条归一化发现项，32 MiB 请求上限；拒绝其他 Worker、其他引擎或范围外目标的结果。重复提交不重复入库，稳定指纹跨任务去重，镜像使用不可变 ImageID。原始响应不在 UI API 中传递。
+`/worker/claim` 为每个非模拟任务返回固定的 `pinnedRuleVersion` 和短期 `leaseExpiresAt`；`/worker/renew` 只接受同一任务、Worker 和版本绑定，并把续租限制在任务 hard deadline 以内。租约到期后续租和结果回报均被拒绝，Server 的 `Tick` 会把任务回收到 `PENDING` 或 `PAUSED_WINDOW`，避免失联 Worker 永久占用任务。当前本地 API 仍只绑定回环地址，TLS 和节点令牌属于后续部署工作。
+
+`/worker/report` 支持真实任务 COMPLETED/FAILED、最多 2000 条归一化发现项，32 MiB 请求上限；拒绝其他 Worker、其他引擎或范围外目标的结果。重复提交不重复入库，稳定指纹跨任务去重，镜像使用不可变 ImageID。原始响应不在 UI API 中传递。租约失效时 Worker 不发送过期的 FAILED/COMPLETED 回报，等待 Server 回收并重新分配。
 
 完整字段与请求响应见 OpenAPI。`readyz=200` 只表示本地控制面可用，不代表扫描引擎、网络围栏、规则签名或兼容性已验证。

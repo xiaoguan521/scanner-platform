@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"scanner-platform/internal/scheduler"
 )
 
 type Worker struct {
@@ -24,6 +26,11 @@ type Worker struct {
 	ProbePorts   func(context.Context, Task) ([]PortProbeResult, error)
 	AutoScan     func(context.Context, Task) (AutoResult, error)
 	EngineStatus func() []EngineStatus
+	LeaseGuard   scheduler.LeaseGuard
+	// RequireLeases is enabled by the real Worker bootstrap. Direct protocol
+	// tests may leave it false to exercise legacy fake tasks that predate lease
+	// fields; Server-issued real tasks always include the fields.
+	RequireLeases bool
 }
 
 type workerProgress struct {
@@ -45,6 +52,60 @@ func (p *workerProgress) snapshot() (TaskProgress, bool) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return p.value, p.set
+}
+
+type workerLeaseRenewer struct{ worker *Worker }
+
+func (r workerLeaseRenewer) Renew(ctx context.Context, assignment scheduler.Assignment) (time.Time, error) {
+	var response struct {
+		LeaseExpiresAt time.Time `json:"leaseExpiresAt"`
+	}
+	code, err := r.worker.post(ctx, "/api/v1/worker/renew", map[string]string{
+		"taskId":            assignment.TaskID,
+		"workerId":          assignment.WorkerNodeID,
+		"pinnedRuleVersion": assignment.PinnedRuleVersion,
+	}, &response)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if code != http.StatusOK || response.LeaseExpiresAt.IsZero() {
+		return time.Time{}, fmt.Errorf("invalid lease renewal response")
+	}
+	return response.LeaseExpiresAt, nil
+}
+
+func (w *Worker) runWithLease(ctx context.Context, task Task, work func(context.Context) error) error {
+	if task.Synthetic || len(task.Chunks) != 1 {
+		return work(ctx)
+	}
+	chunk := task.Chunks[0]
+	if chunk.LeaseExpiresAt == nil && chunk.PinnedRuleVersion == "" {
+		if w.RequireLeases {
+			return scheduler.ErrInvalidLease
+		}
+		// Compatibility for old fake/local protocol fixtures. Server-issued
+		// real tasks always carry both fields and take the guarded path.
+		return work(ctx)
+	}
+	if chunk.LeaseExpiresAt == nil || chunk.PinnedRuleVersion == "" || task.HardDeadline == "" {
+		return scheduler.ErrInvalidLease
+	}
+	deadline, err := time.Parse(time.RFC3339Nano, task.HardDeadline)
+	if err != nil {
+		return scheduler.ErrInvalidLease
+	}
+	guard := w.LeaseGuard
+	if guard == (scheduler.LeaseGuard{}) {
+		guard = scheduler.DefaultLeaseGuard()
+	}
+	assignment := scheduler.Assignment{
+		TaskID:            task.ID,
+		WorkerNodeID:      w.ID,
+		PinnedRuleVersion: chunk.PinnedRuleVersion,
+		LeaseExpiresAt:    *chunk.LeaseExpiresAt,
+		HardDeadline:      deadline,
+	}
+	return guard.Run(ctx, assignment, workerLeaseRenewer{worker: w}, work)
 }
 
 func (w *Worker) Run(ctx context.Context, once bool) error {
@@ -148,22 +209,27 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 		systemScanStatus = SystemScanNotStarted
 	}
 	assetProfile := task.AssetProfile
-	if task.Synthetic {
-		err = waitFor(workCtx, w.Delay)
-	} else if len(task.Engines) == 1 && task.Engines[0] == "port-probe" {
-		ReportProgress(workCtx, "tcp_probe", 0, len(task.PortProbePorts))
-		if w.ProbePorts == nil {
-			err = fmt.Errorf("TCP port probe is not configured")
-		} else {
-			portProbeResults, err = w.ProbePorts(workCtx, task)
+	execute := func(execCtx context.Context) error {
+		if task.Synthetic {
+			return waitFor(execCtx, w.Delay)
 		}
-	} else if len(task.Engines) == 1 && task.Engines[0] == "auto" {
-		ReportProgress(workCtx, "tcp_probe", 0, len(task.PortProbePorts))
-		if w.AutoScan == nil {
-			err = fmt.Errorf("automatic scan is not configured")
-		} else {
+		if len(task.Engines) == 1 && task.Engines[0] == "port-probe" {
+			ReportProgress(execCtx, "tcp_probe", 0, len(task.PortProbePorts))
+			if w.ProbePorts == nil {
+				return fmt.Errorf("TCP port probe is not configured")
+			}
+			var executeErr error
+			portProbeResults, executeErr = w.ProbePorts(execCtx, task)
+			return executeErr
+		}
+		if len(task.Engines) == 1 && task.Engines[0] == "auto" {
+			ReportProgress(execCtx, "tcp_probe", 0, len(task.PortProbePorts))
+			if w.AutoScan == nil {
+				return fmt.Errorf("automatic scan is not configured")
+			}
 			var result AutoResult
-			result, err = w.AutoScan(workCtx, task)
+			var executeErr error
+			result, executeErr = w.AutoScan(execCtx, task)
 			detections, portProbeResults, serviceResults = result.Findings, result.Ports, result.Services
 			completedFully, rulesExecuted, executedEngines = result.CompletedFully, result.RulesExecuted, append([]string(nil), result.ExecutedEngines...)
 			if result.SystemStatus != "" {
@@ -172,18 +238,22 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 			assetProfile = result.AssetProfile
 			applicationScanStatus = result.ApplicationStatus
 			applicationResults = result.ApplicationResults
+			return executeErr
 		}
-	} else if w.Execute == nil {
-		err = fmt.Errorf("scanning engines are not configured")
-	} else {
-		ReportProgress(workCtx, "engine_scan", 0, 0)
-		detections, err = w.Execute(workCtx, task)
-		if err == nil {
+		if w.Execute == nil {
+			return fmt.Errorf("scanning engines are not configured")
+		}
+		ReportProgress(execCtx, "engine_scan", 0, 0)
+		var executeErr error
+		detections, executeErr = w.Execute(execCtx, task)
+		if executeErr == nil {
 			completedFully = true
 			rulesExecuted = true
 			executedEngines = []string{task.Engines[0]}
 		}
+		return executeErr
 	}
+	err = w.runWithLease(workCtx, task, execute)
 
 	report := Report{TaskID: task.ID, WorkerID: w.ID, Target: task.Chunks[0].Targets[0], Title: SyntheticTitle}
 	if !task.Synthetic {
@@ -211,7 +281,13 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 			}
 			return false, ctx.Err()
 		}
-		if errors.Is(err, context.DeadlineExceeded) {
+		if errors.Is(err, scheduler.ErrLeaseExpired) || errors.Is(err, scheduler.ErrWorkerStopTimeout) || errors.Is(err, scheduler.ErrInvalidLease) || errors.Is(err, scheduler.ErrInvalidRenewal) {
+			// The Server may already have reclaimed and reassigned this task. Do
+			// not send a stale FAILED/COMPLETED report; Tick will requeue it and
+			// the process supervisor handles an uncooperative executor.
+			return false, fmt.Errorf("worker lease ended: %w", err)
+		}
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, scheduler.ErrHardDeadline) {
 			report = Report{TaskID: task.ID, WorkerID: w.ID, Status: "PAUSED_WINDOW", SystemScanStatus: systemScanStatus}
 		} else if task.Synthetic {
 			return true, err

@@ -408,6 +408,9 @@ func (s *RuntimeStore) completeEngineTask(ctx context.Context, report taskflow.R
 		return ErrTaskConflict
 	}
 	now := time.Now().UTC()
+	if err := validateTaskLease(task, report.WorkerID, now); err != nil {
+		return err
+	}
 	if report.Status == "COMPLETED" && task.HardDeadline != "" {
 		deadline, err := time.Parse(time.RFC3339Nano, task.HardDeadline)
 		if err != nil {
