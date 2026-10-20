@@ -280,6 +280,10 @@ func runtimeStoreError(w http.ResponseWriter, err error) bool {
 		runtimeJSON(w, http.StatusConflict, APIError{Error: "task_has_findings", Message: "任务存在关联发现项，请归档以保留扫描记录"})
 		return true
 	}
+	if errors.Is(err, repo.ErrTaskNotPausable) || errors.Is(err, repo.ErrTaskNotResumable) {
+		runtimeJSON(w, http.StatusConflict, APIError{Error: "task_state_conflict", Message: "任务当前状态不支持暂停或恢复"})
+		return true
+	}
 	slog.Error("task database operation failed", "error", err)
 	runtimeJSON(w, http.StatusInternalServerError, APIError{Error: "database_error", Message: "数据库操作失败"})
 	return true

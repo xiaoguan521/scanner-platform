@@ -475,7 +475,7 @@ func (s *RuntimeStore) CancelTask(ctx context.Context, id, actor string) error {
 		return err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `UPDATE scan_tasks SET status='CANCELED',finished_at=? WHERE id=? AND status IN ('PENDING','WAITING_WINDOW','PAUSED_WINDOW','RUNNING')`, time.Now().UTC().Format(time.RFC3339Nano), id)
+	result, err := tx.ExecContext(ctx, `UPDATE scan_tasks SET status='CANCELED',finished_at=?,worker_id='',lease_expires_at=NULL,pinned_rule_version='' WHERE id=? AND status IN ('PENDING','WAITING_WINDOW','PAUSED_WINDOW','PAUSED','RUNNING')`, time.Now().UTC().Format(time.RFC3339Nano), id)
 	if err != nil {
 		return err
 	}
@@ -487,6 +487,67 @@ func (s *RuntimeStore) CancelTask(ctx context.Context, id, actor string) error {
 		return ErrTaskConflict
 	}
 	if err := logLocal(ctx, tx, actor, "cancel_task", "task", id, ""); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// PauseTask moves a queued or running task into an explicit user-paused
+// state. Clearing the worker lease makes the next heartbeat stop the current
+// execution; the task is never silently requeued by the time-window ticker.
+func (s *RuntimeStore) PauseTask(ctx context.Context, id, actor string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var status string
+	if err := tx.QueryRowContext(ctx, `SELECT status FROM scan_tasks WHERE id=?`, id).Scan(&status); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrTaskNotFound
+		}
+		return err
+	}
+	if status == "PAUSED" {
+		return tx.Commit()
+	}
+	if status != "PENDING" && status != "WAITING_WINDOW" && status != "PAUSED_WINDOW" && status != "RUNNING" {
+		return ErrTaskNotPausable
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE scan_tasks SET status='PAUSED',worker_id='',lease_expires_at=NULL,pinned_rule_version='' WHERE id=?`, id); err != nil {
+		return err
+	}
+	if err := logLocal(ctx, tx, actor, "pause_task", "task", id, "扫描任务已暂停"); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// ResumeTask returns a manually paused task to the queue. Claiming it still
+// rechecks the task window, asset authorization and rule readiness.
+func (s *RuntimeStore) ResumeTask(ctx context.Context, id, actor string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var status string
+	if err := tx.QueryRowContext(ctx, `SELECT status FROM scan_tasks WHERE id=?`, id).Scan(&status); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrTaskNotFound
+		}
+		return err
+	}
+	if status == "PENDING" {
+		return tx.Commit()
+	}
+	if status != "PAUSED" {
+		return ErrTaskNotResumable
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE scan_tasks SET status='PENDING' WHERE id=? AND status='PAUSED'`, id); err != nil {
+		return err
+	}
+	if err := logLocal(ctx, tx, actor, "resume_task", "task", id, "扫描任务已恢复到队列"); err != nil {
 		return err
 	}
 	return tx.Commit()

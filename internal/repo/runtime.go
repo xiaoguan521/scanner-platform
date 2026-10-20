@@ -27,6 +27,8 @@ var ErrTaskNotFound = errors.New("task not found")
 var ErrTaskNotTerminal = errors.New("task is not terminal")
 var ErrTaskHasFindings = errors.New("task has associated findings")
 var ErrTaskLease = errors.New("task lease is invalid or expired")
+var ErrTaskNotPausable = errors.New("task cannot be paused in its current state")
+var ErrTaskNotResumable = errors.New("task is not manually paused")
 
 // NoRuleLeaseVersion is used for real tasks that do not consume a rule
 // directory (for example bounded TCP probing). They still receive a Server

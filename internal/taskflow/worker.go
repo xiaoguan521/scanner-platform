@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"scanner-platform/internal/scheduler"
@@ -210,6 +211,7 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 	defer stopHeartbeat()
 	defer stopWork()
 	defer cancel()
+	var remoteStopped atomic.Bool
 	go func() {
 		ticker := time.NewTicker(3 * time.Second)
 		defer ticker.Stop()
@@ -236,6 +238,9 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 					failed = 0
 				}
 				if failed >= 3 || state.TaskStatus != "" && state.TaskStatus != "RUNNING" {
+					if state.TaskStatus != "" && state.TaskStatus != "RUNNING" {
+						remoteStopped.Store(true)
+					}
 					stopWork()
 					return
 				}
@@ -301,6 +306,11 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 		return executeErr
 	}
 	err = w.runWithLease(workCtx, task, execute)
+	if remoteStopped.Load() {
+		// The Server deliberately changed the task state (pause/cancel/reclaim).
+		// Do not send a stale failure or success report after that decision.
+		return false, nil
+	}
 
 	report := Report{TaskID: task.ID, WorkerID: w.ID, Target: task.Chunks[0].Targets[0], Title: SyntheticTitle}
 	if !task.Synthetic {

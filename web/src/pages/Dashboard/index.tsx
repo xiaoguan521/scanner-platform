@@ -322,6 +322,7 @@ export const DashboardPage: React.FC = () => {
               render: (status: string) => {
                 const map: Record<string, { color: string; label: string }> = {
                   RUNNING: { color: 'processing', label: '扫描中 (In Progress)' },
+                  PAUSED: { color: 'default', label: '已暂停 (Paused)' },
                   WAITING_WINDOW: { color: 'warning', label: '等待时间窗 (Waiting Window)' },
                   COMPLETED: { color: 'success', label: '已完成 (Completed)' },
                   PAUSED_WINDOW: { color: 'default', label: '窗口期暂停 (Paused)' },

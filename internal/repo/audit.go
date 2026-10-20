@@ -124,6 +124,10 @@ func taskLogMessage(action string) string {
 		return "任务已创建"
 	case "cancel_task":
 		return "任务已取消"
+	case "pause_task":
+		return "任务已暂停"
+	case "resume_task":
+		return "任务已恢复到队列"
 	case "archive_task":
 		return "任务已归档"
 	case "restore_task":

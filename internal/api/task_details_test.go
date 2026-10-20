@@ -85,6 +85,46 @@ func TestTaskDetailLogsAndExportAreAuthenticatedAndSafe(t *testing.T) {
 	}
 	cookie := login.Cookies()[0]
 	login.Body.Close()
+	pausedTask, err := store.CreateSyntheticTask(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	post := func(path string) *http.Response {
+		req, err := http.NewRequest(http.MethodPost, server.URL+path, strings.NewReader("{}"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Requested-With", "XMLHttpRequest")
+		req.AddCookie(cookie)
+		response, err := server.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return response
+	}
+	paused := post("/api/v1/tasks/" + pausedTask.ID + "/pause")
+	if paused.StatusCode != http.StatusOK {
+		paused.Body.Close()
+		t.Fatalf("pause task: %d", paused.StatusCode)
+	}
+	paused.Body.Close()
+	paused = get("/api/v1/tasks/"+pausedTask.ID, cookie)
+	var pausedBody taskflow.Task
+	if err := json.NewDecoder(paused.Body).Decode(&pausedBody); err != nil {
+		paused.Body.Close()
+		t.Fatal(err)
+	}
+	paused.Body.Close()
+	if pausedBody.Status != "PAUSED" {
+		t.Fatalf("pause status: %+v", pausedBody)
+	}
+	resumed := post("/api/v1/tasks/" + pausedTask.ID + "/resume")
+	if resumed.StatusCode != http.StatusOK {
+		resumed.Body.Close()
+		t.Fatalf("resume task: %d", resumed.StatusCode)
+	}
+	resumed.Body.Close()
 
 	detail := get("/api/v1/tasks/"+task.ID, cookie)
 	if detail.StatusCode != http.StatusOK {

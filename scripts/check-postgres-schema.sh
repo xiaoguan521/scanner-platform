@@ -43,8 +43,8 @@ BEGIN
         RAISE EXCEPTION 'Missing scan_tasks.archived_at';
     END IF;
     IF (SELECT count(*) FROM public.schema_migrations
-         WHERE version IN ('0001_core','0002_scanning','0003_rules_sbom','0004_report_inventory','0005_task_archive')) <> 5 THEN
-        RAISE EXCEPTION 'Not all five migrations have been recorded';
+         WHERE version IN ('0001_core','0002_scanning','0003_rules_sbom','0004_report_inventory','0005_task_archive','0006_task_pause')) <> 6 THEN
+        RAISE EXCEPTION 'Not all six migrations have been recorded';
     END IF;
 END
 $$;

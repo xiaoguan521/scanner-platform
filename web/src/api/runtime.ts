@@ -3,6 +3,8 @@ import type { ScanTask, TaskInput, Schedule, ScheduleRun, Finding, FindingEvent,
 
 export const createTask = (input:TaskInput) => requestJSON<ScanTask>('/api/v1/tasks','POST',input);
 export const cancelTask = (id:string) => requestJSON('/api/v1/tasks/'+encodeURIComponent(id)+'/cancel','POST');
+export const pauseTask = (id:string) => requestJSON<{status:'PAUSED'}>('/api/v1/tasks/'+encodeURIComponent(id)+'/pause','POST');
+export const resumeTask = (id:string) => requestJSON<{status:'PENDING'}>('/api/v1/tasks/'+encodeURIComponent(id)+'/resume','POST');
 export const archiveTask = (id:string) => requestJSON('/api/v1/tasks/'+encodeURIComponent(id)+'/archive','POST');
 export const restoreTask = (id:string) => requestJSON('/api/v1/tasks/'+encodeURIComponent(id)+'/restore','POST');
 export const deleteTask = (id:string) => requestJSON<{status:string}>('/api/v1/tasks/'+encodeURIComponent(id),'DELETE');

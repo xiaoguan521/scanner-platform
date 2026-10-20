@@ -127,6 +127,42 @@ func TestLocalTargetsSchedulesAndCancellation(t *testing.T) {
 	}
 }
 
+func TestManualPauseAndResumeIsPersistentAcrossWindowTicks(t *testing.T) {
+	store, actor := localFixture(t)
+	ctx := context.Background()
+	task, err := store.CreateLocalTask(ctx, taskflow.TaskInput{Synthetic: true, Targets: []string{"192.0.2.20:80"}}, actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PauseTask(ctx, task.ID, actor); err != nil {
+		t.Fatal(err)
+	}
+	items, err := store.ListRuntimeTasks(ctx)
+	if err != nil || len(items) != 1 || items[0].Status != "PAUSED" {
+		t.Fatalf("task was not manually paused: %+v err=%v", items, err)
+	}
+	if err := store.Tick(ctx, time.Now().Add(24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	items, _ = store.ListRuntimeTasks(ctx)
+	if items[0].Status != "PAUSED" {
+		t.Fatalf("window tick silently resumed manual pause: %+v", items[0])
+	}
+	if err := store.ResumeTask(ctx, task.ID, actor); err != nil {
+		t.Fatal(err)
+	}
+	items, _ = store.ListRuntimeTasks(ctx)
+	if items[0].Status != "PENDING" {
+		t.Fatalf("manual resume did not return task to queue: %+v", items[0])
+	}
+	if err := store.ResumeTask(ctx, task.ID, actor); err != nil {
+		t.Fatalf("idempotent resume failed: %v", err)
+	}
+	if err := store.CancelTask(ctx, task.ID, actor); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestScheduleInvalidTriggerIsRecordedAndStopsOneShot(t *testing.T) {
 	store, actor := localFixture(t)
 	ctx := context.Background()

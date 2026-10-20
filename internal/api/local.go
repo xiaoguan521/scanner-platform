@@ -69,6 +69,16 @@ func registerLocalHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui func
 			runtimeJSON(w, 200, map[string]string{"status": "CANCELED"})
 		}
 	}))
+	mux.HandleFunc("POST /api/v1/tasks/{id}/pause", ui(true, func(w http.ResponseWriter, r *http.Request) {
+		if !runtimeStoreError(w, store.PauseTask(r.Context(), r.PathValue("id"), actor(r))) {
+			runtimeJSON(w, http.StatusOK, map[string]string{"status": "PAUSED"})
+		}
+	}))
+	mux.HandleFunc("POST /api/v1/tasks/{id}/resume", ui(true, func(w http.ResponseWriter, r *http.Request) {
+		if !runtimeStoreError(w, store.ResumeTask(r.Context(), r.PathValue("id"), actor(r))) {
+			runtimeJSON(w, http.StatusOK, map[string]string{"status": "PENDING"})
+		}
+	}))
 	mux.HandleFunc("POST /api/v1/tasks/{id}/archive", ui(true, func(w http.ResponseWriter, r *http.Request) {
 		if !runtimeStoreError(w, store.SetTaskArchived(r.Context(), r.PathValue("id"), actor(r), true)) {
 			runtimeJSON(w, http.StatusOK, map[string]string{"status": "ARCHIVED"})

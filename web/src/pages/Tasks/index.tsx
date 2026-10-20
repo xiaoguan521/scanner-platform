@@ -4,7 +4,7 @@ import { DownloadOutlined, PlusOutlined } from '@ant-design/icons';
 import { useCollection } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
 import { apiClient, isDemoMode } from '../../api/client';
-import { archiveTask, cancelTask, createTask, deleteSchedule, deleteTask, exportTask, fetchScheduleRuns, fetchTask, fetchTaskLogs, restoreTask, saveSchedule, toggleSchedule, updateSchedule } from '../../api/runtime';
+import { archiveTask, cancelTask, createTask, deleteSchedule, deleteTask, exportTask, fetchScheduleRuns, fetchTask, fetchTaskLogs, pauseTask, restoreTask, resumeTask, saveSchedule, toggleSchedule, updateSchedule } from '../../api/runtime';
 import { useAuth } from '../../auth/AuthProvider';
 import { mockAssets, mockTasks } from '../../mock/data';
 import type { CustomRule, PortProbeRange, ScanTask, Schedule, ScheduleRun, TaskInput, ScanPolicy, TaskLog } from '../../types';
@@ -12,7 +12,7 @@ import type { CustomRule, PortProbeRange, ScanTask, Schedule, ScheduleRun, TaskI
 import { parsePortRanges, showRanges, coversAllPorts, presetLabels, summarizePorts, compressPorts, previewProbePorts } from './policy';
 import { assertTaskSubmission, getScanPlanDefaults, isAutoTaskWizard, wizardStepFields } from './wizard';
 const dayOptions=['周日','周一','周二','周三','周四','周五','周六'].map((label,value)=>({label,value}));
-const names:Record<string,string>={PENDING:'待领取',RUNNING:'执行中',WAITING_WINDOW:'等待时间窗',PAUSED_WINDOW:'窗口结束，等待恢复',COMPLETED:'已完成',CANCELED:'已取消',FAILED:'失败'};
+const names:Record<string,string>={PENDING:'待领取',RUNNING:'执行中',WAITING_WINDOW:'等待时间窗',PAUSED:'已暂停',PAUSED_WINDOW:'窗口结束，等待恢复',COMPLETED:'已完成',CANCELED:'已取消',FAILED:'失败'};
 const scheduleRunNames:Record<string,string>={...names,DELETED:'任务记录已删除'};
 const progressPhases:Record<string,string>={tcp_probe:'TCP 端口探测',service_identification:'服务识别',http_scan:'HTTP 基线扫描',ssh_collection:'SSH 信息采集',trivy_scan:'Trivy 系统包与应用分析',engine_scan:'引擎扫描'};
 const applicationStatuses:Record<string,string>={not_configured:'未配置部署目录',not_started:'尚未开始',port_out_of_scope:'未采集：SSH 端口不在本次范围',collecting:'采集中',collection_failed:'采集未完成',scanning:'分析中',analysis_failed:'分析未完成',completed:'已完成'};
@@ -123,6 +123,8 @@ export const TasksPage:React.FC=()=>{
     }catch(e){message.error(e instanceof Error?e.message:'创建失败');}finally{setBusy(false);}
   };
   const stop=async(id:string)=>{try{await cancelTask(id);setTasks(prev=>prev.map(t=>t.id===id?{...t,status:'CANCELED'}:t));message.success('任务已取消，不会写入成功结果');}catch(e){message.error(String(e));}};
+  const pause=async(task:ScanTask)=>Modal.confirm({title:'暂停扫描任务',content:`暂停 ${task.id} 后，Worker 会在下一次心跳停止执行，任务不会因时间窗自动恢复。之后可在详情中手动恢复。`,okText:'暂停',cancelText:'继续执行',onOk:async()=>{try{await pauseTask(task.id);setTasks(prev=>prev.map(item=>item.id===task.id?{...item,status:'PAUSED'}:item));setDetailTask(prev=>prev?.id===task.id?{...prev,status:'PAUSED'}:prev);message.success('任务已暂停');}catch(e){message.error(e instanceof Error?e.message:String(e));throw e;}}});
+  const resume=async(task:ScanTask)=>{try{const updated=await resumeTask(task.id);setTasks(prev=>prev.map(item=>item.id===task.id?{...item,status:updated.status}:item));setDetailTask(prev=>prev?.id===task.id?{...prev,status:updated.status}:prev);message.success('任务已恢复到队列，Server 会重新校验时间窗和规则状态');}catch(e){message.error(e instanceof Error?e.message:String(e));}};
   const openTaskDetail=(task:ScanTask)=>{setDetailTask(task);setDetailLogs([]);setDetailError('');};
   const downloadTaskResult=async(format:'json'|'csv')=>{
     if(!detailTask)return;
@@ -179,7 +181,7 @@ export const TasksPage:React.FC=()=>{
         <Select value={statusFilter} onChange={setStatusFilter} style={{width:150}} options={[{value:'all',label:'所有状态'},...Object.entries(names).map(([value,label])=>({value,label}))]}/>
         <Select value={engineFilter} onChange={setEngineFilter} style={{width:180}} options={[{value:'all',label:'所有扫描方案'},...['auto','port-probe','nuclei','trivy','zap','synthetic'].map(value=>({value,label:value==='auto'?'自动综合扫描':value==='port-probe'?'旧版 TCP 端口探测':value==='synthetic'?'模拟任务':`旧版 ${value.toUpperCase()}`}))]}/>
         <Button onClick={()=>setShowArchived(value=>!value)}>{showArchived?'返回任务清册':'查看归档'}</Button>
-        <Tag>{showArchived?'归档任务':'未归档任务'} {tasks.length}</Tag><Tag color="processing">执行中 {tasks.filter(task=>task.status==='RUNNING').length}</Tag><Tag color="gold">待执行 {tasks.filter(task=>['PENDING','WAITING_WINDOW','PAUSED_WINDOW'].includes(task.status)).length}</Tag><Tag color="success">已完成 {tasks.filter(task=>task.status==='COMPLETED').length}</Tag>
+        <Tag>{showArchived?'归档任务':'未归档任务'} {tasks.length}</Tag><Tag color="processing">执行中 {tasks.filter(task=>task.status==='RUNNING').length}</Tag><Tag color="gold">待执行 {tasks.filter(task=>['PENDING','WAITING_WINDOW','PAUSED_WINDOW'].includes(task.status)).length}</Tag><Tag color="default">已暂停 {tasks.filter(task=>task.status==='PAUSED').length}</Tag><Tag color="success">已完成 {tasks.filter(task=>task.status==='COMPLETED').length}</Tag>
       </Space>
       <Table<ScanTask> dataSource={filteredTasks} rowKey="id" loading={loading} tableLayout="fixed" scroll={{x:1420}} locale={{emptyText:taskFilter||statusFilter!=='all'||engineFilter!=='all'?'没有符合筛选条件的任务':showArchived?'暂无归档任务':'暂无任务，请从右上角创建扫描任务或定时任务'}} pagination={{pageSize:10,showSizeChanger:true,pageSizeOptions:[10,20,50],showTotal:total=>`共 ${total} 个任务`}}
         expandable={{expandedRowRender:t=><Space direction="vertical"><Typography.Text>下发目标：{(()=>{const all=t.chunks?.flatMap(c=>c.targets)??[];return all.length>20?`${all.slice(0,20).join('、')} ……（共 ${all.length} 个）`:all.join('、')||'无';})()}</Typography.Text>{(t.engines?.[0]==='port-probe'||t.engines?.[0]==='auto')&&<><Typography.Text>探测配置：{presetLabels[t.portProbeConfig?.preset??'common']}；范围 {showRanges(t.portProbeConfig?.ranges)}；任务排除 {showRanges(t.portProbeConfig?.exclusions)}；合并排除 {showRanges(t.effectiveExclusions??t.portProbeConfig?.exclusions)}；隔离端口 {summarizePorts(t.quarantinedPorts)}；强度 {({gentle:'温和',standard:'标准',aggressive:'积极'})[t.portProbeConfig?.intensity??'gentle']}</Typography.Text><Typography.Text>实际探测：{t.portProbePorts?.length??0} 个 TCP 端口；发现开放候选：{t.portProbeResults?.length??0} 个{t.portProbeResults?.length?`（${t.portProbeResults.slice(0,20).map(p=>p.port).join(', ')}${t.portProbeResults.length>20?' …':''}）`:''}</Typography.Text>{t.engines[0]==='auto'&&<><Typography.Text>HTTP(S) 服务：{t.serviceResults?.filter(item=>item.kind==='HTTP').length??0} 个；自定义规则：{t.customRuleCount??0} 条</Typography.Text><Typography.Text>Linux 系统包：{t.systemScanStatus??'等待 Worker 回报'}</Typography.Text><ApplicationCoverage task={t}/><Typography.Text type="secondary">开放端口候选仅用于这次明确授权的范围，不会自动登记成长期授权端口。</Typography.Text></>}</>}{t.inputKind&&<Typography.Text>离线输入：{t.inputKind==='rootfs'?'Linux 系统包':t.inputKind==='image-archive'?'Docker / OCI 镜像':t.inputKind==='artifact'?'已部署 JAR / Go 文件':'应用依赖清单'} · {t.inputPath}</Typography.Text>}<Typography.Text>跳过目标：{t.skippedTargets?.join('、')||'无'}</Typography.Text><Typography.Text>规则版本：{t.ruleVersion||'无需外部规则包'}</Typography.Text>{t.error&&<Alert type="error" message={t.error}/>}</Space>}}
@@ -190,7 +192,7 @@ export const TasksPage:React.FC=()=>{
           {title:'进度',width:220,render:(_,t)=>renderProgress(t)},
           {title:'状态',dataIndex:'status',width:150,render:(s:string,t)=><Space wrap><Tag color={s==='COMPLETED'?'success':s==='RUNNING'?'processing':'default'}>{names[s]??s}</Tag>{t.archived&&<Tag>已归档</Tag>}</Space>},
           {title:'本地截止时间',dataIndex:'hardDeadline',width:190,render:(v:string)=>v?new Date(v).toLocaleString():'—'},
-          {title:'操作',width:390,render:(_,t)=>{const terminal=['COMPLETED','CANCELED','FAILED'].includes(t.status);return <Space wrap><Button size="small" onClick={()=>openTaskDetail(t)}>详情</Button>{!terminal&&<Button size="small" danger disabled={!canWrite} onClick={()=>void stop(t.id)}>取消</Button>}{terminal&&<Button size="small" disabled={!canWrite} onClick={()=>void setArchived(t.id,!t.archived)}>{t.archived?'恢复':'归档'}</Button>}{terminal&&<Button size="small" disabled={!canWrite} onClick={()=>copyTask(t)}>按此配置新建</Button>}{terminal&&canDelete&&t.findingCount===0&&<Button size="small" danger onClick={()=>removeTask(t)}>彻底删除</Button>}{terminal&&canDelete&&t.findingCount>0&&<Tag>有关联发现，仅可归档</Tag>}</Space>}},
+          {title:'操作',width:470,render:(_,t)=>{const terminal=['COMPLETED','CANCELED','FAILED'].includes(t.status);return <Space wrap><Button size="small" onClick={()=>openTaskDetail(t)}>详情</Button>{!terminal&&t.status!=='PAUSED'&&<Button size="small" disabled={!canWrite} onClick={()=>void pause(t)}>暂停</Button>}{t.status==='PAUSED'&&<Button size="small" type="primary" disabled={!canWrite} onClick={()=>void resume(t)}>恢复</Button>}{!terminal&&<Button size="small" danger disabled={!canWrite} onClick={()=>void stop(t.id)}>取消</Button>}{terminal&&<Button size="small" disabled={!canWrite} onClick={()=>void setArchived(t.id,!t.archived)}>{t.archived?'恢复':'归档'}</Button>}{terminal&&<Button size="small" disabled={!canWrite} onClick={()=>copyTask(t)}>按此配置新建</Button>}{terminal&&canDelete&&t.findingCount===0&&<Button size="small" danger onClick={()=>removeTask(t)}>彻底删除</Button>}{terminal&&canDelete&&t.findingCount>0&&<Tag>有关联发现，仅可归档</Tag>}</Space>}},
         ]}/>
     </Card>
     <Drawer title={detailTask?`任务详情：${detailTask.id}`:'任务详情'} open={Boolean(detailTask)} width={760} onClose={()=>setDetailTask(null)} destroyOnClose>
@@ -230,6 +232,9 @@ export const TasksPage:React.FC=()=>{
           ]}/>}
         </Card>
         <Space wrap>
+          {!['COMPLETED','CANCELED','FAILED'].includes(detailTask.status)&&detailTask.status!=='PAUSED'&&<Button disabled={!canWrite||isDemoMode} onClick={()=>void pause(detailTask)}>暂停任务</Button>}
+          {detailTask.status==='PAUSED'&&<Button type="primary" disabled={!canWrite||isDemoMode} onClick={()=>void resume(detailTask)}>恢复任务</Button>}
+          {!['COMPLETED','CANCELED','FAILED'].includes(detailTask.status)&&<Button danger disabled={!canWrite||isDemoMode} onClick={()=>void stop(detailTask.id)}>取消任务</Button>}
           <Button icon={<DownloadOutlined/>} loading={detailExporting==='json'} onClick={()=>void downloadTaskResult('json')}>导出 JSON 结果</Button>
           <Button icon={<DownloadOutlined/>} loading={detailExporting==='csv'} onClick={()=>void downloadTaskResult('csv')}>导出 CSV 结果</Button>
           <Typography.Text type="secondary">导出包含稳定的任务与发现字段，不包含证据、凭据和原始引擎输出。</Typography.Text>

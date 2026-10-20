@@ -95,6 +95,7 @@ export type TaskStatus =
   | 'PENDING'
   | 'WAITING_WINDOW'
   | 'RUNNING'
+  | 'PAUSED'
   | 'PAUSED_WINDOW'
   | 'COMPLETED'
   | 'FAILED'

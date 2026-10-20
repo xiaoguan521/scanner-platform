@@ -149,7 +149,7 @@ func (s *RuntimeStore) CreateFindingRetest(ctx context.Context, findingID, actor
 	}
 	var existingID, existingStatus string
 	err = tx.QueryRowContext(ctx, `SELECT fr.id,st.status FROM finding_retests fr JOIN scan_tasks st ON st.id=fr.task_id
-		WHERE fr.finding_id=? AND st.status IN ('PENDING','WAITING_WINDOW','RUNNING','PAUSED_WINDOW') LIMIT 1`, findingID).Scan(&existingID, &existingStatus)
+		WHERE fr.finding_id=? AND st.status IN ('PENDING','WAITING_WINDOW','RUNNING','PAUSED_WINDOW','PAUSED') LIMIT 1`, findingID).Scan(&existingID, &existingStatus)
 	if err == nil {
 		return taskflow.Task{}, FindingRetest{}, fmt.Errorf("%w: an active retest already exists", ErrTaskConflict)
 	}

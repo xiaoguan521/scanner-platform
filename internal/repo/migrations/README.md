@@ -11,6 +11,7 @@ These files implement the schema in [architecture-v3.2.md §7](../../../docs/arc
 | `postgres/0003_rules_sbom.sql` | rule_bundles, artifact_sboms | 2 |
 | `postgres/0004_report_inventory.sql` | asset_profiles, asset_services, asset_login_entries, asset_reachability, product_settings, vulnerability_knowledge, task_finding_observations, report_templates, report_snapshots, report_jobs | 10 |
 | `postgres/0005_task_archive.sql` | `scan_tasks.archived_at` plus task archive listing index | 0 new tables |
+| `postgres/0006_task_pause.sql` | `scan_tasks.status` manual `PAUSED` state constraint | 0 new tables |
 
 There are **27 business tables** plus the internal `schema_migrations` journal. All SQL scripts use a transaction, include constraints/indexes and record their version. No users, tokens, rules, targets or example data are seeded.
 
@@ -27,7 +28,7 @@ export PGUSER=scanner_migrator
 bash scripts/init-postgres.sh
 ```
 
-The runner refuses a non-empty public schema with no migration journal, applies versions in order, skips already-recorded versions and aborts on the first SQL error. It does **not** create the PostgreSQL database itself. To run manually, apply migrations `0001_core.sql` through `0005_task_archive.sql` in order. Run one migrator at a time. Never edit an applied migration: add a higher-numbered file. After applying, use the read-only inventory script `bash scripts/check-postgres-schema.sh` to check all 28 tables, the five recorded migrations, and the task archive column. PostgreSQL execution has not been performed in this change.
+The runner refuses a non-empty public schema with no migration journal, applies versions in order, skips already-recorded versions and aborts on the first SQL error. It does **not** create the PostgreSQL database itself. To run manually, apply migrations `0001_core.sql` through `0006_task_pause.sql` in order. Run one migrator at a time. Never edit an applied migration: add a higher-numbered file. After applying, use the read-only inventory script `bash scripts/check-postgres-schema.sh` to check all 28 tables, the six recorded migrations, and the task archive column. PostgreSQL execution has not been performed in this change.
 
 ## Important schema differences and boundaries
 
