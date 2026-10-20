@@ -1434,6 +1434,83 @@ paths:
                     type: integer
         '409':
           description: Finding missing
+  "/api/v1/findings/{id}/retest":
+    post:
+      summary: Create one bounded retest task for a finding
+      description: Admin or security_engineer only. The Server reuses the completed parent task's frozen input, narrows standalone scans to the finding target, revalidates the registered asset and current exclusions, and records an auditable finding-to-task relation. Synthetic and FALSE_POSITIVE findings are rejected; only one active retest may exist per finding.
+      security:
+      - sessionCookie: []
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema:
+          type: string
+          enum: [XMLHttpRequest]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+      responses:
+        '201':
+          description: Retest task and relation created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [task, retest]
+                properties:
+                  task:
+                    "$ref": "#/components/schemas/ScanTask"
+                  retest:
+                    "$ref": "#/components/schemas/FindingRetest"
+        '400':
+          description: Finding is synthetic, unsupported, out of frozen scope, or input is invalid
+        '401':
+          description: Authentication required
+        '403':
+          description: Forbidden or mutation guard missing
+        '409':
+          description: Finding or parent task is missing, or an active retest already exists
+  "/api/v1/findings/{id}/retests":
+    get:
+      summary: List retest tasks for a finding
+      description: Authenticated read access. Status is read from the linked scan task.
+      security:
+      - sessionCookie: []
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Retest history
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, total]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      "$ref": "#/components/schemas/FindingRetest"
+                  total:
+                    type: integer
+        '401':
+          description: Authentication required
+        '409':
+          description: Finding missing
   "/api/v1/schedules/{id}":
     put:
       summary: Update a schedule definition
@@ -2883,6 +2960,9 @@ components:
             "$ref": "#/components/schemas/TimeWindow"
         ruleVersion:
           type: string
+        retestFindingId:
+          type: string
+          description: Finding ID that caused this bounded retest task, when present.
         scheme:
           type: string
         inputPath:
@@ -3031,6 +3111,24 @@ components:
           type: string
         reason:
           type: string
+        createdAt:
+          type: string
+          format: date-time
+    FindingRetest:
+      type: object
+      required: [id, findingId, taskId, actor, status, createdAt]
+      properties:
+        id:
+          type: string
+        findingId:
+          type: string
+        taskId:
+          type: string
+        actor:
+          type: string
+        status:
+          type: string
+          enum: [PENDING, WAITING_WINDOW, RUNNING, PAUSED_WINDOW, COMPLETED, FAILED, CANCELED]
         createdAt:
           type: string
           format: date-time

@@ -146,6 +146,7 @@ export interface ScanTask {
   applicationResults?: ApplicationResult[];
   progress?: TaskProgress;
   customRuleCount?: number;
+  retestFindingId?: string;
 }
 
 export interface ApplicationResult {
@@ -192,6 +193,7 @@ export type Confidence = 'high'|'medium'|'low';
 export interface FindingEvent { id:string; findingId:string; fromStatus:FindingStatus; toStatus:FindingStatus; actor:string; reason?:string; createdAt:string }
 export interface FindingAssignee { id:string; name:string }
 export interface FindingNote { id:string; findingId:string; actor:string; actorName:string; body:string; createdAt:string }
+export interface FindingRetest { id:string; findingId:string; taskId:string; actor:string; status:TaskStatus; createdAt:string }
 export interface Finding {
   assigneeId?:string; assigneeName?:string;
   acceptedReason?:string; acceptedUntil?:string;

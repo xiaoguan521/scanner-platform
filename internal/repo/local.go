@@ -43,6 +43,7 @@ type taskDetails struct {
 	SystemStatus        string                       `json:"systemScanStatus,omitempty"`
 	ApplicationStatus   string                       `json:"applicationScanStatus,omitempty"`
 	ApplicationResults  []taskflow.ApplicationResult `json:"applicationResults,omitempty"`
+	RetestFindingID     string                       `json:"retestFindingId,omitempty"`
 	FixedThreshold      int                          `json:"fixedThreshold"`
 	Deadline            string                       `json:"deadline"`
 	RuleVersion         string                       `json:"ruleVersion"`
@@ -368,10 +369,15 @@ func logLocal(ctx context.Context, tx *sql.Tx, actor, action, kind, id, detail s
 }
 
 func createLocalTask(ctx context.Context, tx *sql.Tx, in taskflow.TaskInput, actor, id string, now time.Time) (taskflow.Task, error) {
+	return createLocalTaskWithRetest(ctx, tx, in, actor, id, now, "")
+}
+
+func createLocalTaskWithRetest(ctx context.Context, tx *sql.Tx, in taskflow.TaskInput, actor, id string, now time.Time, retestFindingID string) (taskflow.Task, error) {
 	targets, detail, err := resolveTargets(ctx, tx, in)
 	if err != nil {
 		return taskflow.Task{}, err
 	}
+	detail.RetestFindingID = retestFindingID
 	detail.CustomRules, err = customTemplates(ctx, tx, detail.Input)
 	if err != nil {
 		return taskflow.Task{}, fmt.Errorf("load custom scan rules: %w", err)

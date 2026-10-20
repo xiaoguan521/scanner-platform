@@ -89,6 +89,7 @@ func NewRuntimeHandler(store *repo.RuntimeStore, fallback http.Handler, uiDir st
 	registerReportHandlers(mux, store, ui, actor)
 	registerLocalHandlers(mux, store, ui, admin, actor)
 	registerFindingWorkHandlers(mux, store, ui, actor, accounts...)
+	registerFindingRetestHandlers(mux, store, ui, actor)
 	registerRuleHandlers(mux, store, ui, actor)
 	mux.HandleFunc("GET /api/v1/tasks", ui(false, func(w http.ResponseWriter, r *http.Request) {
 		archived := r.URL.Query().Get("archived")

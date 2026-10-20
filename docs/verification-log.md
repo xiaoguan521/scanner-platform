@@ -288,3 +288,10 @@
 - UI 增加表格行选择、已选计数、清空、批量状态选择及含 ID/原状态的确认框。跨分页/筛选保留明确选择和状态快照；状态漂移阻止提交，服务端继续校验；接受风险统一填写原因/期限。失败保留选择，成功合并返回记录并清空，演示不保存。没有扫描调用，不改变指派/备注/指纹或任务状态。
 - 已运行 repo/API 聚焦测试，覆盖空/超限/重复/不存在 ID、未知 JSON 字段、旧状态、FIXED/误报/活动接受风险限制、审计/事件/CAS 失败回滚、并发只成功一次、角色/CSRF 和既有无账户本地语义；新增 API 本地语义 race 回归通过。`node --test web/src/pages/Findings/*.test.mjs`（5 项）、`npm --prefix web run build`、`make lint`、`make build`、Ruby YAML 解析和 `git diff --check` 通过。`go test -race ./internal/repo ./internal/api` 全包通过（repo 87.396 秒、api 31.399 秒）。
 - 批量方法不在事务外触发到期改写；自动到期仍由既有 Tick/列表/单项补查完成，保证失败批次完全无副作用。真实浏览器交互、批量指派、单项复测、到期通知和 PostgreSQL 运行时仍待完成。
+
+## 2026-10-21 — 单项漏洞复测（代码与单元测试）
+
+- `POST /api/v1/findings/{id}/retest` 只复用已完成父任务的冻结输入；独立 Nuclei/ZAP 任务缩小到当前发现项目标，自动综合扫描使用父任务已解析的精确端口集合。
+- Server 在事务中重新校验登记资产、审批/排除/隔离端口、规则包和时间窗，写入发现项—复测任务关系及不含目标数据的审计记录；活动复测重复提交返回冲突。
+- 合成发现项、误报、父任务未完成、范围外目标和不支持引擎均有失败路径测试；API 覆盖认证、CSRF、角色和严格 JSON。
+- 已运行：`go test -race ./internal/repo ./internal/api`、`make test`、`make lint`、`make build`、`node --test web/src/pages/Findings/*.test.mjs`、`npm --prefix web run build`、Ruby YAML 解析和 `git diff --check`。真实浏览器点击和真实 Worker 执行仍待隔离环境验收。

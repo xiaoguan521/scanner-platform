@@ -1,0 +1,12 @@
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import ts from 'typescript';
+const source=await readFile(new URL('./retest.ts',import.meta.url),'utf8');
+const js=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2020,module:ts.ModuleKind.ESNext}}).outputText;
+const {retestIsActive,retestStatusLabel}=await import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`);
+assert.equal(retestIsActive({status:'PENDING'}),true);
+assert.equal(retestIsActive({status:'RUNNING'}),true);
+assert.equal(retestIsActive({status:'COMPLETED'}),false);
+assert.equal(retestStatusLabel('WAITING_WINDOW'),'等待时间窗');
+assert.equal(retestStatusLabel('FAILED'),'失败');
+console.log('finding retest status checks passed');

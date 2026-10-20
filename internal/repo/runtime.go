@@ -107,6 +107,9 @@ func NewRuntime(db *sql.DB) (*RuntimeStore, error) {
 	if err := store.initFindingEvents(ctx); err != nil {
 		return nil, err
 	}
+	if err := store.initFindingRetests(ctx); err != nil {
+		return nil, err
+	}
 	if err := store.initLocal(ctx); err != nil {
 		return nil, fmt.Errorf("initialize local task features: %w", err)
 	}
@@ -221,6 +224,7 @@ func readRuntimeTask(row rowScanner) (taskflow.Task, error) {
 	task.SystemScanStatus = detail.SystemStatus
 	task.ApplicationScanStatus = detail.ApplicationStatus
 	task.ApplicationResults = detail.ApplicationResults
+	task.RetestFindingID = detail.RetestFindingID
 	task.AssetProfile = detail.AssetProfile
 	task.EffectiveExclusions = detail.EffectiveExclusions
 	for _, service := range detail.Services {

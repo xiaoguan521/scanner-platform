@@ -1,5 +1,5 @@
 import { requestJSON } from './client';
-import type { ScanTask, TaskInput, Schedule, Finding, FindingEvent, FindingAssignee, FindingNote, RuleJob, CustomRule, KnowledgeEntry } from '../types';
+import type { ScanTask, TaskInput, Schedule, Finding, FindingEvent, FindingAssignee, FindingNote, FindingRetest, RuleJob, CustomRule, KnowledgeEntry } from '../types';
 
 export const createTask = (input:TaskInput) => requestJSON<ScanTask>('/api/v1/tasks','POST',input);
 export const cancelTask = (id:string) => requestJSON('/api/v1/tasks/'+encodeURIComponent(id)+'/cancel','POST');
@@ -35,3 +35,5 @@ export const fetchFindingAssignees = (signal?:AbortSignal) => requestJSON<{items
 export const assignFinding = (id:string,assigneeId:string) => requestJSON<Finding>('/api/v1/findings/'+encodeURIComponent(id)+'/assignee','PUT',{assigneeId});
 export const fetchFindingNotes = (id:string,signal?:AbortSignal) => requestJSON<{items:FindingNote[];total:number}>('/api/v1/findings/'+encodeURIComponent(id)+'/notes','GET',undefined,signal);
 export const addFindingNote = (id:string,body:string) => requestJSON<FindingNote>('/api/v1/findings/'+encodeURIComponent(id)+'/notes','POST',{body});
+export const createFindingRetest = (id:string) => requestJSON<{task:ScanTask;retest:FindingRetest}>('/api/v1/findings/'+encodeURIComponent(id)+'/retest','POST',{});
+export const fetchFindingRetests = (id:string,signal?:AbortSignal) => requestJSON<{items:FindingRetest[];total:number}>('/api/v1/findings/'+encodeURIComponent(id)+'/retests','GET',undefined,signal);

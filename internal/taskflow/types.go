@@ -136,6 +136,7 @@ type Task struct {
 	SystemScanStatus      string              `json:"systemScanStatus,omitempty"`
 	ApplicationScanStatus string              `json:"applicationScanStatus,omitempty"`
 	ApplicationResults    []ApplicationResult `json:"applicationResults,omitempty"`
+	RetestFindingID       string              `json:"retestFindingId,omitempty"`
 	RequireInputSnapshot  bool                `json:"-"`
 	ExpectedArtifactType  string              `json:"-"`
 	Progress              *TaskProgress       `json:"progress,omitempty"`

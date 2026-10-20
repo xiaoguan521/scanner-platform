@@ -20,10 +20,10 @@ import {
 } from 'antd';
 import { SafetyCertificateOutlined } from '@ant-design/icons';
 import { mockFindings } from '../../mock/data';
-import { Finding, FindingEvent, FindingAssignee, FindingNote, FindingSeverity, FindingStatus } from '../../types';
+import { Finding, FindingEvent, FindingAssignee, FindingNote, FindingRetest, FindingSeverity, FindingStatus } from '../../types';
 import { isDemoMode } from '../../api/client';
 import { useAuth } from '../../auth/AuthProvider';
-import { batchFindingDisposition, updateFinding, fetchFindingEvents, fetchFindingAssignees, assignFinding, fetchFindingNotes, addFindingNote } from '../../api/runtime';
+import { batchFindingDisposition, updateFinding, fetchFindingEvents, fetchFindingAssignees, assignFinding, fetchFindingNotes, addFindingNote, createFindingRetest, fetchFindingRetests } from '../../api/runtime';
 import { useCollection } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
 
@@ -33,6 +33,7 @@ import { detailText, detailList, detailIdentifiers, selectedFindingForDrawer } f
 import { canAcceptRisk, acceptanceInput } from './disposition';
 import { findingNoteInput } from './work';
 import { FindingSelection, batchSelectionChanged, batchTransitionAllowed, updateBatchSelection } from './batch';
+import { retestIsActive, retestStatusLabel } from './retest';
 const { Text } = Typography;
 
 export const FindingsPage: React.FC = () => {
@@ -73,6 +74,18 @@ export const FindingsPage: React.FC = () => {
     return ()=>{controller.abort();window.clearInterval(timer)};
   },[selectedFindingId,eventRevision]);
 
+  const [retests,setRetests]=useState<FindingRetest[]>([]);
+  const [retestError,setRetestError]=useState('');
+  const [retestSaving,setRetestSaving]=useState(false);
+  const [retestRevision,setRetestRevision]=useState(0);
+  useEffect(()=>{
+    setRetests([]);setRetestError('');
+    if(!selectedFindingId||isDemoMode)return;
+    const controller=new AbortController();
+    void fetchFindingRetests(selectedFindingId,controller.signal).then(result=>{if(!controller.signal.aborted)setRetests(result.items)}).catch(()=>{if(!controller.signal.aborted)setRetestError('复测记录加载失败，请稍后重试')});
+    return()=>controller.abort();
+  },[selectedFindingId,retestRevision]);
+
   const [assignees,setAssignees]=useState<FindingAssignee[]>([]);
   const [assigneeId,setAssigneeId]=useState('');
   const [notes,setNotes]=useState<FindingNote[]>([]);
@@ -99,6 +112,21 @@ export const FindingsPage: React.FC = () => {
     if(isDemoMode){message.info('演示模式不会保存备注');return}
     try{const body=findingNoteInput(noteBody);setWorkSaving(true);await addFindingNote(id,body);setWorkRevision(n=>n+1);message.success('备注已追加并记录审计')}
     catch(e){message.error(e instanceof Error?e.message:String(e))}finally{setWorkSaving(false)}
+  };
+
+  const startRetest=async(id:string)=>{
+    if(isDemoMode){message.info('演示模式不会创建复测任务');return}
+    Modal.confirm({
+      title:'确认重新扫描该漏洞？',
+      content:'平台会复用原扫描任务的冻结目标和授权范围，并创建一条新的扫描任务。',
+      okText:'创建复测任务',cancelText:'取消',
+      onOk:async()=>{
+        setRetestSaving(true);
+        try{const result=await createFindingRetest(id);setRetests(previous=>[...previous,result.retest]);setRetestRevision(n=>n+1);message.success(`复测任务已创建：${result.task.id}`)}
+        catch(e){message.error(e instanceof Error?e.message:String(e));throw e}
+        finally{setRetestSaving(false)}
+      },
+    });
   };
 
   const [batchSelection,setBatchSelection]=useState<FindingSelection[]>([]);
@@ -488,6 +516,15 @@ export const FindingsPage: React.FC = () => {
                 <Input id="finding-note" value={noteBody} onChange={event=>setNoteBody(event.target.value)} disabled={workSaving||(!isDemoMode&&!canWrite)} />
                 <Button loading={workSaving} disabled={(!isDemoMode&&!canWrite)||!noteBody.trim()} onClick={()=>void saveNote(selectedFinding.id)}>追加备注</Button>
                 {notes.length?<Timeline items={notes.map(note=>({key:note.id,children:<Space direction="vertical" size={2}><Text type="secondary">{note.createdAt} · {note.actorName||note.actor}</Text><Text style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{note.body}</Text></Space>}))}/>:<Text type="secondary">{isDemoMode?'演示模式没有服务端备注':'暂无备注'}</Text>}
+              </Space>
+            </section>
+            <section style={{width:'100%'}}>
+              <Typography.Title level={5}>漏洞复测</Typography.Title>
+              {retestError&&<Alert type="error" message={retestError} />}
+              <Space direction="vertical" style={{width:'100%'}}>
+                <Text type="secondary">复测只复用原任务冻结的目标、端口策略和授权，不会接受新的扫描目标。</Text>
+                <Button type="primary" loading={retestSaving} disabled={isDemoMode||!canWrite||selectedFinding.synthetic===true||selectedFinding.status==='FALSE_POSITIVE'||retests.some(retestIsActive)} onClick={()=>void startRetest(selectedFinding.id)}>重新扫描该漏洞</Button>
+                {retests.length?<Timeline items={retests.map(item=>({key:item.id,children:<Space direction="vertical" size={2}><Text>{retestStatusLabel(item.status)} · 任务 {item.taskId}</Text><Text type="secondary">{item.createdAt} · {item.actor}</Text></Space>}))}/>:<Text type="secondary">{isDemoMode?'演示模式不会创建复测任务':'暂无复测记录'}</Text>}
               </Space>
             </section>
             <section style={{width:'100%'}}>

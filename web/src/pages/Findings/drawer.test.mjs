@@ -50,7 +50,7 @@ const drawer = named('Drawer')[0];
 assert.match(text(attribute(drawer, 'open')), /Boolean\(selectedFinding\)/);
 for (const key of ['keyboard', 'maskClosable', 'onClose', 'afterOpenChange']) assert.ok(attribute(drawer, key), key);
 assert.match(text(attribute(drawer, 'width')), /100vw/, 'drawer fits narrow screens');
-assert.equal(named('Timeline').length, 2, 'separate timelines use persisted state events and append-only notes');
+assert.equal(named('Timeline').length, 3, 'state events, append-only notes, and retest history use separate timelines');
 assert.match(page, /notes\.map\(note/);
 assert.match(page,/events\.map\(event/);
 assert.match(page,/event\.createdAt/);

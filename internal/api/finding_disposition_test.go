@@ -97,6 +97,13 @@ func TestFindingDispositionAPIAuthValidationAndEvents(t *testing.T) {
 		{"PATCH", "", `{"status":"ACCEPTED_RISK"}`, "admin", true, 400},
 		{"GET", "/events", "", "", false, 401},
 		{"GET", "/events", "", "viewer", false, 200},
+		{"POST", "/retest", `{}`, "", true, 401},
+		{"POST", "/retest", `{}`, "viewer", true, 403},
+		{"POST", "/retest", `{}`, "admin", false, 403},
+		{"POST", "/retest", `{"extra":true}`, "admin", true, 400},
+		{"POST", "/retest", `{}`, "admin", true, 400},
+		{"GET", "/retests", "", "", false, 401},
+		{"GET", "/retests", "", "viewer", false, 200},
 	} {
 		res := send(tc.method, path+tc.suffix, tc.body, cookies[tc.role], tc.guard)
 		if res.Code != tc.want {
