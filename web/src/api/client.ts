@@ -85,9 +85,9 @@ export async function requestJSON<T>(path: string, method = 'GET', body?: unknow
   }
   return response.json() as Promise<T>;
 }
-async function requestBlob(path: string, signal?: AbortSignal): Promise<Blob> {
+export async function requestBlob(path: string, signal?: AbortSignal, accept = 'text/csv'): Promise<Blob> {
   const response = await fetch(path, {
-    headers: { Accept: 'text/csv' },
+    headers: { Accept: accept },
     credentials: 'same-origin',
     signal,
     cache: 'no-store',

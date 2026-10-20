@@ -37,6 +37,7 @@ const NoRuleLeaseVersion = "__no_rules__"
 type RuntimeRepository interface {
 	CreateSyntheticTask(context.Context) (taskflow.Task, error)
 	ListRuntimeTasks(context.Context) ([]taskflow.Task, error)
+	GetRuntimeTask(context.Context, string) (taskflow.Task, error)
 	ClaimRuntimeTask(context.Context, string) (*taskflow.Task, error)
 	UpdateRuntimeTaskProgress(context.Context, string, taskflow.ProgressUpdate) error
 	CompleteRuntimeTask(context.Context, taskflow.Report) error
@@ -290,6 +291,35 @@ func (s *RuntimeStore) ListRuntimeTasks(ctx context.Context) ([]taskflow.Task, e
 		}
 	}
 	return items, nil
+}
+
+// GetRuntimeTask returns the same safe task projection as the task list, but
+// for one task. It also attaches the current finding count and advisory
+// Worker progress so a detail view never has to trust stale list data.
+func (s *RuntimeStore) GetRuntimeTask(ctx context.Context, id string) (taskflow.Task, error) {
+	if strings.TrimSpace(id) == "" || len(id) > 128 {
+		return taskflow.Task{}, ErrTaskNotFound
+	}
+	task, err := readRuntimeTask(s.db.QueryRowContext(ctx, `SELECT `+taskColumns+` FROM scan_tasks WHERE id=?`, id))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return taskflow.Task{}, ErrTaskNotFound
+		}
+		return taskflow.Task{}, fmt.Errorf("read task detail: %w", err)
+	}
+	counts, err := s.runtimeTaskFindingCounts(ctx)
+	if err != nil {
+		return taskflow.Task{}, err
+	}
+	task.FindingCount = counts[id]
+	progress, err := s.runtimeTaskProgress(ctx)
+	if err != nil {
+		return taskflow.Task{}, err
+	}
+	if current, ok := progress[id]; ok {
+		task.Progress = &current
+	}
+	return task, nil
 }
 
 // ListRuntimeAssets exposes the server-owned asset projection to API

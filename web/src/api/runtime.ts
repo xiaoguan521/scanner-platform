@@ -1,11 +1,14 @@
-import { requestJSON } from './client';
-import type { ScanTask, TaskInput, Schedule, ScheduleRun, Finding, FindingEvent, FindingAssignee, FindingNote, FindingRetest, RuleJob, CustomRule, KnowledgeEntry } from '../types';
+import { requestBlob, requestJSON } from './client';
+import type { ScanTask, TaskInput, Schedule, ScheduleRun, Finding, FindingEvent, FindingAssignee, FindingNote, FindingRetest, RuleJob, CustomRule, KnowledgeEntry, TaskLog } from '../types';
 
 export const createTask = (input:TaskInput) => requestJSON<ScanTask>('/api/v1/tasks','POST',input);
 export const cancelTask = (id:string) => requestJSON('/api/v1/tasks/'+encodeURIComponent(id)+'/cancel','POST');
 export const archiveTask = (id:string) => requestJSON('/api/v1/tasks/'+encodeURIComponent(id)+'/archive','POST');
 export const restoreTask = (id:string) => requestJSON('/api/v1/tasks/'+encodeURIComponent(id)+'/restore','POST');
 export const deleteTask = (id:string) => requestJSON<{status:string}>('/api/v1/tasks/'+encodeURIComponent(id),'DELETE');
+export const fetchTask = (id:string, signal?:AbortSignal) => requestJSON<ScanTask>('/api/v1/tasks/'+encodeURIComponent(id),'GET',undefined,signal);
+export const fetchTaskLogs = (id:string, signal?:AbortSignal) => requestJSON<{items:TaskLog[];total:number}>('/api/v1/tasks/'+encodeURIComponent(id)+'/logs','GET',undefined,signal);
+export const exportTask = (id:string, format:'json'|'csv', signal?:AbortSignal) => requestBlob('/api/v1/tasks/'+encodeURIComponent(id)+'/export?format='+format, signal, format==='csv'?'text/csv':'application/json');
 export const saveSchedule = (input: Omit<Schedule,'id'|'enabled'|'lastTaskId'|'lastError'|'createdBy'>) => requestJSON<Schedule>('/api/v1/schedules','POST',input);
 export const updateSchedule = (id:string,input: Omit<Schedule,'id'|'enabled'|'lastTaskId'|'lastError'|'createdBy'>) => requestJSON<Schedule>('/api/v1/schedules/'+encodeURIComponent(id),'PUT',input);
 export const deleteSchedule = (id:string) => requestJSON<{status:string}>('/api/v1/schedules/'+encodeURIComponent(id),'DELETE');

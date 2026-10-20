@@ -1,13 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Card, Checkbox, Descriptions, Form, Input, InputNumber, message, Modal, Progress, Select, Space, Spin, Steps, Table, Tag, Typography } from 'antd';
-import { PlusOutlined } from '@ant-design/icons';
+import { Alert, Button, Card, Checkbox, Descriptions, Drawer, Form, Input, InputNumber, message, Modal, Progress, Select, Space, Spin, Steps, Table, Tag, Typography } from 'antd';
+import { DownloadOutlined, PlusOutlined } from '@ant-design/icons';
 import { useCollection } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
 import { apiClient, isDemoMode } from '../../api/client';
-import { archiveTask, cancelTask, createTask, deleteSchedule, deleteTask, fetchScheduleRuns, restoreTask, saveSchedule, toggleSchedule, updateSchedule } from '../../api/runtime';
+import { archiveTask, cancelTask, createTask, deleteSchedule, deleteTask, exportTask, fetchScheduleRuns, fetchTask, fetchTaskLogs, restoreTask, saveSchedule, toggleSchedule, updateSchedule } from '../../api/runtime';
 import { useAuth } from '../../auth/AuthProvider';
 import { mockAssets, mockTasks } from '../../mock/data';
-import type { CustomRule, PortProbeRange, ScanTask, Schedule, ScheduleRun, TaskInput, ScanPolicy } from '../../types';
+import type { CustomRule, PortProbeRange, ScanTask, Schedule, ScheduleRun, TaskInput, ScanPolicy, TaskLog } from '../../types';
 
 import { parsePortRanges, showRanges, coversAllPorts, presetLabels, summarizePorts, compressPorts, previewProbePorts } from './policy';
 import { assertTaskSubmission, getScanPlanDefaults, isAutoTaskWizard, wizardStepFields } from './wizard';
@@ -42,6 +42,7 @@ export const TasksPage:React.FC=()=>{
   const [wizardStep,setWizardStep]=useState(0);
   const [editingSchedule,setEditingSchedule]=useState<Schedule|null>(null);
   const [historySchedule,setHistorySchedule]=useState<Schedule|null>(null);const [scheduleRunPage,setScheduleRunPage]=useState(1);const [scheduleRuns,setScheduleRuns]=useState<ScheduleRun[]>([]);const [scheduleRunTotal,setScheduleRunTotal]=useState(0);const [scheduleRunLoading,setScheduleRunLoading]=useState(false);const [scheduleRunError,setScheduleRunError]=useState('');
+  const [detailTask,setDetailTask]=useState<ScanTask|null>(null);const [detailLogs,setDetailLogs]=useState<TaskLog[]>([]);const [detailLoading,setDetailLoading]=useState(false);const [detailError,setDetailError]=useState('');const [detailExporting,setDetailExporting]=useState<'json'|'csv'|null>(null);
   const [taskFilter,setTaskFilter]=useState('');const [statusFilter,setStatusFilter]=useState('all');const [engineFilter,setEngineFilter]=useState('all');
   const engine=Form.useWatch('engine',form)??'auto';const mode=Form.useWatch('mode',form);const useWindow=Form.useWatch('window',form);const portPreset=Form.useWatch('portPreset',form)??'common';const selectedPlan=Form.useWatch('scanPlan',form)??'quick';
   const wizard=isAutoTaskWizard({engine,mode},Boolean(editingSchedule));
@@ -83,6 +84,15 @@ export const TasksPage:React.FC=()=>{
     fetchScheduleRuns(historySchedule.id,scheduleRunPage,controller.signal).then(response=>{if(!controller.signal.aborted){setScheduleRuns(response.items);setScheduleRunTotal(response.total);}}).catch(cause=>{if(!controller.signal.aborted)setScheduleRunError(cause instanceof Error?cause.message:'历史运行记录加载失败');}).finally(()=>{if(!controller.signal.aborted)setScheduleRunLoading(false);});
     return()=>controller.abort();
   },[historySchedule,scheduleRunPage]);
+  useEffect(()=>{
+    if(!detailTask||isDemoMode)return;
+    const controller=new AbortController();
+    setDetailLoading(true);setDetailError('');
+    Promise.all([fetchTask(detailTask.id,controller.signal),fetchTaskLogs(detailTask.id,controller.signal)]).then(([task,logs])=>{
+      if(!controller.signal.aborted){setDetailTask(task);setDetailLogs(logs.items);}
+    }).catch(cause=>{if(!controller.signal.aborted)setDetailError(cause instanceof Error?cause.message:'任务详情加载失败');}).finally(()=>{if(!controller.signal.aborted)setDetailLoading(false);});
+    return()=>controller.abort();
+  },[detailTask?.id]);
   const confirmFull=()=>new Promise<boolean>(resolve=>Modal.confirm({title:'确认全端口探测',content:'将对这台主机的 TCP 1–65535 端口发起连接（排除项会跳过）。按每次连接超时 1 秒、并发 16 粗略估算约 69 分钟；实际时间取决于速率、超时和响应，服务识别与漏洞检测会额外耗时。可能增加目标连接数及日志量，请确认维护窗口和授权范围。',okText:'确认全端口范围',cancelText:'返回修改',onOk:()=>resolve(true),onCancel:()=>resolve(false)}));
   const choosePlan=(plan:'quick'|'standard')=>{form.setFieldsValue({scanPlan:plan,...getScanPlanDefaults(plan)});};
   const create=async(values:Values)=>{
@@ -113,6 +123,16 @@ export const TasksPage:React.FC=()=>{
     }catch(e){message.error(e instanceof Error?e.message:'创建失败');}finally{setBusy(false);}
   };
   const stop=async(id:string)=>{try{await cancelTask(id);setTasks(prev=>prev.map(t=>t.id===id?{...t,status:'CANCELED'}:t));message.success('任务已取消，不会写入成功结果');}catch(e){message.error(String(e));}};
+  const openTaskDetail=(task:ScanTask)=>{setDetailTask(task);setDetailLogs([]);setDetailError('');};
+  const downloadTaskResult=async(format:'json'|'csv')=>{
+    if(!detailTask)return;
+    setDetailExporting(format);
+    try{
+      const blob=await exportTask(detailTask.id,format);
+      const url=URL.createObjectURL(blob);const anchor=document.createElement('a');anchor.href=url;anchor.download=`task-result.${format}`;document.body.appendChild(anchor);anchor.click();anchor.remove();URL.revokeObjectURL(url);
+      message.success(`任务结果已导出为 ${format.toUpperCase()}`);
+    }catch(cause){message.error(cause instanceof Error?cause.message:'任务结果导出失败');}finally{setDetailExporting(null);}
+  };
   const setArchived=async(id:string,archived:boolean)=>{try{if(archived)await archiveTask(id);else await restoreTask(id);setTasks(prev=>prev.filter(task=>task.id!==id));message.success(archived?'任务已归档':'任务已恢复到清册');}catch(e){message.error(e instanceof Error?e.message:String(e));}};
   const removeTask=(task:ScanTask)=>Modal.confirm({title:'彻底删除扫描任务',content:`将永久删除任务 ${task.id}。仅允许删除已结束且没有关联发现项的任务；此操作不可撤销，已生成报告快照和审计记录会保留。`,okText:'彻底删除',okButtonProps:{danger:true},cancelText:'取消',onOk:async()=>{try{await deleteTask(task.id);setTasks(prev=>prev.filter(item=>item.id!==task.id));message.success('扫描任务已彻底删除');}catch(e){message.error(e instanceof Error?e.message:String(e));throw e;}}});
   const openCreate=(selectedMode:'now'|'schedule')=>{
@@ -170,9 +190,52 @@ export const TasksPage:React.FC=()=>{
           {title:'进度',width:220,render:(_,t)=>renderProgress(t)},
           {title:'状态',dataIndex:'status',width:150,render:(s:string,t)=><Space wrap><Tag color={s==='COMPLETED'?'success':s==='RUNNING'?'processing':'default'}>{names[s]??s}</Tag>{t.archived&&<Tag>已归档</Tag>}</Space>},
           {title:'本地截止时间',dataIndex:'hardDeadline',width:190,render:(v:string)=>v?new Date(v).toLocaleString():'—'},
-          {title:'操作',width:330,render:(_,t)=>{const terminal=['COMPLETED','CANCELED','FAILED'].includes(t.status);return <Space wrap>{!terminal&&<Button size="small" danger disabled={!canWrite} onClick={()=>void stop(t.id)}>取消</Button>}{terminal&&<Button size="small" disabled={!canWrite} onClick={()=>void setArchived(t.id,!t.archived)}>{t.archived?'恢复':'归档'}</Button>}{terminal&&<Button size="small" disabled={!canWrite} onClick={()=>copyTask(t)}>按此配置新建</Button>}{terminal&&canDelete&&t.findingCount===0&&<Button size="small" danger onClick={()=>removeTask(t)}>彻底删除</Button>}{terminal&&canDelete&&t.findingCount>0&&<Tag>有关联发现，仅可归档</Tag>}</Space>}},
+          {title:'操作',width:390,render:(_,t)=>{const terminal=['COMPLETED','CANCELED','FAILED'].includes(t.status);return <Space wrap><Button size="small" onClick={()=>openTaskDetail(t)}>详情</Button>{!terminal&&<Button size="small" danger disabled={!canWrite} onClick={()=>void stop(t.id)}>取消</Button>}{terminal&&<Button size="small" disabled={!canWrite} onClick={()=>void setArchived(t.id,!t.archived)}>{t.archived?'恢复':'归档'}</Button>}{terminal&&<Button size="small" disabled={!canWrite} onClick={()=>copyTask(t)}>按此配置新建</Button>}{terminal&&canDelete&&t.findingCount===0&&<Button size="small" danger onClick={()=>removeTask(t)}>彻底删除</Button>}{terminal&&canDelete&&t.findingCount>0&&<Tag>有关联发现，仅可归档</Tag>}</Space>}},
         ]}/>
     </Card>
+    <Drawer title={detailTask?`任务详情：${detailTask.id}`:'任务详情'} open={Boolean(detailTask)} width={760} onClose={()=>setDetailTask(null)} destroyOnClose>
+      {detailLoading&&<Spin tip="正在加载任务最新状态"/>}
+      {detailError&&<Alert type="error" showIcon message="任务详情加载失败" description={detailError} style={{marginBottom:16}}/>}
+      {detailTask&&<Space direction="vertical" size={16} style={{width:'100%'}}>
+        <Descriptions bordered size="small" column={2}>
+          <Descriptions.Item label="状态"><Tag color={detailTask.status==='COMPLETED'?'success':detailTask.status==='RUNNING'?'processing':'default'}>{names[detailTask.status]??detailTask.status}</Tag></Descriptions.Item>
+          <Descriptions.Item label="发现项">{detailTask.findingCount}</Descriptions.Item>
+          <Descriptions.Item label="目标数">{detailTask.targetCount}</Descriptions.Item>
+          <Descriptions.Item label="执行方式">{detailTask.synthetic?'模拟 Worker':detailTask.engines?.join('、')||'—'}</Descriptions.Item>
+          <Descriptions.Item label="创建时间">{new Date(detailTask.createdAt).toLocaleString()}</Descriptions.Item>
+          <Descriptions.Item label="本地截止时间">{detailTask.hardDeadline?new Date(detailTask.hardDeadline).toLocaleString():'—'}</Descriptions.Item>
+        </Descriptions>
+        <Card size="small" title="执行进度">{renderProgress(detailTask)}</Card>
+        <Card size="small" title="目标级状态">
+          <Table<ScanTask['chunks'][number]> size="small" rowKey="id" pagination={false} dataSource={detailTask.chunks??[]} columns={[
+            {title:'目标',dataIndex:'targets',render:(targets:string[])=>targets?.join('、')||'—'},
+            {title:'状态',dataIndex:'status',width:120,render:(value:string)=>names[value]??value},
+            {title:'Worker',dataIndex:'workerNodeId',render:(value:string)=>value||'尚未领取'},
+          ]}/>
+        </Card>
+        <Card size="small" title="扫描结果">
+          <Space wrap>
+            <Tag color="blue">开放端口 {detailTask.portProbeResults?.length??0}</Tag>
+            <Tag color="purple">服务 {detailTask.serviceResults?.length??0}</Tag>
+            <Tag color="red">发现项 {detailTask.findingCount}</Tag>
+            {detailTask.systemScanStatus&&<Tag>系统包：{detailTask.systemScanStatus}</Tag>}
+          </Space>
+          {detailTask.error&&<Alert type="error" showIcon message={detailTask.error} style={{marginTop:12}}/>}
+        </Card>
+        <Card size="small" title="只读任务日志" extra={<Typography.Text type="secondary">不显示原始引擎输出、凭据或请求响应</Typography.Text>}>
+          {isDemoMode?<Alert type="info" showIcon message="演示模式不读取服务端日志"/>:<Table<TaskLog> size="small" rowKey="id" loading={detailLoading} dataSource={detailLogs} pagination={{pageSize:8,hideOnSinglePage:true}} locale={{emptyText:'暂无任务日志'}} columns={[
+            {title:'时间',dataIndex:'createdAt',width:190,render:(value:string)=>new Date(value).toLocaleString()},
+            {title:'事件',dataIndex:'message'},
+            {title:'操作者',dataIndex:'actor',width:150},
+          ]}/>}
+        </Card>
+        <Space wrap>
+          <Button icon={<DownloadOutlined/>} loading={detailExporting==='json'} onClick={()=>void downloadTaskResult('json')}>导出 JSON 结果</Button>
+          <Button icon={<DownloadOutlined/>} loading={detailExporting==='csv'} onClick={()=>void downloadTaskResult('csv')}>导出 CSV 结果</Button>
+          <Typography.Text type="secondary">导出包含稳定的任务与发现字段，不包含证据、凭据和原始引擎输出。</Typography.Text>
+        </Space>
+      </Space>}
+    </Drawer>
     <Card title="定时任务" extra={<Typography.Text type="secondary">间隔 0 表示仅运行一次；错过的重复任务不会集中补跑</Typography.Text>}>
       <Table<Schedule> dataSource={schedules} rowKey="id" loading={scheduleLoading} tableLayout="fixed" scroll={{x:1050}} locale={{emptyText:'暂无定时任务。创建时填写首次运行时间；间隔 0 表示只运行一次。'}} columns={[
         {title:'名称',dataIndex:'name'},

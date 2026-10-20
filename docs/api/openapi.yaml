@@ -1164,6 +1164,28 @@ paths:
           enum:
           - XMLHttpRequest
   "/api/v1/tasks/{id}":
+    get:
+      summary: Read one authenticated task detail projection
+      description: 'Returns the current task projection with advisory progress and bounded execution metadata. It does not expose raw Worker logs or credentials.'
+      responses:
+        '200':
+          description: Task detail
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ScanTask"
+        '401':
+          description: Unauthenticated
+        '404':
+          description: Task not found
+      security:
+      - sessionCookie: []
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
     delete:
       summary: Permanently delete a terminal task that has no associated findings (admin only)
       responses:
@@ -1190,6 +1212,71 @@ paths:
           type: string
           enum:
           - XMLHttpRequest
+  "/api/v1/tasks/{id}/logs":
+    get:
+      summary: Read the safe task event log
+      description: 'Returns static event descriptions from the task audit trail. Raw audit detail, engine output, credentials and request/response content are omitted.'
+      responses:
+        '200':
+          description: Task log projection
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, total]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      "$ref": "#/components/schemas/TaskLog"
+                  total:
+                    type: integer
+                    minimum: 0
+        '401':
+          description: Unauthenticated
+        '404':
+          description: Task not found
+      security:
+      - sessionCookie: []
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+  "/api/v1/tasks/{id}/export":
+    get:
+      summary: Download a stable task result projection
+      description: 'Downloads JSON or CSV task metadata and stable finding fields. Evidence, credentials, raw requests/responses and engine output are excluded.'
+      responses:
+        '200':
+          description: Task result download
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/TaskResultExport"
+            text/csv: {}
+        '400':
+          description: Invalid format
+        '401':
+          description: Unauthenticated
+        '404':
+          description: Task not found
+      security:
+      - sessionCookie: []
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - in: query
+        name: format
+        required: false
+        schema:
+          type: string
+          enum: [json, csv]
+          default: json
   "/api/v1/findings/batch-disposition":
     post:
       summary: Atomically update explicitly selected finding statuses
@@ -3223,6 +3310,49 @@ components:
         quarantinedPorts: {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 65535}, "maxItems": 65535}
         assetProfile: {"$ref": "#/components/schemas/AssetProfile"}
         vulnerabilityPorts: {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 65535}, "maxItems": 65535}
+    TaskLog:
+      type: object
+      additionalProperties: false
+      required: [id, actor, action, message, createdAt]
+      properties:
+        id: {type: string}
+        actor: {type: string}
+        action: {type: string}
+        message: {type: string}
+        createdAt: {type: string, format: date-time}
+    TaskResultFinding:
+      type: object
+      additionalProperties: false
+      required: [id, severity, title, target, status, engine, templateOrCve]
+      properties:
+        id: {type: string}
+        severity: {type: string}
+        title: {type: string}
+        target: {type: string}
+        port: {type: integer, minimum: 0, maximum: 65535}
+        status: {type: string}
+        engine: {type: string}
+        templateOrCve: {type: string}
+        riskType: {type: string}
+        detectMethod: {type: string}
+        package: {type: string}
+        installedVersion: {type: string}
+        fixedVersion: {type: string}
+    TaskResultExport:
+      type: object
+      additionalProperties: false
+      required: [taskId, status, createdAt, targetCount, findingCount, openPortCount, findings]
+      properties:
+        taskId: {type: string}
+        status: {type: string}
+        createdAt: {type: string, format: date-time}
+        targetCount: {type: integer, minimum: 0}
+        findingCount: {type: integer, minimum: 0}
+        openPortCount: {type: integer, minimum: 0}
+        findings:
+          type: array
+          items:
+            "$ref": "#/components/schemas/TaskResultFinding"
     ApplicationScanStatus:
       type: string
       enum: [not_configured, not_started, port_out_of_scope, collecting, collection_failed, scanning, analysis_failed, completed]

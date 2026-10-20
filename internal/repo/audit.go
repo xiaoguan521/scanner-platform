@@ -17,6 +17,16 @@ type AuditLog struct {
 	CreatedAt  string `json:"createdAt"`
 }
 
+// TaskLog is a deliberately small task-history projection. It omits the
+// audit detail column because that column may contain target or business data.
+type TaskLog struct {
+	ID        string `json:"id"`
+	Actor     string `json:"actor"`
+	Action    string `json:"action"`
+	Message   string `json:"message"`
+	CreatedAt string `json:"createdAt"`
+}
+
 type AuditLogQuery struct {
 	Actor      string
 	Action     string
@@ -78,4 +88,51 @@ func (s *RuntimeStore) ListAuditLogs(ctx context.Context, query AuditLogQuery) (
 		return nil, 0, fmt.Errorf("iterate audit logs: %w", err)
 	}
 	return items, total, nil
+}
+
+// ListTaskLogs returns safe, static descriptions for audit events belonging
+// to one task. The raw audit detail is never exposed through this endpoint.
+func (s *RuntimeStore) ListTaskLogs(ctx context.Context, taskID string) ([]TaskLog, error) {
+	if _, err := s.GetRuntimeTask(ctx, taskID); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id,actor,action,created_at
+		FROM audit_logs WHERE object_type='task' AND object_id=?
+		ORDER BY created_at ASC,id ASC LIMIT 100`, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("list task logs: %w", err)
+	}
+	defer rows.Close()
+	items := make([]TaskLog, 0, 16)
+	for rows.Next() {
+		var item TaskLog
+		if err := rows.Scan(&item.ID, &item.Actor, &item.Action, &item.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan task log: %w", err)
+		}
+		item.Message = taskLogMessage(item.Action)
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate task logs: %w", err)
+	}
+	return items, nil
+}
+
+func taskLogMessage(action string) string {
+	switch action {
+	case "create_task":
+		return "任务已创建"
+	case "cancel_task":
+		return "任务已取消"
+	case "archive_task":
+		return "任务已归档"
+	case "restore_task":
+		return "任务已从归档恢复"
+	case "report_engine_task":
+		return "Worker 已回报执行结果"
+	case "retest_finding":
+		return "已创建漏洞复测任务"
+	default:
+		return "任务记录已更新"
+	}
 }

@@ -162,6 +162,13 @@ export interface TaskProgress {
   total: number;
   updatedAt: string;
 }
+export interface TaskLog {
+  id: string;
+  actor: string;
+  action: string;
+  message: string;
+  createdAt: string;
+}
 
 export interface PortProbeRange { start: number; end: number }
 export interface PortProbeConfig {
