@@ -318,3 +318,10 @@
 - 定时计划触发现在写入独立 `schedule_runs` 表；成功触发关联生成的任务，任务状态查询时实时映射，非法触发写入失败记录并停用该单次计划。删除计划不删除历史，任务被删除后历史状态显示为 `DELETED`。
 - 新增 `GET /api/v1/schedules/{id}/runs`，限制 1–200 条分页，仅返回触发时间、状态、任务 ID 和安全错误摘要；任务中心增加“历史运行”只读弹窗，未返回目标、输入路径或引擎输出。
 - 仓储/API 测试覆盖成功、失败、分页、状态映射和删除计划后保留历史；`go test -race -count=1 ./...`、18 项 Python 测试、`make lint`、`make build`、前端生产构建、OpenAPI/Workflow YAML 检查和 `git diff --check` 均已通过。PostgreSQL 运行时和真实浏览器交互仍待验收。
+
+## 2026-10-21：资产清册 CSV 导出
+
+- 新增 `GET /api/v1/assets/export` 和资产页“导出 CSV”。导出复用当前地址、名称、业务组、负责人搜索条件；未传筛选时导出完整清册。
+- CSV 只包含资产登记稳定字段（标识、类型、地址、名称、核心标记、业务归属、申请/排除/隔离端口、可达性状态和登记时间），不包含服务详情、登录入口、请求/响应证据或引擎输出。以 `=`, `+`, `-`, `@` 开头的单元格会加前缀，避免表格软件执行公式。
+- 新增 API race 测试覆盖未登录拒绝、筛选隔离、重复/超长筛选拒绝、CSV 表头、公式前缀和敏感明细不导出；前端使用同源下载并在演示模式禁用服务端导出按钮。导出不会触发 Ping、端口探测、扫描器或外部网络。
+- 待运行门禁：`go test -race ./internal/api`、`npm --prefix web run build`、`make test`、`make lint`、`make build`、OpenAPI/Workflow YAML 检查及 `git diff --check`。真实浏览器下载、PostgreSQL 运行时和大数据量分页性能仍待验收。

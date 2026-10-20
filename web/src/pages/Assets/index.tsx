@@ -2,7 +2,7 @@ import { AssetImport } from './AssetImport';
 import React, { useMemo, useState } from 'react';
 import { Alert, Button, Card, Form, Input, message, Modal, Select, Space, Table, Tag, Typography, Drawer, Descriptions, Checkbox, Row, Col } from 'antd';
 import type { FormInstance } from 'antd';
-import { PlusOutlined } from '@ant-design/icons';
+import { DownloadOutlined, PlusOutlined } from '@ant-design/icons';
 import { mockAssets, mockPortQuarantines, mockTasks } from '../../mock/data';
 import type { Asset, AssetProfile, ScanTask } from '../../types';
 import { apiClient, isDemoMode } from '../../api/client';
@@ -45,6 +45,7 @@ export const AssetsPage: React.FC = () => {
   const [requestingCandidates,setRequestingCandidates] = useState(false);
   const [checkingAsset,setCheckingAsset] = useState('');
   const [filter,setFilter] = useState('');
+  const [exporting,setExporting] = useState(false);
   const [createForm] = Form.useForm<AssetForm>();
   const [editForm] = Form.useForm<AssetForm>();
   const createKind = Form.useWatch('kind',createForm) ?? 'host';
@@ -111,6 +112,23 @@ export const AssetsPage: React.FC = () => {
     });
   },[candidateAsset,latestProbes]);
   const filteredCandidateRows = useMemo(()=>candidateRows.filter(row=>!candidateFilter||String(row.port).includes(candidateFilter.trim())),[candidateRows,candidateFilter]);
+  const exportAssets = async() => {
+    if(isDemoMode){message.info('演示模式没有服务端资产导出，请切换到 Server 模式');return;}
+    setExporting(true);
+    try {
+      const blob=await apiClient.exportAssets(filter);
+      const url=URL.createObjectURL(blob);
+      const link=document.createElement('a');
+      link.href=url;
+      link.download=`assets-${new Date().toISOString().slice(0,10)}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(()=>URL.revokeObjectURL(url),0);
+      message.success(filter.trim()?'已导出当前筛选资产':'已导出资产清单');
+    } catch(cause) {message.error(cause instanceof Error?cause.message:'资产导出失败');}
+    finally {setExporting(false);}
+  };
 
   const create = async (input: AssetForm) => {
     setSaving(true);
@@ -190,6 +208,7 @@ export const AssetsPage: React.FC = () => {
     </Card>}
     <Card title="资产登记台账" extra={<Space>
       <Input.Search placeholder="搜索地址、组或负责人" allowClear value={filter} onChange={e=>setFilter(e.target.value)} style={{width:220}}/>
+      <Button icon={<DownloadOutlined/>} loading={exporting} disabled={isDemoMode} onClick={()=>void exportAssets()}>导出 CSV</Button>
       <AssetImport disabled={!canEdit||isDemoMode} onImported={async()=>{const result=await apiClient.collection('assets');setAssets(result.items);}}/>
       <Button type="primary" icon={<PlusOutlined/>} disabled={!canEdit} onClick={()=>setCreateOpen(true)}>登记资产</Button>
     </Space>}>

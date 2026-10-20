@@ -288,6 +288,30 @@ paths:
           type: string
           enum:
           - XMLHttpRequest
+  "/api/v1/assets/export":
+    get:
+      tags:
+      - assets
+      summary: Export the authenticated asset registry as CSV
+      description: 'Returns a UTF-8 CSV of stable asset-register fields. An optional q filter uses the same address, name, business-group and owner search as the Assets page. Service details, login entries, request/response evidence and engine output are never included. Spreadsheet formula markers are prefixed before export.'
+      security:
+      - sessionCookie: []
+      parameters:
+      - in: query
+        name: q
+        required: false
+        schema:
+          type: string
+          maxLength: 160
+        description: Current asset-list search text; repeated or NUL-containing values are rejected.
+      responses:
+        '200':
+          description: UTF-8 CSV asset register
+          content:
+            text/csv:
+              schema: {type: string, format: binary}
+        '400': {description: Invalid or repeated search filter}
+        '401': {description: Unauthenticated}
   "/api/v1/assets/reachability-test":
     post:
       tags:

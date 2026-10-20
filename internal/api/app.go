@@ -127,6 +127,7 @@ func NewDevelopmentHandler(s account.Repository, assetStore assets.Repository, a
 	mux := http.NewServeMux()
 	limiter := &loginLimiter{}
 	registerAssetImportHandlers(mux, s, assetStore)
+	registerAssetExportHandler(mux, s, assetStore)
 	scaffold := NewScaffoldHandler("sec-server")
 	mux.Handle("/", scaffold)
 	mux.HandleFunc("GET /api/v1/auth/setup", func(w http.ResponseWriter, r *http.Request) {
