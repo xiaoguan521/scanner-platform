@@ -1303,7 +1303,7 @@ paths:
           - XMLHttpRequest
   "/api/v1/rules/fetch":
     post:
-      summary: Queue HTTPS ZIP download/import; no URL credentials, queries or redirects
+      summary: Queue HTTPS ZIP download/import (signed packages up to 2 GiB); no URL credentials, queries or redirects
       responses:
         '202':
           description: Local operation result

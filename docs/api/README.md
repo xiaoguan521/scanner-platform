@@ -18,7 +18,7 @@ UI 使用 HttpOnly 的 `scanner_session` Cookie，所有写请求携带 `X-Reque
 - `POST /port-quarantines/release`:管理员填写复核原因后解除隔离并审计。
 - `/schedules`：首次运行时间、分钟间隔（0=单次）、显式目标、时间窗；`PUT /schedules/{id}` 修改，`PATCH` 启停，`DELETE` 删除后续调度，返回最近任务及错误。
 - `/nodes`：真实本机心跳，10 秒未上报显示离线，并回报固定版本、安装与就绪状态 `engines`。`/nodes/heartbeat`、`/worker/*`、`/updater/*` 仅为绑定回环地址的本机进程协议，不是生产部署接口。
-- `/rules`、`/rule-jobs`：Updater 回报的版本与操作状态。`/rules/import` 上传 ZIP；`/rules/fetch` 提交 HTTPS ZIP URL 和包哈希；`/rules/{version}/activate` 激活或通过 `rollback: true` 显式回滚。
+- `/rules`、`/rule-jobs`：Updater 回报的版本与操作状态。`/rules/import` 上传不超过 256 MiB 的 ZIP；`/rules/fetch` 提交 HTTPS ZIP URL 和包哈希，大签名包由 Updater 流式下载（最多 2 GiB）；`/rules/{version}/activate` 激活或通过 `rollback: true` 显式回滚。人工下载的大签名 ZIP 使用 Updater 的 `--import-bundle-file`，不经过 Server SQLite BLOB。
 
 `/worker/report` 支持真实任务 COMPLETED/FAILED、最多 2000 条归一化发现项，32 MiB 请求上限；拒绝其他 Worker、其他引擎或范围外目标的结果。重复提交不重复入库，稳定指纹跨任务去重，镜像使用不可变 ImageID。原始响应不在 UI API 中传递。
 

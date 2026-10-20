@@ -27,7 +27,16 @@ import (
 	"scanner-platform/internal/versionmgr"
 )
 
+// MaxArchive is the limit for the Server multipart path. That path stores the
+// payload in the local job database, so it intentionally remains small.
 const MaxArchive = 256 << 20
+
+// MaxSignedArchive is the limit for signed packages handled directly by the
+// Updater. These packages are streamed through a private temporary file and
+// never pass through the Server job BLOB or JSON API. Keep this separate from
+// MaxArchive so raising the offline package limit cannot accidentally make the
+// web upload path retain multi-gigabyte payloads in memory.
+const MaxSignedArchive = 2 << 30
 const MaxRuleFile = 4 << 30
 const MaxExpanded = 8 << 30
 
@@ -173,12 +182,97 @@ func (m *Manager) Import(ctx context.Context, data []byte) (Bundle, error) {
 	if len(data) == 0 || len(data) > MaxArchive {
 		return Bundle{}, fmt.Errorf("ZIP 大小须在 1 字节至 256 MiB 之间")
 	}
-	if err := m.initialize(); err != nil {
-		return Bundle{}, err
-	}
 	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		return Bundle{}, fmt.Errorf("无效的 ZIP 规则包")
+	}
+	return m.importArchive(ctx, zr)
+}
+
+// ImportFile imports a signed ZIP directly from a local regular file. It is
+// the offline path for the large vulnerability-data artifact; the file is
+// never read into a []byte or placed in the Server's SQLite job table.
+func (m *Manager) ImportFile(ctx context.Context, archivePath string) (Bundle, error) {
+	if err := ctx.Err(); err != nil {
+		return Bundle{}, err
+	}
+	if err := m.requireTrust(); err != nil {
+		return Bundle{}, err
+	}
+	info, err := os.Lstat(archivePath)
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return Bundle{}, fmt.Errorf("签名 ZIP 必须是普通非符号链接文件")
+	}
+	if info.Size() <= 0 || info.Size() > MaxSignedArchive {
+		return Bundle{}, fmt.Errorf("签名 ZIP 大小须在 1 字节至 2 GiB 之间")
+	}
+	input, err := os.Open(archivePath)
+	if err != nil {
+		return Bundle{}, err
+	}
+	defer input.Close()
+	opened, err := input.Stat()
+	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(info, opened) || opened.Size() != info.Size() {
+		return Bundle{}, fmt.Errorf("签名 ZIP 在打开时发生变化")
+	}
+	zr, err := zip.NewReader(input, info.Size())
+	if err != nil {
+		return Bundle{}, fmt.Errorf("无效的 ZIP 规则包")
+	}
+	return m.importArchive(ctx, zr)
+}
+
+func (m *Manager) importArchive(ctx context.Context, zr *zip.Reader) (Bundle, error) {
+	prefix := ""
+	if !hasArchiveEntry(zr, manifestName) {
+		var err error
+		prefix, err = findArtifactReleasePrefix(zr)
+		if err != nil {
+			return Bundle{}, err
+		}
+	}
+	return m.importArchivePrefix(ctx, zr, prefix)
+}
+
+func hasArchiveEntry(zr *zip.Reader, name string) bool {
+	for _, f := range zr.File {
+		if f.Name == name && !f.FileInfo().IsDir() {
+			return true
+		}
+	}
+	return false
+}
+
+// findArtifactReleasePrefix recognizes the directory-tree ZIP emitted by the
+// offline GitHub Actions workflow. Only one version directory may be present;
+// the outer CURRENT, README and SHA256SUMS files are not rule payloads.
+func findArtifactReleasePrefix(zr *zip.Reader) (string, error) {
+	const root = "vuln-data/releases/"
+	prefixes := map[string]bool{}
+	for _, f := range zr.File {
+		if f.FileInfo().IsDir() || !strings.HasPrefix(f.Name, root) || !strings.HasSuffix(f.Name, "/"+manifestName) {
+			continue
+		}
+		version := strings.TrimSuffix(strings.TrimPrefix(f.Name, root), "/"+manifestName)
+		if ValidateVersion(version) {
+			prefixes[root+version+"/"] = true
+		}
+	}
+	if len(prefixes) != 1 {
+		return "", fmt.Errorf("ZIP 顶层缺少 manifest.json，且未找到唯一的已签名规则版本目录")
+	}
+	for prefix := range prefixes {
+		return prefix, nil
+	}
+	return "", fmt.Errorf("ZIP 规则版本目录无效")
+}
+
+func (m *Manager) importArchivePrefix(ctx context.Context, zr *zip.Reader, prefix string) (Bundle, error) {
+	if err := ctx.Err(); err != nil {
+		return Bundle{}, err
+	}
+	if err := m.initialize(); err != nil {
+		return Bundle{}, err
 	}
 	if len(zr.File) > 100001 {
 		return Bundle{}, fmt.Errorf("ZIP 文件数量过多")
@@ -189,17 +283,27 @@ func (m *Manager) Import(ctx context.Context, data []byte) (Bundle, error) {
 		if f.FileInfo().IsDir() {
 			continue
 		}
-		if !f.Mode().IsRegular() || entries[f.Name] != nil {
+		name := f.Name
+		if prefix != "" {
+			if !strings.HasPrefix(name, prefix) {
+				continue
+			}
+			name = strings.TrimPrefix(name, prefix)
+			if name == "" {
+				continue
+			}
+		}
+		if !f.Mode().IsRegular() || entries[name] != nil {
 			return Bundle{}, fmt.Errorf("规则包含链接或重复文件")
 		}
-		entries[f.Name] = f
-		if f.Name == manifestName || f.Name == signatureName {
+		entries[name] = f
+		if name == manifestName || name == signatureName {
 			r, err := f.Open()
 			if err != nil {
 				return Bundle{}, err
 			}
 			limit := int64(8 << 20)
-			if f.Name == signatureName {
+			if name == signatureName {
 				limit = ed25519.SignatureSize
 			}
 			value, readErr := readLimited(r, limit)
@@ -207,7 +311,7 @@ func (m *Manager) Import(ctx context.Context, data []byte) (Bundle, error) {
 			if readErr != nil {
 				return Bundle{}, readErr
 			}
-			if f.Name == manifestName {
+			if name == manifestName {
 				manifestData = value
 			} else {
 				signatureData = value
@@ -220,6 +324,12 @@ func (m *Manager) Import(ctx context.Context, data []byte) (Bundle, error) {
 	manifest, err := decodeManifest(manifestData)
 	if err != nil {
 		return Bundle{}, err
+	}
+	if prefix != "" {
+		pathVersion := strings.TrimSuffix(strings.TrimPrefix(prefix, "vuln-data/releases/"), "/")
+		if manifest.Version != pathVersion {
+			return Bundle{}, fmt.Errorf("规则版本目录与 manifest 不一致")
+		}
 	}
 	if len(entries) != len(manifest.Files)+2 {
 		return Bundle{}, fmt.Errorf("ZIP 文件与 manifest 不一致")
@@ -243,9 +353,13 @@ func (m *Manager) Import(ctx context.Context, data []byte) (Bundle, error) {
 		if f == nil || f.UncompressedSize64 > MaxRuleFile {
 			return Bundle{}, fmt.Errorf("规则文件缺失或过大")
 		}
-		total += f.UncompressedSize64
-		if total > MaxExpanded {
+		if total >= MaxExpanded {
 			return Bundle{}, fmt.Errorf("规则包解压大小超限")
+		}
+		remaining := uint64(MaxExpanded) - total
+		copyLimit := uint64(MaxRuleFile) + 1
+		if remaining < copyLimit-1 {
+			copyLimit = remaining + 1
 		}
 		r, err := f.Open()
 		if err != nil {
@@ -262,7 +376,7 @@ func (m *Manager) Import(ctx context.Context, data []byte) (Bundle, error) {
 			return Bundle{}, err
 		}
 		digest := sha256.New()
-		count, copyErr := io.Copy(io.MultiWriter(output, digest), io.LimitReader(r, MaxRuleFile+1))
+		count, copyErr := io.Copy(io.MultiWriter(output, digest), io.LimitReader(preparedReader{ctx, r}, int64(copyLimit)))
 		r.Close()
 		syncErr := output.Sync()
 		closeErr := output.Close()
@@ -275,7 +389,11 @@ func (m *Manager) Import(ctx context.Context, data []byte) (Bundle, error) {
 		if closeErr != nil {
 			return Bundle{}, closeErr
 		}
-		if count > MaxRuleFile || !strings.EqualFold(hex.EncodeToString(digest.Sum(nil)), manifest.Files[name]) {
+		if count < 0 || uint64(count) > uint64(MaxRuleFile) || uint64(count) > remaining {
+			return Bundle{}, fmt.Errorf("规则包解压大小超限")
+		}
+		total += uint64(count)
+		if !strings.EqualFold(hex.EncodeToString(digest.Sum(nil)), manifest.Files[name]) {
 			return Bundle{}, fmt.Errorf("规则文件 SHA-256 校验失败或大小超限")
 		}
 
@@ -507,7 +625,7 @@ func (m *Manager) Fetch(ctx context.Context, raw, expected string) (Bundle, erro
 	}
 	client := m.Client
 	if client == nil {
-		client = &http.Client{Timeout: 2 * time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+		client = &http.Client{Timeout: time.Hour, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	}
 	copyClient := *client
 	copyClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
@@ -520,12 +638,36 @@ func (m *Manager) Fetch(ctx context.Context, raw, expected string) (Bundle, erro
 	if response.StatusCode != 200 {
 		return Bundle{}, fmt.Errorf("规则源返回 HTTP %d", response.StatusCode)
 	}
-	data, err := readLimited(response.Body, MaxArchive)
+	if response.ContentLength > MaxSignedArchive {
+		return Bundle{}, fmt.Errorf("下载 ZIP 超过 2 GiB 限制")
+	}
+	if err := m.initialize(); err != nil {
+		return Bundle{}, err
+	}
+	temporary, err := os.CreateTemp(m.Root, ".fetch-*.zip")
 	if err != nil {
 		return Bundle{}, err
 	}
-	if !strings.EqualFold(hashBytes(data), expected) {
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	digest := sha256.New()
+	count, copyErr := io.Copy(io.MultiWriter(temporary, digest), io.LimitReader(preparedReader{ctx, response.Body}, MaxSignedArchive+1))
+	syncErr := temporary.Sync()
+	closeErr := temporary.Close()
+	if copyErr != nil {
+		return Bundle{}, copyErr
+	}
+	if syncErr != nil {
+		return Bundle{}, syncErr
+	}
+	if closeErr != nil {
+		return Bundle{}, closeErr
+	}
+	if count <= 0 || count > MaxSignedArchive {
+		return Bundle{}, fmt.Errorf("下载 ZIP 大小须在 1 字节至 2 GiB 之间")
+	}
+	if !strings.EqualFold(hex.EncodeToString(digest.Sum(nil)), expected) {
 		return Bundle{}, fmt.Errorf("下载包 SHA-256 校验失败")
 	}
-	return m.Import(ctx, data)
+	return m.ImportFile(ctx, temporaryPath)
 }

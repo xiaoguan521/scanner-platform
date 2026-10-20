@@ -23,6 +23,7 @@ func RunUpdater(args []string, stdout, stderr io.Writer) int {
 	id := flags.String("id", "updater-local", "Updater identifier")
 	root := flags.String("rules-dir", "vuln-data", "Updater-owned rule directory")
 	trustedKey := flags.String("trusted-rule-public-key", "", "External Ed25519 PUBLIC KEY PEM file for rule import and activation")
+	importBundle := flags.String("import-bundle-file", "", "Import a signed ZIP directly from a local file (large offline artifacts supported)")
 	prepare := flags.Bool("prepare-engines", false, "Install and activate baseline templates and Trivy DB; no scans")
 	skipDownload := flags.Bool("skip-db-download", false, "Use the existing Trivy DB cache during preparation")
 	withJava := flags.Bool("with-java-db", false, "Include Java artifact index in explicit engine preparation")
@@ -54,6 +55,25 @@ func RunUpdater(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
+	}
+	if *importBundle != "" {
+		if *prepare || *skipDownload || *withJava || *once {
+			fmt.Fprintln(stderr, "--import-bundle-file cannot be combined with preparation or --once")
+			return 2
+		}
+		archivePath, err := filepath.Abs(*importBundle)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		bundle, err := manager.ImportFile(ctx, archivePath)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		fmt.Fprintln(stdout, "Imported signed rules", bundle.Version, "(manifest signature and file hashes verified)")
+		fmt.Fprintln(stdout, "Restart the Updater, then activate this version from the rules page so the operation is audited")
+		return 0
 	}
 	if *prepare {
 		absolute := func(path string) string { p, _ := filepath.Abs(path); return p }

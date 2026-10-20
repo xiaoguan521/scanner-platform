@@ -44,7 +44,7 @@ python3 scripts/package_rules.py --version 20261016.01 --nuclei-dir /路径/模�
 
 通过可信部署渠道将配对的 PKIX Ed25519 `PUBLIC KEY` PEM 公钥放在 `--rules-dir` 之外。Updater 下次启动时使用 `--trusted-rule-public-key /包外/受信公钥.pem`，或在本地启动脚本中设置 `SCANNER_RULE_PUBLIC_KEY_FILE=/包外/受信公钥.pem make dev`。配置是公钥文件路径；公钥最多 4 KiB、必须是普通非符号链接文件，且只有一个 PUBLIC KEY 块，无额外内容。进程启动时固定加载，不会从规则包获取信任。此配置只在下次启动生效，不会自动调整或重启当前运行实例。
 
-ZIP 最多 256 MiB、5 万文件、解压总量 8 GiB、单文件 4 GiB（兼容当前 Trivy 主库）。普通导入先验证 manifest 原始字节签名，再解析、解压和校验哈希；普通激活再次先验签再校验内容。无公钥、无签名、错误签名、目录跳转、符号链接、重复文件、清单外文件、错误哈希均拒绝，CURRENT 不变。已有版本的 manifest 和签名须完全相同，不能覆盖或给旧 unsigned 自动补签。导入完成后，在版本列表点击“激活”；切回较旧版本必须使用“显式回滚”。所有操作均留审计。
+网页 ZIP 最多 256 MiB；Updater 的已签名本地 ZIP/HTTPS Fetch 最多 2 GiB；均限制 5 万文件、解压总量 8 GiB、单文件 4 GiB（兼容当前 Trivy 主库）。大 ZIP 使用 `dist/sec-updater --import-bundle-file /path/to/vulnerability-data.zip`，导入后重启 Updater，再从规则版本页面激活；版本低于当前版本时必须在页面显式回滚。普通导入先验证 manifest 原始字节签名，再解析、解压和校验哈希；普通激活再次先验签再校验内容。无公钥、无签名、错误签名、目录跳转、符号链接、重复文件、清单外文件、错误哈希均拒绝，CURRENT 不变。已有版本的 manifest 和签名须完全相同，不能覆盖或给旧 unsigned 自动补签。大 ZIP 不进入 Server SQLite BLOB；HTTPS Fetch 先流式写入 Updater 私有临时文件并校验整包 SHA-256，取消或失败会清理临时文件。切换和回滚均通过规则版本页面留审计。所有操作均留审计。
 
 在线更新使用同一种规则 ZIP：选择“从规则源下载”，提供不含凭据/查询参数的 HTTPS ZIP URL 和 ZIP 的 SHA-256，Updater 下载并导入，不跟随重定向。上游原始仓库 ZIP 没有本平台 manifest，需要先由操作员打包；目前不自动抓取 GitHub 最新版本或 OCI 数据库。真实规则源地址尚未配置，HTTPS 下载链路使用本地 TLS 测试源验证。
 

@@ -84,10 +84,76 @@ func TestHTTPSUpdateAndArchiveChecksum(t *testing.T) {
 	if _, err := manager.Fetch(context.Background(), source.URL, hashBytes([]byte("wrong"))); err == nil {
 		t.Fatal("wrong archive hash accepted")
 	}
+	if leftovers, err := filepath.Glob(filepath.Join(manager.Root, ".fetch-*.zip")); err != nil || len(leftovers) != 0 {
+		t.Fatalf("fetch temporary file not cleaned: %v %v", leftovers, err)
+	}
 	if _, err := manager.Fetch(context.Background(), "http://rules.example.com/package.zip", hashBytes(data)); err == nil {
 		t.Fatal("HTTP source accepted")
 	}
 	if _, err := manager.Fetch(context.Background(), "https://rules.example.com/package.zip?token=example", hashBytes(data)); err == nil {
 		t.Fatal("credential-bearing source accepted")
+	}
+}
+
+func TestLargeSignedArchiveFilePath(t *testing.T) {
+	manager, key := verifiedFixture(t)
+	archive := packageZIP(t, key, "20261016.04", "nuclei/templates/example.yaml", false)
+	archivePath := filepath.Join(t.TempDir(), "signed-rules.zip")
+	if err := os.WriteFile(archivePath, archive, 0600); err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := manager.ImportFile(context.Background(), archivePath)
+	if err != nil || !bundle.SignatureVerified {
+		t.Fatalf("large signed file import: %#v %v", bundle, err)
+	}
+	if err := manager.Activate(context.Background(), bundle.Version, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.ImportFile(context.Background(), filepath.Join(filepath.Dir(archivePath), "missing.zip")); err == nil {
+		t.Fatal("missing archive accepted")
+	}
+	files := map[string][]byte{"vuln-data/CURRENT": []byte("20261016.05\n"), "README-漏洞库.md": []byte("fixture")}
+	for name, body := range zipFiles(t, packageZIP(t, key, "20261016.05", "nuclei/templates/example.yaml", false)) {
+		files[filepath.ToSlash(filepath.Join("vuln-data", "releases", "20261016.05", name))] = body
+	}
+	artifactPath := filepath.Join(filepath.Dir(archivePath), "actions-artifact.zip")
+	if err := os.WriteFile(artifactPath, zipFixture(t, files), 0600); err != nil {
+		t.Fatal(err)
+	}
+	artifact, err := manager.ImportFile(context.Background(), artifactPath)
+	if err != nil || artifact.Version != "20261016.05" || !artifact.SignatureVerified {
+		t.Fatalf("Actions artifact import: %#v %v", artifact, err)
+	}
+}
+
+func TestLargeSignedArchiveFileRejectsOversizedAndSymlink(t *testing.T) {
+	manager, key := verifiedFixture(t)
+	directory := t.TempDir()
+	oversized := filepath.Join(directory, "oversized.zip")
+	file, err := os.OpenFile(oversized, os.O_CREATE|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(MaxSignedArchive + 1); err != nil {
+		file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.ImportFile(context.Background(), oversized); err == nil {
+		t.Fatal("oversized archive accepted")
+	}
+	archive := packageZIP(t, key, "20261016.05", "nuclei/templates/example.yaml", false)
+	realPath := filepath.Join(directory, "real.zip")
+	if err := os.WriteFile(realPath, archive, 0600); err != nil {
+		t.Fatal(err)
+	}
+	linkPath := filepath.Join(directory, "link.zip")
+	if err := os.Symlink(realPath, linkPath); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, err := manager.ImportFile(context.Background(), linkPath); err == nil {
+		t.Fatal("symlink archive accepted")
 	}
 }

@@ -57,7 +57,7 @@ runtime/inputs/images/example-image.tar
 
 Worker 使用固定规则版本中的 `trivy/db/trivy.db` 与 `metadata.json`，先复制到本节点按引擎/规则版本隔离的可写缓存；后续同版本复用缓存。启用 `--offline-scan`、禁用 DB/Java DB/检查规则/VEX 更新与遥测；只运行漏洞扫描，不加载输入目录的 Trivy 配置。JAR 分析需同一规则版本的 `trivy/java-db/{trivy-java.db,metadata.json}`：运行 `make engines-java` 准备，节点页会说明 Java 索引文件是否存在。没有索引的 JAR 目录任务明确失败，固定旧规则版本的排队任务不会自动换新库，准备后应重新创建任务。真实业务文件尚待验证。配置依据：[Trivy filesystem 参数](https://trivy.dev/latest/docs/references/configuration/cli/trivy_filesystem/)、[Java 索引与 DB 配置](https://trivy.dev/docs/latest/configuration/db/)。
 
-Java 索引压缩包当前约 940 MiB（大小随上游变化），超过网页 ZIP 上限。Updater 直接把已下载主库/Java 索引流式复制、哈希、fsync 到暂存版本，再按现有不可覆盖版本逻辑安装并显式激活；不把大库放入 Server 数据库。网页规则 ZIP 仍限 256 MiB；单规则文件仍限 4 GiB、总展开量仍限 8 GiB。2026-10-19 本机主库与 Java 索引合计约 3 GiB；下载缓存、活动/备用规则和每个 Worker 私有缓存各占一份，应按实际 DB 体积准备磁盘。
+Java 索引压缩包当前约 940 MiB（大小随上游变化），超过网页 ZIP 上限。Updater 直接把已下载主库/Java 索引流式复制、哈希、fsync 到暂存版本，再按现有不可覆盖版本逻辑安装并显式激活；不把大库放入 Server 数据库。网页规则 ZIP 仍限 256 MiB；Updater 的已签名本地 ZIP 与 HTTPS Fetch 上限为 2 GiB；单规则文件仍限 4 GiB、总展开量仍限 8 GiB。大 ZIP 使用 `dist/sec-updater --import-bundle-file /path/to/vulnerability-data.zip` 导入，随后重启 Updater 并从规则版本页面激活；旧版本必须走页面的显式回滚。2026-10-19 本机主库与 Java 索引合计约 3 GiB；下载缓存、活动/备用规则和每个 Worker 私有缓存各占一份，应按实际 DB 体积准备磁盘。
 
 离线准备时，把主库与 Java 索引缓存完整复制到 Updater 可读目录（包括各自 metadata），执行：
 

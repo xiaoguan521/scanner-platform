@@ -179,6 +179,7 @@ SAST、密钥扫描、重型 DAST 爬虫、AI 自动研判、任何自动利用�
 - 当前漏洞库准备工作流只允许在 `main` 运行,使用 GitHub Environment `vulnerability-data-signing` 中的 `BUNDLE_SIGNING_PRIVATE_KEY_PEM` 私钥和 `BUNDLE_SIGNING_PUBLIC_KEY_PEM` 公钥。Environment 应限制可部署分支并配置审批保护;工作流在临时目录中使用密钥,校验密钥类型及公私钥匹配,验签成功后才打包。
 - Updater 通过 `--trusted-rule-public-key` 从规则根目录外的普通 PEM 文件加载受信 Ed25519 公钥,对 manifest 原始字节和独立的 64 字节 `manifest.json.sig` 验签后再校验内容。普通导入、下载导入和激活缺少受信公钥或有效签名时拒绝执行;已安装历史无签名版本可只读展示,`signatureVerified` 为 false。Worker 当前仍只复核固定版本的文件完整性,不因签名文件存在就声明验签成功。
 - `--prepare-engines` 是显式的本机数据准备操作,可通过同一 Manager 实例刚完成准备时登记的一次性记录激活本地生成版本;记录绑定规则根、版本和 manifest 哈希,失败/重启不能继承,外部导入不能取得该记录。该入口不表示本地包经过签名认证,也不向普通激活开放跳过验签的选项。
+- 网页 multipart 导入继续限制为 256 MiB,避免把大包写入 Server 的 SQLite BLOB 并通过节点 API 复制。已签名的大包由 Updater 通过本地文件导入或 HTTPS Fetch 流式落到私有临时文件,上限 2 GiB,然后复用同一 manifest 签名、文件哈希、路径和防回滚校验;失败或取消不切换 `CURRENT`。
 - 定期轮换签名密钥;更换密钥时,必须先同步更新 Updater 受信公钥并验证兼容性。当前实现仅支持一个启动时加载的公钥,多密钥过渡和历史版本信任保留尚未实现,不能直接删除旧信任后声称仍能回滚旧签名包。完整引擎兼容矩阵仍需单独实现和验收。
 - **拒绝版本号低于当前的包**,除非通过显式的"回滚"操作并留审计记录。
 
