@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Card,
@@ -12,6 +12,8 @@ import {
   Alert,
   Tooltip,
   Checkbox,
+  Descriptions,
+  Drawer,
   message,
 } from 'antd';
 import { SafetyCertificateOutlined } from '@ant-design/icons';
@@ -25,6 +27,7 @@ import { CollectionNotice } from '../../api/CollectionNotice';
 
 import { riskLabels, methodLabels, confidenceLabels, isVerifiedFinding, findingCounts } from './presentation';
 import { FindingFilters, readFindingFilters, writeFindingFilters } from './filters';
+import { detailText, detailList, detailIdentifiers, selectedFindingForDrawer } from './drawer';
 const { Text } = Typography;
 
 export const FindingsPage: React.FC = () => {
@@ -48,6 +51,8 @@ export const FindingsPage: React.FC = () => {
   const counts=findingCounts(findings);
   const [query, setQuery] = useState('');
   const normalizedQuery = query.trim().toLowerCase();
+  const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
+  const detailTrigger = useRef<HTMLElement | null>(null);
 
   const filteredFindings = findings.filter((f) => {
     if(methodFilter!=='ALL'&&(f.detectMethod??'unknown')!==methodFilter)return false;
@@ -59,6 +64,21 @@ export const FindingsPage: React.FC = () => {
     if (normalizedQuery && ![f.target, f.package ?? '', f.templateOrCve, f.title].some(value => value.toLowerCase().includes(normalizedQuery))) return false;
     return true;
   });
+  const selectedFinding = selectedFindingForDrawer(findings, filteredFindings, selectedFindingId);
+  useEffect(() => {
+    if (selectedFindingId && !selectedFinding) setSelectedFindingId(null);
+  }, [selectedFindingId, selectedFinding]);
+  const openFindingDetails = (finding: Finding, trigger: HTMLElement) => {
+    detailTrigger.current = trigger;
+    setSelectedFindingId(finding.id);
+  };
+  const closeFindingDetails = () => setSelectedFindingId(null);
+  const restoreDetailFocus = (open: boolean) => {
+    if (!open) {
+      if (detailTrigger.current?.isConnected) detailTrigger.current.focus();
+      detailTrigger.current = null;
+    }
+  };
 
   const handleUpdateStatus = async (id: string, newStatus: FindingStatus) => {
     // FIXED is a Server-only decision based on a complete verified scan.
@@ -159,8 +179,7 @@ export const FindingsPage: React.FC = () => {
           dataSource={filteredFindings}
           rowKey="id"
           pagination={{showTotal:total=>`共 ${total} 项`}}
-          scroll={{x:1500}}
-          expandable={{expandedRowRender:r=><Space direction="vertical"><Text>{r.description||'暂无补充描述'}</Text><Text>检测方式：{methodLabels[r.detectMethod??'unknown']} · {confidenceLabels[r.confidence??'unknown']}</Text><Text>风险类型：{riskLabels[r.riskType??'unknown']} · 分类：{r.vulnCategory||'未分类'} · CVSS：{r.cvssScore??'未提供'}</Text><Text>影响：{r.impact||'待补充'}</Text><Text style={{whiteSpace:'pre-wrap'}}>修复建议：{r.solution||'待补充'}</Text><Text style={{whiteSpace:'pre-wrap'}}>举证：{r.evidence||'待补充'}</Text>{r.detectMethod==='version'&&<Alert type="warning" showIcon message="该结果基于组件版本推断，建议登录主机核查补丁或使用主机本地扫描。"/>}<Text>外部编号：{Object.entries(r.identifiers??{}).map(([key,values])=>`${key}: ${values.join(', ')}`).join('；')||'未提供'}</Text><Text>参考资料：{r.references?.join('；')||'未提供'}</Text>{r.contentLanguage&&r.contentLanguage!=='zh-CN'&&r.contentLanguage!=='zh'&&<Tag color="orange">内容为原文，待中文化</Tag>}<Text>匹配路径：{r.matchedPath||'—'}</Text>{r.package&&<Text>组件：{r.package}；安装版本：{r.installedVersion||'—'}；修复版本：{r.fixedVersion||'暂无'}</Text>}</Space>}}
+          scroll={{x:1600}}
           columns={[
             {title:'类型 / 检测依据',width:200,render:(_,r)=><Space direction="vertical" size={3}><Tag>{riskLabels[r.riskType??'unknown']}</Tag><Tag color={isVerifiedFinding(r)?'green':r.detectMethod==='version'?'orange':'default'}>{methodLabels[r.detectMethod??'unknown']}</Tag><Tag>{confidenceLabels[r.confidence??'unknown']}</Tag></Space>},
             {
@@ -225,17 +244,25 @@ export const FindingsPage: React.FC = () => {
               ),
             },
             {
-              title: '状态流转',
-              width: 150,
+              title: '详情 / 状态流转',
+              width: 180,
               render: (_, r) => (
                 <Space size={4} wrap>
-                  {r.status!=='OPEN'&&r.status!=='FIXED'&&<Button type="link" size="small" disabled={!isDemoMode&&!canWrite} onClick={()=>void handleUpdateStatus(r.id,'OPEN')}>恢复待处理</Button>}
+                  <Button
+                    size="small"
+                    aria-label={`查看详情：${r.title}`}
+                    onClick={event => {
+                      event.stopPropagation();
+                      openFindingDetails(r, event.currentTarget);
+                    }}
+                  >查看详情</Button>
+                  {r.status!=='OPEN'&&r.status!=='FIXED'&&<Button type="link" size="small" disabled={!isDemoMode&&!canWrite} onClick={event => { event.stopPropagation(); void handleUpdateStatus(r.id, 'OPEN'); }}>恢复待处理</Button>}
                   {r.status === 'OPEN' && (
                     <Button
                       type="link"
                       size="small"
                       disabled={!isDemoMode&&!canWrite}
-                      onClick={() => handleUpdateStatus(r.id, 'IN_PROGRESS')}
+                      onClick={event => { event.stopPropagation(); void handleUpdateStatus(r.id, 'IN_PROGRESS'); }}
                     >
                       标记处理中
                     </Button>
@@ -246,7 +273,7 @@ export const FindingsPage: React.FC = () => {
                       size="small"
                       style={{ color: '#13c2c2' }}
                       disabled
-                      onClick={() => handleUpdateStatus(r.id, 'FIXED')}
+                      onClick={event => { event.stopPropagation(); void handleUpdateStatus(r.id, 'FIXED'); }}
                     >
                       标记修复
                     </Button>
@@ -257,7 +284,7 @@ export const FindingsPage: React.FC = () => {
                       size="small"
                       danger
                       disabled={!isDemoMode&&!canWrite}
-                      onClick={() => handleUpdateStatus(r.id, 'FALSE_POSITIVE')}
+                      onClick={event => { event.stopPropagation(); void handleUpdateStatus(r.id, 'FALSE_POSITIVE'); }}
                     >
                       误报
                     </Button>
@@ -268,6 +295,91 @@ export const FindingsPage: React.FC = () => {
           ]}
         />
       </Card>
+      <Drawer
+        title="发现项详情"
+        open={Boolean(selectedFinding)}
+        onClose={closeFindingDetails}
+        afterOpenChange={restoreDetailFocus}
+        width="min(760px, 100vw)"
+        keyboard
+        maskClosable
+        styles={{ body: { overflowX: 'hidden' } }}
+      >
+        {selectedFinding && (
+          <Space direction="vertical" size={20} style={{ width: '100%', minWidth: 0 }}>
+            <Typography.Title level={4} style={{ margin: 0, overflowWrap: 'anywhere' }}>
+              {detailText(selectedFinding.title)}
+            </Typography.Title>
+            <Space wrap>
+              {getSeverityTag(selectedFinding.severity)}
+              {getStatusTag(selectedFinding.status)}
+              <Tag color={selectedFinding.synthetic ? 'blue' : 'default'}>
+                {selectedFinding.synthetic == null ? '模拟标记：未提供' : selectedFinding.synthetic ? '模拟结果' : '非模拟结果'}
+              </Tag>
+            </Space>
+            {selectedFinding.detectMethod === 'version' && <Alert type="warning" showIcon message="该结果基于组件版本推断，建议登录主机核查补丁或使用主机本地扫描。" />}
+            {selectedFinding.contentLanguage && !['zh-CN', 'zh'].includes(selectedFinding.contentLanguage) && <Tag color="orange">内容为原文，待中文化</Tag>}
+            <Descriptions title="目标与检测依据" column={1} size="small" bordered
+              styles={{ content: { overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' } }}
+              items={[
+                { label: '目标地址', children: detailText(selectedFinding.target) },
+                { label: '端口', children: detailText(selectedFinding.port) },
+                { label: '业务组', children: detailText(selectedFinding.businessGroup) },
+                { label: '负责人', children: detailText(selectedFinding.owner) },
+                { label: '引擎', children: detailText(selectedFinding.engine) },
+                { label: '模板 / CVE', children: detailText(selectedFinding.templateOrCve) },
+                { label: '检测方式', children: detailText(selectedFinding.detectMethod && methodLabels[selectedFinding.detectMethod]) },
+                { label: '置信度', children: detailText(selectedFinding.confidence && confidenceLabels[selectedFinding.confidence]) },
+                { label: '风险类型', children: detailText(selectedFinding.riskType && riskLabels[selectedFinding.riskType]) },
+                { label: '漏洞分类', children: detailText(selectedFinding.vulnCategory) },
+                { label: 'CVSS', children: detailText(selectedFinding.cvssScore) },
+                { label: '组件', children: detailText(selectedFinding.component) },
+                { label: '软件包', children: detailText(selectedFinding.package) },
+                { label: '安装版本', children: detailText(selectedFinding.installedVersion) },
+                { label: '修复版本', children: detailText(selectedFinding.fixedVersion) },
+                { label: '内容语言', children: detailText(selectedFinding.contentLanguage) },
+              ].map((item, key) => ({ ...item, key }))}
+            />
+            {[
+              { label: '描述', value: detailText(selectedFinding.description) },
+              { label: '影响', value: detailText(selectedFinding.impact) },
+              { label: '修复建议', value: detailText(selectedFinding.solution) },
+              { label: '证据', value: detailText(selectedFinding.evidence) },
+              { label: '匹配路径', value: detailText(selectedFinding.matchedPath) },
+              { label: '外部编号', value: detailIdentifiers(selectedFinding.identifiers) },
+              { label: '参考资料', value: detailList(selectedFinding.references) },
+            ].map(field => (
+              <section key={field.label} style={{ width: '100%', minWidth: 0 }}>
+                <Typography.Title level={5} style={{ marginTop: 0 }}>{field.label}</Typography.Title>
+                <div tabIndex={0} role="region" aria-label={`${field.label}全文`}
+                  style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 240, overflowY: 'auto', padding: 12, background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 6 }}>
+                  {field.value}
+                </div>
+              </section>
+            ))}
+            <Descriptions title="时间与未检出计数" column={1} size="small" bordered
+              styles={{ content: { overflowWrap: 'anywhere' } }}
+              items={[
+                { label: '首次检出', children: detailText(selectedFinding.firstSeen) },
+                { label: '最近检出', children: detailText(selectedFinding.lastSeen) },
+                { label: '修复时间', children: detailText(selectedFinding.resolvedAt) },
+                { label: '连续未检出次数', children: detailText(selectedFinding.consecutiveMisses) },
+              ].map((item, key) => ({ ...item, key }))}
+            />
+            <Text type="secondary">暂无状态变更记录</Text>
+            <Descriptions title="关联标识" column={1} size="small" bordered
+              styles={{ content: { overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' } }}
+              items={[
+                { label: '发现项 ID', children: detailText(selectedFinding.id) },
+                { label: '稳定指纹', children: detailText(selectedFinding.fingerprint) },
+                { label: '资产 ID', children: detailText(selectedFinding.assetId) },
+                { label: '任务 ID', children: detailText(selectedFinding.taskId) },
+                { label: '制品 ID', children: detailText(selectedFinding.artifactId) },
+              ].map((item, key) => ({ ...item, key }))}
+            />
+          </Space>
+        )}
+      </Drawer>
     </div>
   );
 };

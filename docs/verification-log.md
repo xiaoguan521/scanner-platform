@@ -20,10 +20,19 @@
 | PoC #2 租约守护与本地任务租约（2026-10-20） | Scheduler、SQLite Server/Worker HTTP 联调及 race 单测通过；生产节点验收未执行 | 真实任务领取时生成 `pinned_rule_version`/`lease_expires_at`，`/worker/renew` 校验任务、Worker、版本、过期和 hard deadline，`Tick` 回收过期任务；Worker 租约失联时停止且不发送陈旧回报。仍需在 TLS/节点令牌、独立进程和强杀路径上实测。 |
 | PoC #2 CURRENT 门禁与本地规则版本（2026-10-20） | 本地 CURRENT 读取、缺失等待、版本过滤和节点心跳单测通过；生产多节点验收未执行 | 真实 Worker 读取只读规则根的 CURRENT，缺失时上报 `WAITING_FOR_RULES` 并退避，不领取规则任务；规则任务只在 Server 看到相同 `localRuleVersion` 时领取，端口探测/ZAP 保持无规则兼容。无效 CURRENT 显式上报 `RULES_ERROR` 并停止；完整 manifest/hash 仍在引擎执行前复核。 |
 | PoC #2 GC 两阶段文件操作（2026-10-20） | 本地文件实现与隔离竞态单测通过；真实 Updater 集成未执行 | 当前和最近备用版本保护、>=2h 退役宽限期、每阶段向 Server 复核本节点 RUNNING 任务；使用限定目录的 rename、持久隔离记录和二次检查后删除。缺少可信退役状态或隔离记录时拒绝回收；完整激活协调、真实 Node API 和 Windows 实机行为仍待集成验证。 |
-| Stage 2 自动综合扫描四步向导（2026-10-20） | 前端 helper 回归和生产构建通过；浏览器/Playwright 验收未运行 | 自动综合扫描立即任务按目标、方案、执行方式、确认分步，回退保留配置，确认页展示 Server 将重新校验的有效端口和排除项；未授权、无权限和未到确认步骤不会提交。定时、离线输入和旧任务复制保留旧流程；尚未补扫描方案资源、资产 CSV 流程和真实浏览器五次点击验收。 |
+| 发现项详情抽屉（2026-10-20） | 前端 helper/源码契约回归和生产构建通过；浏览器/Server 联调未运行 | ID 选中跟随当前集合，筛掉/删除关闭；文本字段无 HTML/自动链接且保留长文本，缺状态事件时明确提示。Esc/遮罩、焦点、窄屏和实际轮询体验仍待浏览器验收。 |
+| Stage 2 自动综合扫描四步向导（2026-10-20） | 前端 helper 回归和生产构建通过；浏览器/Playwright 验收未运行 | 自动综合扫描立即任务按目标、方案、执行方式、确认分步，回退保留配置，确认页展示 Server 将重新校验的有效端口和排除项；未授权、无权限和未到确认步骤不会提交。定时、离线输入和旧任务复制保留旧流程；尚未补扫描方案资源和真实浏览器五次点击验收。 |
 | 四入口与本地只读 API 骨架（2026-10-16） | 仅搭建结构，本轮按用户要求暂未运行测试 | 增加统一启动入口、Portable 编译入口、Server/Portable loopback 只读诊断 API 和数据库接口定义。业务接口 501，readyz 503，未启用 Node API、数据库、扫描或规则激活。须后续完成跨平台编译、API/安全边界测试与接口联调。 |
 | UI 用户管理契约与前端发布构建（2026-10-16） | 本地前端双模式、Go、YAML/actionlint 通过；GitHub 云端未运行 | 新增用户/角色演示页面，GET `/api/v1/users` 仅返回 501；用户写入/认证/RBAC/审计不开放。CI 纳入 Node.js 22 npm ci + 双模式打包检查；Release 仅构建一次 Server-mode UI 作为 `web/` 静态资产加入每个平台的归档，不表示 Server 已支持 UI 静态服务。 |
 | SQLite 账号管理（2026-10-16） | 单元/竞态及本机 HTTP 联调通过；远程部署未验收 | 使用纯 Go SQLite、bcrypt、HttpOnly/SameSite Cookie，账号 CRUD 需 admin 且写审计；本机测试包含初始化、登录、新增/停用、越权拒绝、登出。仅用于 loopback 开发，不表示平台扫描或节点 API 已可用。 |
+
+## 2026-10-20：发现项详情抽屉
+
+- `/findings` 以 Ant Design Drawer 替代行内展开，显式“查看详情”按钮支持键盘操作；状态操作均阻止事件传播，继续遵守原演示模式、Server 角色权限和 FIXED 限制。
+- 仅保存选中 ID，内容每次从当前 findings 读取最新对象；选中记录被过滤或移除时关闭。支持 Esc/关闭按钮/遮罩、窄屏宽度，关闭后原按钮仍在 DOM 时恢复焦点。详情 ID 不加入 URL，分类筛选继续沿用现有查询参数。
+- 展示已有检测依据、目标/归属、组件/版本、描述/影响/修复建议/证据/路径/参考、时间/连续未检出计数和关联 ID。空值统一“未提供”，不将现有时间伪造成事件时间线，并明确“暂无状态变更记录”。所有不可信字段按 React 文本渲染，长字段保留全文并放入可键盘滚动区域。
+- 实际通过：`node web/src/pages/Findings/drawer.test.mjs`、`node web/src/pages/Findings/filters.test.mjs`、`node web/src/pages/Assets/import.test.mjs`、`node web/src/pages/Tasks/policy.test.mjs`、`node web/src/pages/Tasks/wizard.test.mjs`、`npm --prefix web run build`、`git diff --check`。新增纯函数和 TypeScript AST 源码契约检查，覆盖空值/零值、HTML 转义、长文本无截断、最新记录/筛掉/删除、触发按钮及状态按钮事件隔离。
+- 未运行真实浏览器或 Server 联调；焦点恢复、Esc/遮罩、窄屏与实际轮询/PATCH 体验仍需独立浏览器验收。本次不修改后端、数据库或扫描行为。
 
 ## 2026-10-20：自动综合扫描四步创建向导
 
