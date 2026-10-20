@@ -7,6 +7,7 @@ UI 使用 HttpOnly 的 `scanner_session` Cookie，所有写请求携带 `X-Reque
 - `/auth/setup`：首次管理员初始化状态/创建，已有用户后拒绝再次初始化。
 - `/auth/login`、`/auth/me`、`/auth/logout`、`/users`：账号与会话。
 - `/audit-logs`：仅管理员可读的审计记录投影，支持按操作者、动作、对象类型和 RFC3339 时间范围筛选，并分页返回时间、动作和对象标识；不会返回历史 `detail`、目标地址或凭据等敏感内容，也不提供编辑、删除或导出入口。
+- `/dashboard/summary`：登录用户可读取总览聚合，包括资产/任务/漏洞计数、7/30/90 天趋势、风险业务组与资产排行、最多 5 条待处置严重/高危摘要和当前规则版本；不返回证据、凭据、原始请求/响应或引擎输出。前端 Server 模式按趋势窗口轮询该接口，任务清册仍单独读取。
 - `/assets`：数字 IP 或镜像仓库登记；`requestedPorts` 为端口申请，`skippedPorts` 为需要排除的端口。`GET /assets/export` 下载当前清册的 UTF-8 CSV，可用 `q` 复用地址、名称、业务组、负责人筛选；只导出稳定台账字段，不包含服务详情、登录入口、请求/响应证据或引擎输出，并对表格公式前缀做转义。`POST /assets/reachability-test` 测试表单中当前填写的单个数字 IP,不要求先登记资产且不保存测试结果。Server 启动后立即探测已登记主机,每轮完成后间隔 60 秒继续,清册状态自动刷新;无响应只作可达性提示。`POST /assets/{id}/reachability-check` 由新增/改 IP 后的页面流程用于立即更新该资产状态。`PATCH` 可修改资产，改 IP 会撤销已有范围授权并清除旧 Ping 结果；`DELETE` 在存在关联范围记录时返回冲突。`POST /assets/{id}/port-requests` 可把探测候选追加为待审批申请；不会直接授权扫描。`/port-quarantines` 读取实际隔离记录。
 - `/scopes`、`/port-requests`：范围与端口审批台账。范围申请可通过 `PUT /scopes/{id}` 修改（重置为待审批）、通过 `POST /scopes/{id}/revoke` 撤销、通过 `DELETE /scopes/{id}` 删除；已批准范围须先撤销。自动任务在明确目标和端口策略授权范围内执行只读检查,无需逐端口再审批;模拟任务不连接目标。
 - `/tasks`:模拟任务不连接目标;自动任务使用 `engine: auto`、单个 `assetId` 和 `portProbe`,支持常见、自定义、已登记、全端口(确认)、强度与排除。独立 `port-probe` 只做 TCP 连接;自动流程继续有界服务识别和只读检查。数字 IP 固定在 Server,Worker 不扩展主机;领取前复核排除与隔离。Task 返回 `effectiveExclusions`、`quarantinedPorts`、`assetProfile`、`serviceResults` 和实际进度。`GET /tasks?archived=false|true|all` 可筛选归档状态；默认返回全部。终态任务可以归档/恢复；管理员可彻底删除没有关联发现项的终态任务。见 [端口策略](../port-probe.md)。

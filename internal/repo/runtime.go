@@ -292,6 +292,12 @@ func (s *RuntimeStore) ListRuntimeTasks(ctx context.Context) ([]taskflow.Task, e
 	return items, nil
 }
 
+// ListRuntimeAssets exposes the server-owned asset projection to API
+// aggregators without exposing the underlying database handle.
+func (s *RuntimeStore) ListRuntimeAssets(ctx context.Context) ([]assets.Asset, error) {
+	return assets.ListSnapshot(ctx, s.db)
+}
+
 func (s *RuntimeStore) runtimeTaskProgress(ctx context.Context) (map[string]taskflow.TaskProgress, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT task_id,phase,completed,total,updated_at FROM scan_task_progress`)
 	if err != nil {

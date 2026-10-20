@@ -15,6 +15,26 @@ export interface SystemStatus {
 export interface Capabilities { enabled: string[]; unavailable: string[] }
 export interface ApiErrorBody { error: string; message: string }
 export interface ListResponse<T> { items: T[]; total: number }
+export interface DashboardSummary {
+  assetCount: number;
+  taskCount: number;
+  runningTaskCount: number;
+  hasNonSyntheticTask: boolean;
+  hasCompletedScan: boolean;
+  riskScore: number;
+  riskyAssetCount: number;
+  findingCount: number;
+  criticalCount: number;
+  highCount: number;
+  severityDistribution: Record<string, number>;
+  findingCounts: { vulnerabilities: number; loginEntries: number; unknown: number; version: number; verified: number };
+  trend: { date: string; label: string; count: number }[];
+  riskGroups: { name: string; score: number; openCount: number }[];
+  riskAssets: { id: string; name: string; address: string; score: number; openCount: number }[];
+  pendingCount: number;
+  pendingFindings: { id: string; severity: 'CRITICAL' | 'HIGH'; title: string; target: string; status: 'OPEN' | 'REOPENED' | 'IN_PROGRESS'; businessGroup: string }[];
+  currentRule?: Resources['rules'];
+}
 export interface Resources {
   users: User;
   assets: Asset;
@@ -99,6 +119,7 @@ export const apiClient = {
   releaseQuarantine(assetId:string,port:number,reason:string) { return requestJSON('/api/v1/port-quarantines/release','POST',{assetId,port,reason}); },
   systemStatus(signal?: AbortSignal) { return requestJSON<SystemStatus>('/api/v1/system/status', 'GET', undefined, signal); },
   capabilities(signal?: AbortSignal) { return requestJSON<Capabilities>('/api/v1/system/capabilities', 'GET', undefined, signal); },
+  dashboardSummary(days: 7 | 30 | 90, signal?: AbortSignal) { return requestJSON<DashboardSummary>('/api/v1/dashboard/summary?days=' + days, 'GET', undefined, signal); },
   collection<K extends keyof Resources>(name: K, signal?: AbortSignal, query = '') {
     return requestJSON<ListResponse<Resources[K]>>('/api/v1/' + name + query, 'GET', undefined, signal);
   },

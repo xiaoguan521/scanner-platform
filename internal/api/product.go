@@ -8,6 +8,7 @@ import (
 )
 
 func registerProductHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui func(bool, http.HandlerFunc) http.HandlerFunc, admin func(http.HandlerFunc) http.HandlerFunc, adminRead func(http.HandlerFunc) http.HandlerFunc, actor func(*http.Request) string) {
+	registerDashboardHandlers(mux, store, ui)
 	mux.HandleFunc("GET /api/v1/audit-logs", adminRead(func(w http.ResponseWriter, r *http.Request) {
 		query, err := parseAuditLogQuery(r)
 		if err != nil {

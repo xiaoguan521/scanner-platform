@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react';
 import { apiClient, isDemoMode } from './client';
-import type { Resources, SystemStatus, Capabilities } from './client';
+import type { DashboardSummary, Resources, SystemStatus, Capabilities } from './client';
 
-export function useCollection<K extends keyof Resources>(name: K, demoFixtures: Resources[K][], query = '') {
-  const [data, setData] = useState<Resources[K][]>(() => isDemoMode ? [...demoFixtures] : []);
-  const [loading, setLoading] = useState(!isDemoMode);
+export function useCollection<K extends keyof Resources>(name: K, demoFixtures: Resources[K][], query = '', enabled = true) {
+  const [data, setData] = useState<Resources[K][]>(() => isDemoMode && enabled ? [...demoFixtures] : []);
+  const [loading, setLoading] = useState(!isDemoMode && enabled);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (isDemoMode) return;
+    if (isDemoMode || !enabled) return;
     const controller = new AbortController();
     setLoading(true);
     let inFlight = false;
@@ -37,8 +37,32 @@ export function useCollection<K extends keyof Resources>(name: K, demoFixtures: 
       controller.abort();
       if (timer !== undefined) window.clearInterval(timer);
     };
-  }, [name, query]);
+  }, [name, query, enabled]);
   return { data, setData, loading, error };
+}
+
+export function useDashboardSummary(days: 7 | 30 | 90) {
+  const [data, setData] = useState<DashboardSummary | null>(null);
+  const [loading, setLoading] = useState(!isDemoMode);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (isDemoMode) return;
+    const controller = new AbortController();
+    let inFlight = false;
+    const load = () => {
+      if (inFlight) return;
+      inFlight = true;
+      apiClient.dashboardSummary(days, controller.signal).then((next) => {
+        if (!controller.signal.aborted) { setData(next); setError(null); }
+      }).catch((cause: unknown) => {
+        if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : '总览聚合不可用');
+      }).finally(() => { inFlight = false; if (!controller.signal.aborted) setLoading(false); });
+    };
+    load();
+    const timer = window.setInterval(load, 5000);
+    return () => { controller.abort(); window.clearInterval(timer); };
+  }, [days]);
+  return { data, loading, error };
 }
 
 export function useSystemStatus() {

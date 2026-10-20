@@ -73,6 +73,31 @@ paths:
             application/json:
               schema:
                 "$ref": "#/components/schemas/Capabilities"
+  "/api/v1/dashboard/summary":
+    get:
+      tags:
+      - system
+      summary: Authenticated dashboard aggregate
+      description: 'Returns bounded dashboard counts, trend buckets, risk group/asset summaries and up to five pending critical/high finding projections. The response excludes evidence, credentials, raw requests/responses and engine output. The optional days value is 7, 30 or 90 and defaults to 30.'
+      security:
+      - sessionCookie: []
+      parameters:
+      - in: query
+        name: days
+        required: false
+        schema:
+          type: integer
+          enum: [7, 30, 90]
+          default: 30
+      responses:
+        '200':
+          description: Dashboard aggregate for the authenticated local dataset
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/DashboardSummary"
+        '400': {description: Invalid trend window}
+        '401': {description: Unauthenticated}
   "/api/v1/auth/login":
     post:
       tags:
@@ -2390,6 +2415,70 @@ components:
           example: not_implemented
         message:
           type: string
+    DashboardSummary:
+      type: object
+      required: [assetCount, taskCount, runningTaskCount, riskScore, riskyAssetCount, findingCount, criticalCount, highCount, severityDistribution, findingCounts, trend, riskGroups, riskAssets, pendingCount, pendingFindings]
+      properties:
+        assetCount: {type: integer, minimum: 0}
+        taskCount: {type: integer, minimum: 0}
+        runningTaskCount: {type: integer, minimum: 0}
+        hasNonSyntheticTask: {type: boolean}
+        hasCompletedScan: {type: boolean}
+        riskScore: {type: integer, minimum: 0, maximum: 100}
+        riskyAssetCount: {type: integer, minimum: 0}
+        findingCount: {type: integer, minimum: 0}
+        criticalCount: {type: integer, minimum: 0}
+        highCount: {type: integer, minimum: 0}
+        severityDistribution: {type: object, additionalProperties: {type: integer, minimum: 0}}
+        findingCounts: {$ref: "#/components/schemas/DashboardFindingCounts"}
+        trend: {type: array, maxItems: 90, items: {$ref: "#/components/schemas/DashboardTrendPoint"}}
+        riskGroups: {type: array, maxItems: 5, items: {$ref: "#/components/schemas/DashboardRiskGroup"}}
+        riskAssets: {type: array, maxItems: 5, items: {$ref: "#/components/schemas/DashboardRiskAsset"}}
+        pendingCount: {type: integer, minimum: 0}
+        pendingFindings: {type: array, maxItems: 5, items: {$ref: "#/components/schemas/DashboardPendingFinding"}}
+        currentRule: {$ref: "#/components/schemas/RuleBundle"}
+    DashboardFindingCounts:
+      type: object
+      required: [vulnerabilities, loginEntries, unknown, version, verified]
+      properties:
+        vulnerabilities: {type: integer, minimum: 0}
+        loginEntries: {type: integer, minimum: 0}
+        unknown: {type: integer, minimum: 0}
+        version: {type: integer, minimum: 0}
+        verified: {type: integer, minimum: 0}
+    DashboardTrendPoint:
+      type: object
+      required: [date, label, count]
+      properties:
+        date: {type: string, format: date}
+        label: {type: string}
+        count: {type: integer, minimum: 0}
+    DashboardRiskGroup:
+      type: object
+      required: [name, score, openCount]
+      properties:
+        name: {type: string}
+        score: {type: integer, minimum: 0, maximum: 100}
+        openCount: {type: integer, minimum: 0}
+    DashboardRiskAsset:
+      type: object
+      required: [id, name, address, score, openCount]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        address: {type: string}
+        score: {type: integer, minimum: 0, maximum: 100}
+        openCount: {type: integer, minimum: 0}
+    DashboardPendingFinding:
+      type: object
+      required: [id, severity, title, target, status, businessGroup]
+      properties:
+        id: {type: string}
+        severity: {type: string, enum: [CRITICAL, HIGH]}
+        title: {type: string}
+        target: {type: string}
+        status: {type: string, enum: [OPEN, REOPENED, IN_PROGRESS]}
+        businessGroup: {type: string}
     AuditLog:
       type: object
       required: [id, actor, action, objectType, objectId, createdAt]
