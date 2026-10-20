@@ -246,3 +246,10 @@
 - 新增表驱动解析/权限/CSRF测试、解析 fuzz 种子、预览资产/profile/审计零写入、确认重复/过期/替换/同用户限制、后发资产冲突整批回滚和并发确认一次成功回归；Pinger 为失败即报错替身，没有连接目标或启动扫描。前端回归覆盖空文件/体积、显式勾选、错误预览和过期确认门禁。
 - 实际运行 `go test -race ./internal/assets ./internal/api`、`go vet ./internal/assets ./internal/api`、`node web/src/pages/Assets/import.test.mjs`、`npm --prefix web run build`、`make build`、`git diff --check` 及 Ruby YAML 解析通过。全仓门禁由协调代理另行记录。
 - 待验收：真实浏览器文件选择和操作体验；PostgreSQL 资产写入、导入历史查询和 CSV 导出尚未实现。本批不改变既有 Server 清册可达性后台轮询，确认后的新主机可能在后续正常轮询中被检测；导入端点自身没有 DNS/Ping/扫描调用。测试只使用临时 SQLite、文档保留地址和示例镜像地址。
+
+### 2026-10-20：漏洞分类筛选 URL 状态（前端回归）
+
+- `/findings` 的六项分类筛选直接从 React Router 查询参数派生；筛选修改使用 replace，刷新及前进/后退读取当前路由，避免组件内第二份分类状态覆盖导航结果。已有筛选交集和本地文本搜索继续生效。
+- 纯函数白名单解析非法/重复枚举和布尔值为默认值，规范化时省略默认筛选、保留无关参数；自由文本不写 URL，已有 `q` 在当前页面规范化时移除，不能据此宣称进入页面之前的历史已清除。
+- 实际运行 `node web/src/pages/Findings/filters.test.mjs`、`npm --prefix web run build` 和 `git diff --check`。测试使用文档保留地址作为隐私隔离样例，覆盖各合法值、异常值、重复键、组合往返、无关参数保留、输入不变性及规范化幂等性。真实浏览器交互验收尚未运行。
+- 本批仅修改前端与文档；没有变更 API/数据库/扫描边界或连接目标。

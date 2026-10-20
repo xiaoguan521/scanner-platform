@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Card,
   Table,
@@ -23,18 +24,27 @@ import { useCollection } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
 
 import { riskLabels, methodLabels, confidenceLabels, isVerifiedFinding, findingCounts } from './presentation';
+import { FindingFilters, readFindingFilters, writeFindingFilters } from './filters';
 const { Text } = Typography;
 
 export const FindingsPage: React.FC = () => {
   const {user}=useAuth();
   const canWrite=!isDemoMode&&(user?.role==='admin'||user?.role==='security_engineer');
   const { data: findings, setData: setFindings, loading, error } = useCollection('findings', mockFindings);
-  const [severityFilter, setSeverityFilter] = useState<string>('ALL');
-  const [statusFilter, setStatusFilter] = useState<string>('ALL');
-  const [methodFilter,setMethodFilter]=useState('ALL');
-  const [confidenceFilter,setConfidenceFilter]=useState('ALL');
-  const [riskFilter,setRiskFilter]=useState('ALL');
-  const [onlyVerified,setOnlyVerified]=useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const filters = readFindingFilters(searchParams);
+  const { severity: severityFilter, status: statusFilter, method: methodFilter,
+    confidence: confidenceFilter, risk: riskFilter, onlyVerified } = filters;
+  const search = searchParams.toString();
+  useEffect(() => {
+    const canonical = writeFindingFilters(searchParams, readFindingFilters(searchParams));
+    if (canonical.toString() !== search) {
+      setSearchParams(current => writeFindingFilters(current, readFindingFilters(current)), { replace: true });
+    }
+  }, [search, searchParams, setSearchParams]);
+  const updateFilters = (patch: Partial<FindingFilters>) => {
+    setSearchParams(current => writeFindingFilters(current, { ...readFindingFilters(current), ...patch }), { replace: true });
+  };
   const counts=findingCounts(findings);
   const [query, setQuery] = useState('');
   const normalizedQuery = query.trim().toLowerCase();
@@ -100,10 +110,10 @@ export const FindingsPage: React.FC = () => {
 
       <Card><Space wrap><Tag color="red">漏洞总数 {counts.vulnerabilities}</Tag><Tag color="blue">登录入口 {counts.loginEntries}</Tag><Tag>未核实类型 {counts.unknown}</Tag><Tag color="orange">版本推断 {counts.version}</Tag><Tag color="green">已验证 {counts.verified}</Tag><Tag>弱口令：本次未启用该检测项</Tag></Space></Card>
       <Space wrap>
-        <Select aria-label="检测方式筛选" value={methodFilter} onChange={setMethodFilter} style={{width:210}} options={[{value:'ALL',label:'全部检测方式'},...Object.entries(methodLabels).map(([value,label])=>({value,label}))]}/>
-        <Select aria-label="置信度筛选" value={confidenceFilter} onChange={setConfidenceFilter} style={{width:180}} options={[{value:'ALL',label:'全部置信度'},...Object.entries(confidenceLabels).map(([value,label])=>({value,label}))]}/>
-        <Select aria-label="风险类型筛选" value={riskFilter} onChange={setRiskFilter} style={{width:190}} options={[{value:'ALL',label:'全部类型'},...Object.entries(riskLabels).map(([value,label])=>({value,label}))]}/>
-        <Checkbox checked={onlyVerified} onChange={e=>setOnlyVerified(e.target.checked)}>仅已验证（原理验证 / 配置检查）</Checkbox>
+        <Select aria-label="检测方式筛选" value={methodFilter} onChange={method => updateFilters({ method })} style={{width:210}} options={[{value:'ALL',label:'全部检测方式'},...Object.entries(methodLabels).map(([value,label])=>({value,label}))]}/>
+        <Select aria-label="置信度筛选" value={confidenceFilter} onChange={confidence => updateFilters({ confidence })} style={{width:180}} options={[{value:'ALL',label:'全部置信度'},...Object.entries(confidenceLabels).map(([value,label])=>({value,label}))]}/>
+        <Select aria-label="风险类型筛选" value={riskFilter} onChange={risk => updateFilters({ risk })} style={{width:190}} options={[{value:'ALL',label:'全部类型'},...Object.entries(riskLabels).map(([value,label])=>({value,label}))]}/>
+        <Checkbox checked={onlyVerified} onChange={e=>updateFilters({ onlyVerified: e.target.checked })}>仅已验证（原理验证 / 配置检查）</Checkbox>
       </Space>
       <Alert showIcon type="info" message="版本推断没有实际验证漏洞。未标注检测方式的历史结果显示为未核实；扫描完整性不等同于原理验证。"/>
       <Input aria-label="按目标、组件或 CVE 筛选" placeholder="按目标、服务器别名、组件或 CVE 筛选" allowClear value={query} onChange={event => setQuery(event.target.value)} style={{maxWidth:480}} />
@@ -114,8 +124,9 @@ export const FindingsPage: React.FC = () => {
         extra={
           <Space>
             <Select
+              aria-label="严重度筛选"
               value={severityFilter}
-              onChange={setSeverityFilter}
+              onChange={severity => updateFilters({ severity })}
               style={{ width: 140 }}
               options={[
                 { value: 'ALL', label: '全部等级' },
@@ -127,8 +138,9 @@ export const FindingsPage: React.FC = () => {
               ]}
             />
             <Select
+              aria-label="状态筛选"
               value={statusFilter}
-              onChange={setStatusFilter}
+              onChange={status => updateFilters({ status })}
               style={{ width: 140 }}
               options={[
                 { value: 'ALL', label: '全部状态' },
