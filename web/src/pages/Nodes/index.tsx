@@ -37,7 +37,7 @@ export const NodesPage:React.FC=()=>{
     ]}/></Card>
     <Card title="扫描引擎"><Table dataSource={nodes.flatMap(n=>(n.engines??[]).map(e=>({...e,nodeId:n.id,online:n.status!=='OFFLINE'})))} rowKey={e=>e.nodeId+'-'+e.name} pagination={false} columns={[{title:'引擎',dataIndex:'name',render:(v:string)=>v.toUpperCase()},{title:'固定版本',dataIndex:'version'},{title:'节点',dataIndex:'nodeId'},{title:'状态',render:(_,e)=><Tag color={e.online&&e.ready?'green':'default'}>{!e.online?'节点离线':e.ready?'本地就绪':e.installed?'缺少数据 / 运行环境':'未安装'}</Tag>},{title:'说明',dataIndex:'message'}]}/></Card>
     <Card title="规则包版本" extra={<Space wrap><input aria-label="选择离线规则包" type="file" accept=".zip" disabled={!canWrite} onChange={e=>setFile(e.target.files?.[0]??null)}/><Button disabled={!canWrite||!file} loading={busy} onClick={()=>void run(()=>importRules(file!))}>离线导入 ZIP</Button><Button disabled={!canWrite} onClick={()=>setFetchOpen(true)}>从规则源下载</Button></Space>}>
-      <Typography.Paragraph type="secondary">ZIP 须包含 manifest.json、manifest.json.sig 和 nuclei/、trivy/ 下声明的规则文件。Updater 需先配置包外的受信任公钥；导入并验证后可点击“激活”切换当前版本。</Typography.Paragraph>
+      <Typography.Paragraph type="secondary">网页上传 ZIP 上限为 256 MiB，须包含 manifest.json、manifest.json.sig 和 nuclei/、trivy/ 下声明的规则文件。1.1 GiB 级 GitHub Actions 漏洞库制品请在 Updater 所在机器运行 `sec-updater --import-bundle-file /路径/vulnerability-data.zip`，再重启 Updater；大包导入并验证后，可在此处点击“激活”或“显式回滚”切换当前版本。</Typography.Paragraph>
       <Table<RuleBundle> dataSource={bundles} rowKey="version" scroll={{x:1000}} columns={[
         {title:'版本',dataIndex:'version',render:(v:string,b)=><Space><Typography.Text strong>{v}</Typography.Text>{b.isCurrent&&<Tag color="success">CURRENT</Tag>}</Space>},
         {title:'引擎数据',render:(_,b)=>b.engines?.join('、')||'—'},
