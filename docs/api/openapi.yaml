@@ -17,6 +17,7 @@ tags:
 - name: accounts
 - name: assets
 - name: approvals
+- name: audit
 paths:
   "/healthz":
     get:
@@ -2260,6 +2261,53 @@ paths:
         '401': {description: Unauthenticated}
         '403': {description: Role or CSRF guard denied}
         '409': {description: Preview unavailable/expired/confirmed or asset conflict; nothing imported}
+  "/api/v1/audit-logs":
+    get:
+      tags: [audit]
+      summary: Admin-only read-only audit log projection
+      description: 'Returns only stable audit fields. Historical detail is intentionally omitted because it may contain sensitive business data, targets or credentials. Supports exact actor/action/objectType filters and an inclusive RFC3339 time range.'
+      security: [{sessionCookie: []}]
+      parameters:
+      - in: query
+        name: actor
+        schema: {type: string, maxLength: 128}
+      - in: query
+        name: action
+        schema: {type: string, maxLength: 128}
+      - in: query
+        name: objectType
+        schema: {type: string, maxLength: 64}
+      - in: query
+        name: from
+        description: Inclusive UTC-normalized RFC3339 timestamp
+        schema: {type: string, format: date-time}
+      - in: query
+        name: to
+        description: Inclusive UTC-normalized RFC3339 timestamp
+        schema: {type: string, format: date-time}
+      - in: query
+        name: limit
+        schema: {type: integer, minimum: 1, maximum: 200, default: 50}
+      - in: query
+        name: offset
+        schema: {type: integer, minimum: 0, maximum: 100000, default: 0}
+      responses:
+        '200':
+          description: Paginated safe audit projection
+          content:
+            application/json:
+              schema:
+                allOf:
+                - "$ref": "#/components/schemas/Pagination"
+                - type: object
+                  required: [items]
+                  properties:
+                    items:
+                      type: array
+                      items: {"$ref": "#/components/schemas/AuditLog"}
+        '400': {description: Invalid or repeated filter/query parameter}
+        '401': {description: Unauthenticated}
+        '403': {description: Admin role required}
 components:
   securitySchemes:
     sessionCookie:
@@ -2285,6 +2333,16 @@ components:
           example: not_implemented
         message:
           type: string
+    AuditLog:
+      type: object
+      required: [id, actor, action, objectType, objectId, createdAt]
+      properties:
+        id: {type: string}
+        actor: {type: string}
+        action: {type: string}
+        objectType: {type: string}
+        objectId: {type: string}
+        createdAt: {type: string, format: date-time}
     Health:
       type: object
       required:

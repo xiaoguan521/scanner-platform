@@ -23,6 +23,7 @@ import {
   TeamOutlined,
   FileTextOutlined,
   BookOutlined,
+  AuditOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAppTheme } from '../../context/ThemeContext';
@@ -83,7 +84,12 @@ export const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children })
       icon: <TeamOutlined />,
       label: '用户与权限',
     },
-  ].filter(item => item.key !== '/users' || isDemoMode || user?.role === 'admin');
+    {
+      key: '/audit',
+      icon: <AuditOutlined />,
+      label: '审计日志',
+    },
+  ].filter(item => !['/users', '/audit'].includes(item.key) || isDemoMode || user?.role === 'admin');
 
   return (
     <Layout style={{ minHeight: '100vh' }}>

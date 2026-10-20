@@ -85,7 +85,15 @@ func NewRuntimeHandler(store *repo.RuntimeStore, fallback http.Handler, uiDir st
 			handler(w, r)
 		})
 	}
-	registerProductHandlers(mux, store, ui, admin, actor)
+	adminRead := func(handler http.HandlerFunc) http.HandlerFunc {
+		if len(accounts) == 0 {
+			return handler
+		}
+		return auth(accounts[0], true, func(w http.ResponseWriter, r *http.Request, _ account.User) {
+			handler(w, r)
+		})
+	}
+	registerProductHandlers(mux, store, ui, admin, adminRead, actor)
 	registerReportHandlers(mux, store, ui, actor)
 	registerLocalHandlers(mux, store, ui, admin, actor)
 	registerFindingWorkHandlers(mux, store, ui, actor, accounts...)

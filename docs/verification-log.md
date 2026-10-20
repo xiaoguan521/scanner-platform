@@ -306,3 +306,9 @@
 - 报告格式扩展为 CSV 与 JSON，并继续复用同一冻结快照、队列、重试和历史记录；CSV 是漏洞详情平面文件，JSON 包含完整资产、任务、发现项、汇总和范围快照。
 - CSV 对以 `=`, `+`, `-`, `@` 开头的单元格增加前缀，避免导入电子表格时被当作公式；JSON 和 CSV 均通过现有 64 MiB 生成上限和离线渲染路径，不调用扫描器或外部网络。
 - 已补充渲染、仓储格式复用、API 下载 Content-Type 和格式校验测试；`go test -race ./internal/reporting ./internal/repo ./internal/api`、`make test`、`make lint`、`make build`、前端生产构建、Ruby YAML 解析和 `git diff --check` 均已通过。真实浏览器下载、Office 原生打开和大数据量性能仍待环境验收。
+
+## 2026-10-21：管理员审计日志只读查询
+
+- 新增 `GET /api/v1/audit-logs` 和 `/audit` 页面，仅管理员可查询；支持操作者、动作、对象类型、RFC3339 时间范围和 1–200 条分页筛选，列表按时间和 ID 倒序返回。
+- API 只返回稳定审计投影（记录 ID、操作者、动作、对象类型/ID、时间），刻意省略历史 `detail`，因此不会通过查询页面暴露目标地址、凭据或备注正文；没有编辑、删除或敏感导出入口。
+- 新增仓储过滤/排序/分页及 API 认证、角色、非法参数和 detail 不返回测试；前端 helper 覆盖筛选裁剪和分页偏移。`go test -race ./internal/repo ./internal/api`、`make test`、`make lint`、`make build`、前端生产构建、Ruby YAML 解析和 `git diff --check` 均已通过；真实浏览器权限交互、大数据量查询和 PostgreSQL 运行时仍待环境验收。

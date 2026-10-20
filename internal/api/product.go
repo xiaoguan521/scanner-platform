@@ -7,7 +7,18 @@ import (
 	"scanner-platform/internal/taskflow"
 )
 
-func registerProductHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui func(bool, http.HandlerFunc) http.HandlerFunc, admin func(http.HandlerFunc) http.HandlerFunc, actor func(*http.Request) string) {
+func registerProductHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui func(bool, http.HandlerFunc) http.HandlerFunc, admin func(http.HandlerFunc) http.HandlerFunc, adminRead func(http.HandlerFunc) http.HandlerFunc, actor func(*http.Request) string) {
+	mux.HandleFunc("GET /api/v1/audit-logs", adminRead(func(w http.ResponseWriter, r *http.Request) {
+		query, err := parseAuditLogQuery(r)
+		if err != nil {
+			bad(w, http.StatusBadRequest, "invalid_audit_filter")
+			return
+		}
+		items, total, err := store.ListAuditLogs(r.Context(), query)
+		if !runtimeStoreError(w, err) {
+			runtimeJSON(w, http.StatusOK, ListResponse[repo.AuditLog]{Items: items, Total: total})
+		}
+	}))
 	mux.HandleFunc("GET /api/v1/detection-capabilities", ui(false, func(w http.ResponseWriter, r *http.Request) {
 		items := findings.Capabilities()
 		runtimeJSON(w, 200, ListResponse[findings.Capability]{Items: items, Total: len(items)})

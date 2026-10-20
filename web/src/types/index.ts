@@ -259,6 +259,15 @@ export interface RuleJob {
   version: string; message: string; createdAt: string; completedAt: string;
 }
 
+export interface AuditLog {
+  id: string;
+  actor: string;
+  action: string;
+  objectType: string;
+  objectId: string;
+  createdAt: string;
+}
+
 export interface CustomRule {
   id: string;
   name: string;
