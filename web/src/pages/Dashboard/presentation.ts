@@ -118,3 +118,23 @@ export function topRiskAssets(assets: Asset[], findings: Finding[], limit = 5): 
     };
   }).filter((asset) => asset.openCount > 0).sort((a, b) => b.score - a.score || b.openCount - a.openCount || a.name.localeCompare(b.name)).slice(0, limit);
 }
+
+const pendingStatuses = new Set<Finding['status']>(['OPEN', 'REOPENED', 'IN_PROGRESS']);
+const pendingSeverityRank: Record<Finding['severity'], number> = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3, INFO: 4 };
+
+function isPendingCriticalHigh(finding: Finding): boolean {
+  return isVulnerability(finding) && (finding.severity === 'CRITICAL' || finding.severity === 'HIGH') && pendingStatuses.has(finding.status);
+}
+
+/** Findings that deserve a focused first response on the dashboard. */
+export function pendingCriticalHigh(findings: Finding[], limit = 5): Finding[] {
+  return findings
+    .filter(isPendingCriticalHigh)
+    .slice()
+    .sort((a, b) => pendingSeverityRank[a.severity] - pendingSeverityRank[b.severity] || Date.parse(b.lastSeen) - Date.parse(a.lastSeen) || a.id.localeCompare(b.id))
+    .slice(0, limit);
+}
+
+export function pendingCriticalHighCount(findings: Finding[]): number {
+  return findings.filter(isPendingCriticalHigh).length;
+}

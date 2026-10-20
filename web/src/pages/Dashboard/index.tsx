@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Row, Col, Card, Statistic, Progress, Table, Tag, Space, Alert, Typography } from 'antd';
+import { Row, Col, Card, Statistic, Progress, Table, Tag, Space, Alert, Typography, Badge, Button } from 'antd';
 import {
   SafetyOutlined,
   AlertOutlined,
@@ -15,7 +15,7 @@ import { CollectionNotice } from '../../api/CollectionNotice';
 import { Link } from 'react-router-dom';
 
 import { findingCounts, isVulnerability } from '../Findings/presentation';
-import { isActiveVulnerability, riskAssetCount, riskScore, severityDistribution, topRiskAssets, topRiskGroups, vulnerabilityTrend } from './presentation';
+import { isActiveVulnerability, pendingCriticalHigh, pendingCriticalHighCount, riskAssetCount, riskScore, severityDistribution, topRiskAssets, topRiskGroups, vulnerabilityTrend } from './presentation';
 const { Text } = Typography;
 
 export const DashboardPage: React.FC = () => {
@@ -38,6 +38,14 @@ export const DashboardPage: React.FC = () => {
   const distribution = severityDistribution(findings);
   const riskGroups = useMemo(() => topRiskGroups(findings), [findings]);
   const riskAssets = useMemo(() => topRiskAssets(assets, findings), [assets, findings]);
+  const pendingFindings = useMemo(() => pendingCriticalHigh(findings), [findings]);
+  const pendingFindingCount = useMemo(() => pendingCriticalHighCount(findings), [findings]);
+  const quickStart = useMemo(() => [
+    { key: 'asset', label: '登记第一个资产', done: assets.length > 0, to: '/assets', action: '去登记' },
+    { key: 'task', label: '发起第一次扫描', done: tasks.some((task) => !task.synthetic), to: '/tasks', action: '去扫描' },
+    { key: 'result', label: '查看第一份扫描结果', done: tasks.some((task) => !task.synthetic && task.status === 'COMPLETED'), to: '/findings', action: '看结果' },
+  ], [assets.length, tasks]);
+  const showQuickStart = !isDemoMode && !assetsLoading && !findingsLoading && !tasksLoading && quickStart.some((step) => !step.done);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -50,6 +58,16 @@ export const DashboardPage: React.FC = () => {
         showIcon
         icon={<SafetyOutlined />}
       />
+
+      {showQuickStart && <Card title="快速开始" extra={<Text type="secondary">完成后自动隐藏</Text>}>
+        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+          <Text type="secondary">按这三步即可看到第一份扫描结果；只对你明确登记并授权的目标执行检查。</Text>
+          {quickStart.map((step) => <Space key={step.key} style={{ width: '100%', justifyContent: 'space-between' }}>
+            <Space><CheckCircleOutlined style={{ color: step.done ? '#52c41a' : '#bfbfbf' }} /><Text delete={step.done}>{step.label}</Text></Space>
+            {!step.done && <Link to={step.to}><Button size="small" type={step.key === 'asset' ? 'primary' : 'default'}>{step.action}</Button></Link>}
+          </Space>)}
+        </Space>
+      </Card>}
 
       <Card title="检测结果口径"><Space wrap>
         <Tag color="red"><Link to="/findings">漏洞总数 {counts.vulnerabilities}</Link></Tag>
@@ -229,6 +247,22 @@ export const DashboardPage: React.FC = () => {
           </Card>
         </Col>
       </Row>
+
+      <Card title={<Space>待处置严重/高危漏洞 <Badge count={pendingFindingCount} showZero color="#ff4d4f" /></Space>} bordered={false} extra={<Link to="/findings?severity=CRITICAL">查看漏洞列表</Link>}>
+        <Table
+          dataSource={pendingFindings}
+          rowKey="id"
+          pagination={false}
+          size="small"
+          locale={{ emptyText: '暂无待处置的严重或高危漏洞' }}
+          columns={[
+            { title: '等级', dataIndex: 'severity', width: 90, render: (severity: string) => <Tag color={severity === 'CRITICAL' ? 'red' : 'orange'}>{severity === 'CRITICAL' ? '严重' : '高危'}</Tag> },
+            { title: '漏洞', render: (_: unknown, finding: typeof pendingFindings[number]) => <Link to={`/findings?severity=${finding.severity}&businessGroup=${encodeURIComponent(finding.businessGroup)}`}>{finding.title}</Link>, ellipsis: true },
+            { title: '资产/目标', dataIndex: 'target', width: 220, ellipsis: true },
+            { title: '状态', dataIndex: 'status', width: 100, render: (status: string) => <Tag color={status === 'IN_PROGRESS' ? 'processing' : 'error'}>{status === 'IN_PROGRESS' ? '修复中' : status === 'REOPENED' ? '重新打开' : '待处理'}</Tag> },
+          ]}
+        />
+      </Card>
 
       <Card title="风险最高资产" bordered={false}>
         <Table dataSource={riskAssets} rowKey="id" pagination={false} size="small" columns={[
