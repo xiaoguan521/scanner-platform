@@ -1,4 +1,4 @@
-import type { PortProbeRange } from '../../types';
+import type { Asset, PortProbeConfig, PortProbeRange, ScanPolicy } from '../../types';
 export function parsePortRanges(text?:string):PortProbeRange[]{
   if(!text?.trim()) return [];
   const parts=text.split(',').map(value=>value.trim());
@@ -21,3 +21,21 @@ export function compressPorts(ports?:number[]): string {
 }
 export function summarizePorts(ports?:number[]): string { const text=compressPorts(ports);return text.length>180?`${text.slice(0,180)}…（共 ${new Set(ports).size} 个端口）`:text||'无'; }
 export function expandPortRanges(text?:string):number[] {return [...new Set(parsePortRanges(text).flatMap(r=>Array.from({length:r.end-r.start+1},(_,i)=>r.start+i)))].sort((a,b)=>a-b);}
+
+// Preview uses the same registered-port sources and exclusions as Server.
+// Server still validates and freezes the current policy when creating the task.
+export function previewProbePorts(asset: Asset, config: PortProbeConfig, policy: ScanPolicy): {requested: number[]; effective: number[]} {
+  const selected=new Set<number>();
+  const addRanges=(ranges:PortProbeRange[])=>{for(const range of ranges)for(let port=range.start;port<=range.end;port++)selected.add(port);};
+  if(config.preset==='full')addRanges([{start:1,end:65535}]);
+  if(config.preset==='common'||config.preset==='common-and-custom')for(const port of policy.commonPorts)selected.add(port);
+  if(config.preset==='custom'||config.preset==='common-and-custom')addRanges(config.ranges??[]);
+  if(config.preset==='registered'){
+    for(const port of asset.ports??[])if(port.kind!=='EXCLUDED_PROXY')selected.add(port.port);
+    for(const service of asset.services??[])selected.add(service.port);
+  }
+  const requested=[...selected].sort((a,b)=>a-b);
+  const excluded=new Set([...(asset.quarantinedPorts??[]),...(asset.ports??[]).filter(port=>port.kind==='EXCLUDED_PROXY').map(port=>port.port)]);
+  const ranges=[...policy.exclusions,...(config.exclusions??[])];
+  return {requested,effective:requested.filter(port=>!excluded.has(port)&&!ranges.some(range=>port>=range.start&&port<=range.end))};
+}

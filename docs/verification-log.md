@@ -20,9 +20,17 @@
 | PoC #2 租约守护与本地任务租约（2026-10-20） | Scheduler、SQLite Server/Worker HTTP 联调及 race 单测通过；生产节点验收未执行 | 真实任务领取时生成 `pinned_rule_version`/`lease_expires_at`，`/worker/renew` 校验任务、Worker、版本、过期和 hard deadline，`Tick` 回收过期任务；Worker 租约失联时停止且不发送陈旧回报。仍需在 TLS/节点令牌、独立进程和强杀路径上实测。 |
 | PoC #2 CURRENT 门禁与本地规则版本（2026-10-20） | 本地 CURRENT 读取、缺失等待、版本过滤和节点心跳单测通过；生产多节点验收未执行 | 真实 Worker 读取只读规则根的 CURRENT，缺失时上报 `WAITING_FOR_RULES` 并退避，不领取规则任务；规则任务只在 Server 看到相同 `localRuleVersion` 时领取，端口探测/ZAP 保持无规则兼容。无效 CURRENT 显式上报 `RULES_ERROR` 并停止；完整 manifest/hash 仍在引擎执行前复核。 |
 | PoC #2 GC 两阶段文件操作（2026-10-20） | 本地文件实现与隔离竞态单测通过；真实 Updater 集成未执行 | 当前和最近备用版本保护、>=2h 退役宽限期、每阶段向 Server 复核本节点 RUNNING 任务；使用限定目录的 rename、持久隔离记录和二次检查后删除。缺少可信退役状态或隔离记录时拒绝回收；完整激活协调、真实 Node API 和 Windows 实机行为仍待集成验证。 |
+| Stage 2 自动综合扫描四步向导（2026-10-20） | 前端 helper 回归和生产构建通过；浏览器/Playwright 验收未运行 | 自动综合扫描立即任务按目标、方案、执行方式、确认分步，回退保留配置，确认页展示 Server 将重新校验的有效端口和排除项；未授权、无权限和未到确认步骤不会提交。定时、离线输入和旧任务复制保留旧流程；尚未补扫描方案资源、资产 CSV 流程和真实浏览器五次点击验收。 |
 | 四入口与本地只读 API 骨架（2026-10-16） | 仅搭建结构，本轮按用户要求暂未运行测试 | 增加统一启动入口、Portable 编译入口、Server/Portable loopback 只读诊断 API 和数据库接口定义。业务接口 501，readyz 503，未启用 Node API、数据库、扫描或规则激活。须后续完成跨平台编译、API/安全边界测试与接口联调。 |
 | UI 用户管理契约与前端发布构建（2026-10-16） | 本地前端双模式、Go、YAML/actionlint 通过；GitHub 云端未运行 | 新增用户/角色演示页面，GET `/api/v1/users` 仅返回 501；用户写入/认证/RBAC/审计不开放。CI 纳入 Node.js 22 npm ci + 双模式打包检查；Release 仅构建一次 Server-mode UI 作为 `web/` 静态资产加入每个平台的归档，不表示 Server 已支持 UI 静态服务。 |
 | SQLite 账号管理（2026-10-16） | 单元/竞态及本机 HTTP 联调通过；远程部署未验收 | 使用纯 Go SQLite、bcrypt、HttpOnly/SameSite Cookie，账号 CRUD 需 admin 且写审计；本机测试包含初始化、登录、新增/停用、越权拒绝、登出。仅用于 loopback 开发，不表示平台扫描或节点 API 已可用。 |
+
+## 2026-10-20：自动综合扫描四步创建向导
+
+- `/tasks` 的自动综合扫描立即任务改为“目标 → 方案 → 执行方式 → 确认”四步向导。目标仍只能从已登记主机选择；端口策略、强度、任务排除、自定义规则和时间窗沿用原字段，未新增网段或范围外目标入口。
+- 向导只在当前步骤校验，前后返回保留字段；修改配置会清除原运维授权。确认页显示有效端口预览、系统/资产/任务排除、隔离端口和时间窗；端口预览是提示，Server 仍通过原任务 API 重新校验并冻结范围。全端口和完整自定义范围继续提交前二次确认。
+- 提交守卫拒绝无权限、未完成确认或未勾选授权；定时任务、模拟任务、离线 Trivy 输入和旧任务复制保留原表单路径。新增 `wizard.ts` 与端口预览 helper 的 Node 回归，使用文档保留地址段夹具，不访问网络。
+- 实际通过：`node web/src/pages/Tasks/policy.test.mjs`、`node web/src/pages/Tasks/wizard.test.mjs`、`npm --prefix web run build`、`make test`、`make lint`、`make build`、`git diff --check`。未运行浏览器/Playwright 或真实扫描。
 
 ## 2026-10-20：大体积签名漏洞库导入
 
