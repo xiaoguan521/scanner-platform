@@ -104,6 +104,36 @@ func TestReportAPIAuthenticationWriteGuardsAndDownloads(t *testing.T) {
 	if err := json.Unmarshal(derivative.Body.Bytes(), &other); err != nil || other.SnapshotID != job.SnapshotID {
 		t.Fatal("format export changed snapshot")
 	}
+	for _, format := range []string{"csv", "json"} {
+		queued := send("POST", "/api/v1/reports/"+job.ID+"/formats", `{"format":"`+format+`"}`, adminToken, true)
+		if queued.Code != 202 {
+			t.Fatalf("%s format export: %d %s", format, queued.Code, queued.Body.String())
+		}
+		var derived reporting.Job
+		if err := json.Unmarshal(queued.Body.Bytes(), &derived); err != nil {
+			t.Fatal(err)
+		}
+		for attempts := 0; attempts < 10; attempts++ {
+			current, err := store.GetReport(ctx, derived.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if current.Status == "READY" {
+				break
+			}
+			done, err := store.ProcessNextReport(ctx, t.TempDir())
+			if err != nil || !done {
+				t.Fatalf("generate %s: %v %v", format, done, err)
+			}
+			if attempts == 9 {
+				t.Fatalf("%s report did not become ready", format)
+			}
+		}
+		downloaded := send("GET", "/api/v1/reports/"+derived.ID+"/download", "", viewerToken, false)
+		if downloaded.Code != 200 || !strings.Contains(downloaded.Header().Get("Content-Type"), map[string]string{"csv": "text/csv", "json": "application/json"}[format]) {
+			t.Fatalf("download %s: %d %s", format, downloaded.Code, downloaded.Header().Get("Content-Type"))
+		}
+	}
 	list := send("GET", "/api/v1/reports", "", viewerToken, false)
 	if list.Code != 200 || strings.Contains(list.Body.String(), "filePath") {
 		t.Fatal("report listing failed or exposed disk path")

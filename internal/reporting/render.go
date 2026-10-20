@@ -4,6 +4,8 @@ import (
 	"archive/zip"
 	"context"
 	"encoding/base64"
+	"encoding/csv"
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"html"
@@ -72,10 +74,59 @@ func Render(ctx context.Context, w io.Writer, s Snapshot, format string) error {
 		return renderXLSX(bw, s)
 	case "docx":
 		return renderDOCX(bw, s)
+	case "csv":
+		return renderCSV(bw, s)
+	case "json":
+		return renderJSON(bw, s)
 	default:
 		return ErrInvalid
 	}
 }
+
+// renderJSON writes the complete immutable snapshot for machine processing.
+// Snapshot fields intentionally exclude report job storage paths and credentials.
+func renderJSON(w io.Writer, s Snapshot) error {
+	data, err := json.Marshal(s)
+	if err != nil {
+		return err
+	}
+	if err := write(w, string(data)); err != nil {
+		return err
+	}
+	return write(w, "\n")
+}
+
+// renderCSV exports the same vulnerability detail table used by the report
+// document. JSON remains the lossless machine-readable snapshot; CSV is a
+// flat vulnerability detail export suitable for spreadsheet workflows.
+func renderCSV(w io.Writer, s Snapshot) error {
+	writer := csv.NewWriter(w)
+	table := findingTable(s)
+	if err := writer.Write(table.Headers); err != nil {
+		return err
+	}
+	for _, row := range table.Rows {
+		cells := make([]string, len(row))
+		for i, value := range row {
+			cells[i] = csvCell(value)
+		}
+		if err := writer.Write(cells); err != nil {
+			return err
+		}
+	}
+	writer.Flush()
+	return writer.Error()
+}
+
+// csvCell prevents spreadsheet applications from treating exported evidence
+// or titles as formulas. The apostrophe is part of the CSV safety encoding.
+func csvCell(value string) string {
+	if value != "" && strings.ContainsRune("=+-@", rune(value[0])) {
+		return "'" + value
+	}
+	return value
+}
+
 func esc(v string) string { return html.EscapeString(v) }
 func x(v string) string {
 	var b strings.Builder

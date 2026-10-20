@@ -98,7 +98,7 @@ func registerReportHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui fun
 			return
 		}
 		defer file.Close()
-		types := map[string]string{"html": "text/html; charset=utf-8", "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"}
+		types := map[string]string{"html": "text/html; charset=utf-8", "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "csv": "text/csv; charset=utf-8", "json": "application/json; charset=utf-8"}
 		w.Header().Set("Content-Type", types[job.Format])
 		w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": job.FileName}))
 		w.Header().Set("Cache-Control", "no-store")

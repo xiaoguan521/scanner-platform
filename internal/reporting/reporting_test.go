@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/csv"
+	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -236,6 +238,43 @@ func TestSpreadsheetFormulaIsText(t *testing.T) {
 		t.Fatal("formula was evaluated or dropped")
 	}
 }
+
+func TestCSVAndJSONFormats(t *testing.T) {
+	s := exampleSnapshot()
+	s.Findings[0].Title = "=SUM(A1:A2)"
+	s = Freeze(s)
+	var csvOutput bytes.Buffer
+	if err := Render(context.Background(), &csvOutput, s, "csv"); err != nil {
+		t.Fatal(err)
+	}
+	records, err := csv.NewReader(bytes.NewReader(csvOutput.Bytes())).ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 3 || records[0][0] != "资产" || records[0][2] != "标题" {
+		t.Fatalf("unexpected CSV shape: %v", records)
+	}
+	if records[1][2] != "'=SUM(A1:A2)" {
+		t.Fatalf("formula cell was not neutralized: %q", records[1][2])
+	}
+	var jsonOutput bytes.Buffer
+	if err := Render(context.Background(), &jsonOutput, s, "json"); err != nil {
+		t.Fatal(err)
+	}
+	var decoded Snapshot
+	if err := json.Unmarshal(jsonOutput.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.ID != s.ID || decoded.SchemaVersion != SchemaVersion || len(decoded.Findings) != len(s.Findings) || decoded.Findings[0].Title != s.Findings[0].Title {
+		t.Fatalf("JSON did not preserve frozen snapshot: %+v", decoded)
+	}
+	for _, format := range []string{"csv", "json"} {
+		if err := ValidateRequest(Request{Format: format}); err != nil {
+			t.Fatalf("%s rejected: %v", format, err)
+		}
+	}
+}
+
 func FuzzTargetHost(f *testing.F) {
 	for _, v := range []string{"192.0.2.10:443", "https://192.0.2.10/login", "[2001:db8::10]:443", "example.com"} {
 		f.Add(v)
@@ -255,7 +294,7 @@ func TestExportSyntheticReportArtifacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := exampleSnapshot()
-	for _, format := range []string{"html", "xlsx", "docx"} {
+	for _, format := range []string{"html", "xlsx", "docx", "csv", "json"} {
 		file, err := os.Create(filepath.Join(dir, "example."+format))
 		if err != nil {
 			t.Fatal(err)

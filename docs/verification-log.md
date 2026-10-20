@@ -300,3 +300,9 @@
 - 总览新增 0–100 风险评分、有风险资产数、7/30/90 天活动漏洞趋势、风险业务组和风险资产表；严重度与检测口径数字链接到漏洞筛选。风险评分规则、活动状态和接受风险折扣见 `docs/product/risk-score.md`。
 - 漏洞页新增业务组和资产 ID 的 URL 筛选，保留刷新、前进/后退和筛选标签移除语义；仍只在页面已加载的全量发现项上计算，未新增扫描目标、端口或引擎调用。
 - `node --test web/src/pages/Findings/*.test.mjs`、`node web/src/pages/Dashboard/presentation.test.mjs`、`npm --prefix web run build`、`make test`、`make lint`、`make build`、Ruby YAML 解析和 `git diff --check` 均已通过。真实浏览器点击下钻和服务端大数据量聚合仍待独立验收。
+
+## 2026-10-21：报告 CSV/JSON 输出
+
+- 报告格式扩展为 CSV 与 JSON，并继续复用同一冻结快照、队列、重试和历史记录；CSV 是漏洞详情平面文件，JSON 包含完整资产、任务、发现项、汇总和范围快照。
+- CSV 对以 `=`, `+`, `-`, `@` 开头的单元格增加前缀，避免导入电子表格时被当作公式；JSON 和 CSV 均通过现有 64 MiB 生成上限和离线渲染路径，不调用扫描器或外部网络。
+- 已补充渲染、仓储格式复用、API 下载 Content-Type 和格式校验测试；`go test -race ./internal/reporting ./internal/repo ./internal/api`、`make test`、`make lint`、`make build`、前端生产构建、Ruby YAML 解析和 `git diff --check` 均已通过。真实浏览器下载、Office 原生打开和大数据量性能仍待环境验收。
