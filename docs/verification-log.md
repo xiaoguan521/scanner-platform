@@ -14,7 +14,7 @@
 | 引擎受限启动硬闸（2026-10-16） | 默认阻断，待参数验证 | 未接入 `internal/executor` 经版本锁定的参数白名单前，`RestrictedExec.Launch` 显式拒绝真正运行 Nuclei/Trivy；当前 setpriv 仅验证参数构造，未实测进程 UID/capabilities。 |
 | GitHub Actions 六平台 CI / Release（2026-10-16） | 本地检查及 GitHub 云端 CI 通过；Release 未发布 | 提交 `798f832` 的 CI 已通过前端、race 测试、lint 和 Linux/macOS/Windows 六平台构建。标签构建只有完整 CI 通过才打包；发布权限仅 Release Job，标签仅创建 Draft + Pre-release。漏洞库手工工作流需另看当前签名步骤结果。 |
 | 漏洞库 Ed25519 签名与平台验签 | 本地平台实现、隔离测试和当前主分支 GitHub Actions 均通过 | 当前工作流使用 `vulnerability-data-signing` 环境、`BUNDLE_SIGNING_PRIVATE_KEY_PEM` 密钥和 `BUNDLE_SIGNING_PUBLIC_KEY_PEM` 变量；云端已完成 8 个文件完整性校验、Ed25519 签名/验签和 `vulnerability-data` 制品上传。单公钥轮换、多密钥过渡与完整引擎兼容矩阵仍未完成。 |
-| SSH 指定目录 Java/Go 应用 | Go 真实 SSH 隔离靶机路径通过；Java 缺少索引时按设计失败 | Go ELF 目录已完成 SSH 采集、快照校验、Trivy 类型确认和覆盖计数；Java JAR 目录同样完成采集，但因当前规则库没有 Java 索引而明确为 `analysis_failed`，没有伪装成无漏洞。Java 成功路径仍需先准备 Java DB；独立挂载目录场景仍待验收。 |
+| SSH 指定目录 Java/Go 应用 | Go 真实 SSH 隔离靶机路径通过；含 class 的 Java 合成 JAR 已加入靶机；Java 缺少索引时按设计失败 | Go ELF 目录已完成 SSH 采集、快照校验、Trivy 类型确认和覆盖计数；Java JAR 目录已覆盖带 class 和 Maven 元数据的合成输入，但因当前规则库没有 Java 索引仍明确为 `analysis_failed`，没有伪装成无漏洞。Java 成功路径仍需先准备 Java DB；独立挂载目录场景仍待验收。 |
 | 自动综合扫描 HTTP 失败状态回报 | Worker/Server 回归与 V4 排除端口验证通过；最新 V5 任务界面显示已完成，结果仍待逐项复核 | HTTP 错误保持 FAILED 并保存明确的系统包阶段状态。此前路由阻塞记录为历史状态；本轮开发期间未重启原测试实例，新应用能力不属于该次实扫验收范围。 |
 | 正式客户端签名/公证和供应链证明 | 未实施 | Phase 0 归档仅是占位骨架。缺少 Windows 代码签名、macOS 签名/公证及 Artifact Attestation；不能直接当作受信任的可部署产品发布。 |
 | PoC #2 租约守护（2026-10-16） | 本地模拟单测通过；Server/Worker 联调未执行 | 根据最后确认租约截止和本地 hard deadline 取消工作，网络超时/失联不延长租期，未确认停止时返回 shutdown timeout；必须在真实进程层验证强杀、Node API 身份/时间戳与租约刷新。 |
@@ -171,6 +171,14 @@
 - Java 路径任务成功完成 SSH 采集，但由于当前规则目录缺少 Trivy Java 索引，任务以 `analysis_failed` 结束，应用计数为选中 1、分析 0；没有插入部分成功结果，验证了失败即关闭行为。准备 Java DB 后仍需重新执行 Java 成功路径。
 - 独立运行 `go test -race -count=1 ./internal/versionmgr ./internal/scheduler ./internal/workerfence`、`go vet ./...`、`bash -n scripts/dev.sh` 和差异检查，均通过。未运行全端口扫描，也未修改主运行实例的数据库、规则库、网络或 SSH 凭据。
 - 提交 `798f832` 的 GitHub CI 已云端完成并通过全部矩阵。随后以 `db41202` 为基线触发的 `Build Offline Vulnerability Data` 也已完成：8 个规则文件校验通过，签名步骤输出 `Signature Verified Successfully`，并上传 `vulnerability-data` 制品。此前历史运行早于签名步骤，未作为当前签名验收证据。
+
+### 2026-10-20：隔离靶机 Java 内容补齐
+
+- 在隔离靶机的明确部署目录中刷新合成 Java JAR：包含一个不执行的示例 class、Manifest，以及用于离线组件识别的 Maven 元数据；文件保持普通只读权限，未启动 Java 进程、未发起网络请求，也未加入仓库或扫描结果。
+- 容器内回读并校验 JAR 中的 class 与元数据条目，确认采集输入不再是只有元数据的空壳夹具。此前 Java SSH 采集的失败路径记录仍保留：当前活动规则版本缺少 `trivy-java.db` 时，应用阶段必须回报 `analysis_failed`，选中项不能计入已分析，也不能显示成“无漏洞”。
+- 用一次性临时 Server/Worker 重新回归当前夹具：Go 应用链路仍为 `completed` 且选中/已分析均为 1；Java 目录已选中 1 个文件并完成 SSH 采集，但因 Java 索引缺失以 `analysis_failed` 结束、已分析为 0。临时数据库、输入和日志均未写入仓库。
+- 当前开发进度：Java 靶机输入已准备；SSH 有界采集和缺索引失败闭环已验证；Java 成功分析路径仍待准备包含 Java DB 的同版本签名规则包后重跑。该状态不代表真实业务 Java 应用或完整中间件覆盖已验收。
+- 本次只验证容器文件内容和权限，没有停止正在运行的平台服务、修改主运行数据库/规则盘/SSH 凭据或扩大扫描目标。
 
 ### 开发期间原测试状态补充
 
