@@ -8,7 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"scanner-platform/internal/account"
 	"scanner-platform/internal/assets"
@@ -52,6 +54,123 @@ func TestRuntimeWorkerHTTPFlow(t *testing.T) {
 		if path == "/api/v1/tasks" && body.Items[0]["status"] != "COMPLETED" {
 			t.Fatalf("task not completed: %+v", body)
 		}
+	}
+}
+
+func TestRuntimeWorkerPauseResumeAndIdempotentCompletion(t *testing.T) {
+	ctx := context.Background()
+	store, err := repo.OpenRuntime(filepath.Join(t.TempDir(), "platform.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	created, err := store.CreateSyntheticTask(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The local API normally assigns a fifteen-minute deadline to a task with
+	// no explicit window. Override only the first claim in this test so the
+	// worker reaches its local deadline without sleeping for a real window.
+	apiHandler := NewRuntimeHandler(store, nil, "")
+	var shortened atomic.Bool
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/worker/claim", func(w http.ResponseWriter, r *http.Request) {
+		recorded := httptest.NewRecorder()
+		apiHandler.ServeHTTP(recorded, r)
+		body := recorded.Body.Bytes()
+		if recorded.Code == http.StatusOK && !shortened.Swap(true) {
+			var claimed taskflow.Task
+			if err := json.Unmarshal(body, &claimed); err != nil {
+				t.Fatalf("decode claimed task: %v", err)
+			}
+			claimed.HardDeadline = time.Now().Add(30 * time.Millisecond).UTC().Format(time.RFC3339Nano)
+			body, err = json.Marshal(claimed)
+			if err != nil {
+				t.Fatalf("encode shortened task: %v", err)
+			}
+		}
+		for key, values := range recorded.Header() {
+			for _, value := range values {
+				w.Header().Add(key, value)
+			}
+		}
+		w.WriteHeader(recorded.Code)
+		_, _ = w.Write(body)
+	})
+	mux.Handle("/", apiHandler)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	worker := &taskflow.Worker{
+		ServerURL: server.URL,
+		ID:        "pause-resume-worker",
+		Client:    server.Client(),
+		Delay:     100 * time.Millisecond,
+	}
+	if worked, err := worker.ProcessOne(ctx); err != nil || !worked {
+		t.Fatalf("deadline pause was not reported: worked=%v err=%v", worked, err)
+	}
+	tasks, err := store.ListRuntimeTasks(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 1 || tasks[0].ID != created.ID || tasks[0].Status != "PAUSED_WINDOW" {
+		t.Fatalf("task was not paused: %+v", tasks)
+	}
+	findings, err := store.ListRuntimeFindings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 0 {
+		t.Fatalf("paused task inserted findings: %+v", findings)
+	}
+
+	if err := store.Tick(ctx, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	tasks, err = store.ListRuntimeTasks(ctx)
+	if err != nil || len(tasks) != 1 || tasks[0].Status != "PENDING" {
+		t.Fatalf("paused task did not resume into the queue: %+v err=%v", tasks, err)
+	}
+
+	worker.Delay = 0
+	if worked, err := worker.ProcessOne(ctx); err != nil || !worked {
+		t.Fatalf("resumed task did not complete: worked=%v err=%v", worked, err)
+	}
+	tasks, err = store.ListRuntimeTasks(ctx)
+	if err != nil || len(tasks) != 1 || tasks[0].Status != "COMPLETED" {
+		t.Fatalf("resumed task not completed: %+v err=%v", tasks, err)
+	}
+	findings, err = store.ListRuntimeFindings(ctx)
+	if err != nil || len(findings) != 1 {
+		t.Fatalf("resumed task result missing or duplicated: %+v err=%v", findings, err)
+	}
+
+	// A retry of the accepted report is harmless and cannot create a second
+	// finding. This is the same payload a Worker would retry after a response
+	// was lost.
+	duplicate := taskflow.Report{
+		TaskID:   created.ID,
+		WorkerID: worker.ID,
+		Target:   created.Chunks[0].Targets[0],
+		Title:    taskflow.SyntheticTitle,
+	}
+	body, err := json.Marshal(duplicate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := server.Client().Post(server.URL+"/api/v1/worker/report", "application/json", strings.NewReader(string(body)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("duplicate completion rejected: %d", response.StatusCode)
+	}
+	findings, err = store.ListRuntimeFindings(ctx)
+	if err != nil || len(findings) != 1 {
+		t.Fatalf("duplicate completion changed findings: %+v err=%v", findings, err)
 	}
 }
 
