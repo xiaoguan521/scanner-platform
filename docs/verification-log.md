@@ -208,3 +208,10 @@
 - 新增本地 Server/Worker/SQLite 集成测试：第一次领取将任务硬截止压缩到几十毫秒，Worker 到点回报 `PAUSED_WINDOW`；Server 不写入发现项。
 - 调用 `RuntimeStore.Tick` 后任务回到 `PENDING`，Worker 再次领取并完成，最终只保存一个发现项；重复提交同一完成回报仍保持单条结果。
 - 该回归只使用临时数据库、回环 HTTP API 和文档保留地址；没有连接外部目标，也没有改变正在运行的平台实例。真实长任务、多块租约、节点 TLS/令牌和进程级强杀仍待隔离验收。
+
+### 2026-10-20：PoC #5 连续未检出与自动 FIXED 状态机（本地回归）
+
+- Worker 回报新增完整性、规则执行引擎集合和冻结规则版本元数据。Server 仅在任务为 `COMPLETED`、完整执行授权范围、至少一个漏洞规则引擎成功执行、且回报规则版本匹配任务冻结版本时处理未检出计数；端口探测、旧 Worker 回报、失败/暂停、规则版本不匹配和范围外发现项不会触发状态收敛。
+- 当前活动策略新增 `fixedThreshold`（1–3，默认 1），在任务创建时冻结；活动发现项达到阈值后标记 `FIXED` 并记录 `resolvedAt`，再次检出恢复为 `REOPENED`、清零计数。`FALSE_POSITIVE` 与 `ACCEPTED_RISK` 不受自动状态机影响。自动综合扫描按实际成功执行的 Nuclei/ZAP/Trivy 引擎集合和 SSH/应用采集状态决定是否具备完整性。
+- 新增仓储 race 测试覆盖首检、完整缺失、重现、旧元数据、失败、版本不匹配、范围隔离和阈值 2；实际运行 `go test -race ./internal/repo ./internal/taskflow ./internal/executor -count=1` 通过。
+- 本批仅使用临时 SQLite、合成回报和文档保留地址，未连接外部网络或生产资产。真实靶机的中断/熔断抓包、节点认证和跨进程引擎回报仍待 lab 验收，不能据此宣称 PoC #5 已完成实机验收。

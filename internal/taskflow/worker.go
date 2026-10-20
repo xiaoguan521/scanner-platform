@@ -140,6 +140,9 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 	var systemScanStatus string
 	var applicationScanStatus string
 	var applicationResults []ApplicationResult
+	var completedFully bool
+	var rulesExecuted bool
+	var executedEngines []string
 	isAutoTask := len(task.Engines) == 1 && task.Engines[0] == "auto"
 	if isAutoTask {
 		systemScanStatus = SystemScanNotStarted
@@ -162,6 +165,7 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 			var result AutoResult
 			result, err = w.AutoScan(workCtx, task)
 			detections, portProbeResults, serviceResults = result.Findings, result.Ports, result.Services
+			completedFully, rulesExecuted, executedEngines = result.CompletedFully, result.RulesExecuted, append([]string(nil), result.ExecutedEngines...)
 			if result.SystemStatus != "" {
 				systemScanStatus = result.SystemStatus
 			}
@@ -174,11 +178,16 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 	} else {
 		ReportProgress(workCtx, "engine_scan", 0, 0)
 		detections, err = w.Execute(workCtx, task)
+		if err == nil {
+			completedFully = true
+			rulesExecuted = true
+			executedEngines = []string{task.Engines[0]}
+		}
 	}
 
 	report := Report{TaskID: task.ID, WorkerID: w.ID, Target: task.Chunks[0].Targets[0], Title: SyntheticTitle}
 	if !task.Synthetic {
-		report = Report{TaskID: task.ID, WorkerID: w.ID, Status: "COMPLETED", Findings: detections}
+		report = Report{TaskID: task.ID, WorkerID: w.ID, Status: "COMPLETED", Findings: detections, CompletedFully: completedFully, RulesExecuted: rulesExecuted, ExecutedEngines: executedEngines, RuleVersion: task.RuleVersion}
 		if len(task.Engines) == 1 && task.Engines[0] == "port-probe" {
 			report.Findings = nil
 			report.PortProbeResults = portProbeResults
@@ -187,6 +196,10 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 			report.ServiceResults = serviceResults
 			report.SystemScanStatus = systemScanStatus
 			report.AssetProfile = assetProfile
+			report.CompletedFully = completedFully
+			report.RulesExecuted = rulesExecuted
+			report.ExecutedEngines = executedEngines
+			report.RuleVersion = task.RuleVersion
 		}
 	}
 	if err != nil {

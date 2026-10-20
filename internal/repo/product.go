@@ -23,10 +23,11 @@ type ScanPolicy struct {
 	Exclusions          []portprobe.Range `json:"exclusions"`
 	QuarantineThreshold int               `json:"quarantineThreshold"`
 	DiscoveryAttempts   int               `json:"discoveryAttempts"`
+	FixedThreshold      int               `json:"fixedThreshold"`
 }
 
 func defaultPolicy() ScanPolicy {
-	return ScanPolicy{CommonPorts: portprobe.CommonPorts(), Exclusions: []portprobe.Range{}, QuarantineThreshold: 2, DiscoveryAttempts: 3}
+	return ScanPolicy{CommonPorts: portprobe.CommonPorts(), Exclusions: []portprobe.Range{}, QuarantineThreshold: 2, DiscoveryAttempts: 3, FixedThreshold: 1}
 }
 func (s *RuntimeStore) initProduct(ctx context.Context) error {
 	for _, q := range []string{
@@ -57,13 +58,23 @@ func policyIn(ctx context.Context, q productQueryer) (ScanPolicy, error) {
 		return p, err
 	}
 	err = json.Unmarshal([]byte(raw), &p)
+	if err == nil && p.FixedThreshold == 0 {
+		// Catalogs written before the lifecycle setting was introduced inherit
+		// the safe one-scan default without changing other frozen policy values.
+		p.FixedThreshold = defaultPolicy().FixedThreshold
+	}
 	return p, err
 }
 func (s *RuntimeStore) GetScanPolicy(ctx context.Context) (ScanPolicy, error) {
 	return policyIn(ctx, s.db)
 }
 func (s *RuntimeStore) SaveScanPolicy(ctx context.Context, p ScanPolicy, actor string) (ScanPolicy, error) {
-	if len(p.CommonPorts) < 1 || len(p.CommonPorts) > 65535 || len(p.Exclusions) > 128 || p.DiscoveryAttempts < 1 || p.DiscoveryAttempts > 3 || p.QuarantineThreshold < 1 || p.QuarantineThreshold > 3 {
+	if p.FixedThreshold == 0 {
+		// Keep older UI clients wire-compatible while never allowing a zero
+		// threshold to make every missing finding immediately fixed.
+		p.FixedThreshold = defaultPolicy().FixedThreshold
+	}
+	if len(p.CommonPorts) < 1 || len(p.CommonPorts) > 65535 || len(p.Exclusions) > 128 || p.DiscoveryAttempts < 1 || p.DiscoveryAttempts > 3 || p.QuarantineThreshold < 1 || p.QuarantineThreshold > 3 || p.FixedThreshold < 1 || p.FixedThreshold > 3 {
 		return p, fmt.Errorf("%w: 无效端口策略", ErrInvalidTask)
 	}
 	seen := map[int]bool{}

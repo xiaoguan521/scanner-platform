@@ -131,6 +131,186 @@ func validServiceResults(results []taskflow.ServiceResult, task taskflow.Task, o
 	return true
 }
 
+// validExecutionSummary accepts the optional completion metadata without
+// making older Workers unusable. When a Worker sends the metadata, reject
+// impossible engine combinations rather than allowing it to broaden the
+// lifecycle scope.
+func validExecutionSummary(report taskflow.Report, task taskflow.Task) bool {
+	if report.Status != "COMPLETED" {
+		return !report.CompletedFully && !report.RulesExecuted && len(report.ExecutedEngines) == 0 && report.RuleVersion == ""
+	}
+	if len(report.RuleVersion) > 200 || report.RulesExecuted != (len(report.ExecutedEngines) > 0) {
+		return false
+	}
+	allowed := map[string]bool{}
+	if len(task.Engines) == 1 && task.Engines[0] == "auto" {
+		allowed = map[string]bool{"nuclei": true, "zap": true, "trivy": true}
+	} else if len(task.Engines) == 1 {
+		allowed[task.Engines[0]] = task.Engines[0] == "nuclei" || task.Engines[0] == "zap" || task.Engines[0] == "trivy"
+	}
+	seen := map[string]bool{}
+	for _, engine := range report.ExecutedEngines {
+		if !allowed[engine] || seen[engine] {
+			return false
+		}
+		seen[engine] = true
+	}
+	if report.CompletedFully && !report.RulesExecuted {
+		// A port-probe (or an empty automatic scan) can complete successfully,
+		// but it never qualifies for the vulnerability lifecycle.
+		if len(task.Engines) != 1 || task.Engines[0] != "port-probe" && task.Engines[0] != "auto" {
+			return false
+		}
+	}
+	return true
+}
+
+func lifecycleEligible(task taskflow.Task, report taskflow.Report) bool {
+	if report.Status != "COMPLETED" || !report.CompletedFully || !report.RulesExecuted || len(report.ExecutedEngines) == 0 || len(task.Engines) != 1 || task.Engines[0] == "port-probe" {
+		return false
+	}
+	if task.RuleVersion != "" && report.RuleVersion != task.RuleVersion {
+		return false
+	}
+	if task.RuleVersion == "" && (report.RuleVersion != "" || task.Engines[0] != "zap") {
+		return false
+	}
+	if task.FixedThreshold < 1 {
+		return false
+	}
+	return true
+}
+
+func lifecycleFindingInScope(f taskflow.Finding, task taskflow.Task, report taskflow.Report) bool {
+	if task.AssetID != "" && task.AssetID != f.AssetID {
+		return false
+	}
+	if len(task.Engines) != 1 || len(task.Chunks) != 1 || len(task.Chunks[0].Targets) == 0 {
+		return false
+	}
+	executed := false
+	for _, engine := range report.ExecutedEngines {
+		if engine == f.Engine {
+			executed = true
+			break
+		}
+	}
+	if !executed {
+		return false
+	}
+	if task.Engines[0] == "auto" {
+		if len(task.Chunks[0].Targets) != 1 {
+			return false
+		}
+		host, port, _, err := canonicalTarget(f.Target)
+		if err != nil || host != task.Chunks[0].Targets[0] {
+			return false
+		}
+		allowed := false
+		for _, candidate := range task.VulnerabilityPorts {
+			allowed = allowed || candidate == port
+		}
+		if !allowed {
+			return false
+		}
+		for _, open := range report.PortProbeResults {
+			if open.Port == port {
+				return true
+			}
+		}
+		return false
+	}
+	if task.InputKind != "" {
+		return f.Target == task.InputPath
+	}
+	for _, target := range task.Chunks[0].Targets {
+		if f.Target == target {
+			return true
+		}
+	}
+	return false
+}
+
+// updateMissingFindingLifecycle advances only active findings that belong to
+// the exact scope and engine set completed by this report. It intentionally
+// does not write an observation row: a missing finding was not observed in
+// this task, while the latest finding record retains the lifecycle counter.
+func updateMissingFindingLifecycle(ctx context.Context, tx *sql.Tx, task taskflow.Task, report taskflow.Report, now time.Time) error {
+	if !lifecycleEligible(task, report) {
+		return nil
+	}
+	threshold := task.FixedThreshold
+	if threshold < 1 {
+		return nil
+	}
+	observedRows, err := tx.QueryContext(ctx, `SELECT finding_id FROM task_finding_observations WHERE task_id=?`, task.ID)
+	if err != nil {
+		return err
+	}
+	observed := map[string]bool{}
+	for observedRows.Next() {
+		var findingID string
+		if err := observedRows.Scan(&findingID); err != nil {
+			observedRows.Close()
+			return err
+		}
+		observed[findingID] = true
+	}
+	if err := observedRows.Err(); err != nil {
+		observedRows.Close()
+		return err
+	}
+	if err := observedRows.Close(); err != nil {
+		return err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT id,data FROM security_findings`)
+	if err != nil {
+		return err
+	}
+	type storedFinding struct{ id, raw string }
+	stored := []storedFinding{}
+	for rows.Next() {
+		var item storedFinding
+		if err := rows.Scan(&item.id, &item.raw); err != nil {
+			rows.Close()
+			return err
+		}
+		stored = append(stored, item)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, item := range stored {
+		id, raw := item.id, item.raw
+		var finding taskflow.Finding
+		if err := json.Unmarshal([]byte(raw), &finding); err != nil {
+			return err
+		}
+		if finding.ID != id || observed[id] || !lifecycleFindingInScope(finding, task, report) || finding.Status == "FIXED" || finding.Status == "FALSE_POSITIVE" || finding.Status == "ACCEPTED_RISK" {
+			continue
+		}
+		finding.ConsecutiveMisses++
+		finding.VerifiedInRun = false
+		if finding.ConsecutiveMisses >= threshold {
+			finding.Status = "FIXED"
+			resolved := now
+			finding.ResolvedAt = &resolved
+		}
+		data, err := json.Marshal(finding)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE security_findings SET data=? WHERE id=?`, string(data), id); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
 func validSystemScanStatus(value string) bool {
 	switch value {
 	case taskflow.SystemScanNotStarted, taskflow.SystemScanNotConfigured, taskflow.SystemScanPortOutOfScope, taskflow.SystemScanPortClosed,
@@ -180,6 +360,9 @@ func (s *RuntimeStore) completeEngineTask(ctx context.Context, report taskflow.R
 	}
 	if task.Synthetic || len(task.Chunks) != 1 || task.Chunks[0].WorkerNodeID != report.WorkerID {
 		return ErrTaskConflict
+	}
+	if !validExecutionSummary(report, task) {
+		return ErrInvalidTask
 	}
 	portProbeTask := len(task.Engines) == 1 && task.Engines[0] == "port-probe"
 	autoTask := len(task.Engines) == 1 && task.Engines[0] == "auto"
@@ -357,6 +540,8 @@ func (s *RuntimeStore) completeEngineTask(ctx context.Context, report taskflow.R
 					return err
 				}
 				f.FirstSeen, f.Status = old.FirstSeen, old.Status
+				f.ConsecutiveMisses = 0
+				f.ResolvedAt = nil
 				if f.Status == "FIXED" {
 					f.Status = "REOPENED"
 				}
@@ -372,7 +557,11 @@ func (s *RuntimeStore) completeEngineTask(ctx context.Context, report taskflow.R
 			}
 		}
 	}
-	// Missing findings never imply FIXED: completeness and repeat thresholds need a later design.
+	if report.Status == "COMPLETED" {
+		if err := updateMissingFindingLifecycle(ctx, tx, task, report, now); err != nil {
+			return err
+		}
+	}
 	if _, err := tx.ExecContext(ctx, `UPDATE scan_tasks SET status=?,finished_at=?,details=json_set(details,'$.error',?) WHERE id=?`, report.Status, now.Format(time.RFC3339Nano), report.Error, task.ID); err != nil {
 		return err
 	}

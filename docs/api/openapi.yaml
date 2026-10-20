@@ -2675,6 +2675,10 @@ components:
           type: string
         verifiedInRun:
           type: boolean
+        resolvedAt:
+          type: string
+          format: date-time
+          description: Time when the finding crossed the configured complete-scan miss threshold and was marked FIXED.
         synthetic:
           type: boolean
         taskId:
@@ -3145,6 +3149,21 @@ components:
           items:
             "$ref": "#/components/schemas/ApplicationResult"
         assetProfile: {"$ref": "#/components/schemas/AssetProfile"}
+        completedFully:
+          type: boolean
+          description: True only when the Worker completed the entire authorized scope without timeout or engine failure.
+        rulesExecuted:
+          type: boolean
+          description: True only when at least one configured vulnerability rule engine completed successfully.
+        executedEngines:
+          type: array
+          maxItems: 3
+          items:
+            type: string
+            enum: [nuclei, zap, trivy]
+        ruleVersion:
+          type: string
+          maxLength: 200
     AssetProfile:
       type: object
       properties:
@@ -3185,6 +3204,7 @@ components:
         exclusions: {"type": "array", "items": {"$ref": "#/components/schemas/PortRange"}}
         quarantineThreshold: {"type": "integer", "minimum": 1, "maximum": 3}
         discoveryAttempts: {"type": "integer", "minimum": 1, "maximum": 3}
+        fixedThreshold: {"type": "integer", "minimum": 1, "maximum": 3}
     VersionRange:
       type: object
       properties:

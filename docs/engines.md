@@ -67,7 +67,7 @@ dist/sec-updater --prepare-engines --with-java-db --skip-db-download --db-cache 
 
 缓存布局为 `db/{trivy.db,metadata.json}` 与 `java-db/{trivy-java.db,metadata.json}`。这条命令不联网、不扫描；只由 Updater 写规则盘。缺失、链接、文件变化、大小超限或复制中止均不激活新版本。没有 Java 索引时原有 Node.js/系统包任务仍可使用主库。Java 离线行为依据：[Trivy 受限网络配置](https://trivy.dev/docs/latest/guide/advanced/air-gap/)。
 
-结果保留组件、安装版本、漏洞编号与修复版本。镜像使用 Trivy 返回的不可变 ImageID 去重，不依赖归档文件名；重复检测保留首次时间和人工处理状态。未检出不会自动标记 FIXED。
+结果保留组件、安装版本、漏洞编号与修复版本。镜像使用 Trivy 返回的不可变 ImageID 去重，不依赖归档文件名；重复检测保留首次时间和人工处理状态。只有完整完成授权范围、实际执行规则且规则版本匹配的扫描，才会按 `fixedThreshold` 连续未检出次数自动标记 `FIXED`；失败、暂停、未执行规则、范围外结果和人工 `FALSE_POSITIVE`/`ACCEPTED_RISK` 不会被自动收敛。
 
 ## 验证与当前边界
 

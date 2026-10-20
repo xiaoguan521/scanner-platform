@@ -80,6 +80,33 @@ func TestOversizedEngineResultReportsFailureInsteadOfLeavingTaskRunning(t *testi
 	}
 }
 
+func TestWorkerPropagatesCompleteEngineMetadata(t *testing.T) {
+	var received Report
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/worker/claim":
+			_ = json.NewEncoder(w).Encode(Task{ID: "metadata-task", RuleVersion: "rules-1", Engines: []string{"nuclei"}, Chunks: []Chunk{{Targets: []string{"192.0.2.20:80"}}}})
+		case "/api/v1/worker/report":
+			if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+				t.Error(err)
+			}
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+	worker := Worker{ServerURL: server.URL, ID: "metadata-worker", Client: server.Client(), Execute: func(context.Context, Task) ([]Detection, error) {
+		return nil, nil
+	}}
+	if worked, err := worker.ProcessOne(context.Background()); err != nil || !worked {
+		t.Fatalf("metadata task did not complete: worked=%v err=%v", worked, err)
+	}
+	if received.Status != "COMPLETED" || !received.CompletedFully || !received.RulesExecuted || len(received.ExecutedEngines) != 1 || received.ExecutedEngines[0] != "nuclei" || received.RuleVersion != "rules-1" {
+		t.Fatalf("worker completion metadata was not propagated: %+v", received)
+	}
+}
+
 func TestWorkerReportsOnlyDeliberatePublicExecutionErrors(t *testing.T) {
 	for _, test := range []struct {
 		name string

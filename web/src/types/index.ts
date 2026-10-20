@@ -208,6 +208,7 @@ export interface Finding {
   businessGroup: string;
   owner: string;
   verifiedInRun: boolean;
+  resolvedAt?: string;
   synthetic?: boolean;
   artifactId?: string; matchedPath?: string; package?: string; installedVersion?: string; fixedVersion?: string; description?: string;
 }
@@ -264,7 +265,7 @@ export interface CustomRule {
   template?: string;
 }
 
-export interface ScanPolicy { commonPorts: number[]; exclusions: PortProbeRange[]; quarantineThreshold: number; discoveryAttempts: number }
+export interface ScanPolicy { commonPorts: number[]; exclusions: PortProbeRange[]; quarantineThreshold: number; discoveryAttempts: number; fixedThreshold: number }
 export interface DetectionCapability { id: string; name: string; status: 'enabled'|'disabled'|'unavailable'; message: string }
 export interface VulnerabilityCategory { id: string; name: string; cwe?: string }
 export interface KnowledgeEntry { id: string; title: string; description: string; impact: string; solution: string; references: string[]; cvssScore?: number; category: string; identifiers: Record<string,string[]>; component: string; affectedRanges: {introduced?:string;fixed?:string;lastAffected?:string}[]; source: string; updatedAt: string; language: string }

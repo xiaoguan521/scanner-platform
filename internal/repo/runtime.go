@@ -180,6 +180,10 @@ func readRuntimeTask(row rowScanner) (taskflow.Task, error) {
 		task.TimeWindows = []scheduler.Window{}
 	}
 	task.RuleVersion = detail.RuleVersion
+	task.FixedThreshold = detail.FixedThreshold
+	if task.FixedThreshold < 1 {
+		task.FixedThreshold = defaultPolicy().FixedThreshold
+	}
 	task.Error = detail.Error
 	task.InputPath, task.InputKind, task.Scheme = detail.Input.InputPath, detail.Input.InputKind, detail.Input.Scheme
 	task.AssetID = detail.Input.AssetID
@@ -497,6 +501,10 @@ func (s *RuntimeStore) claimRuntimeTask(ctx context.Context, worker string) (*ta
 			}
 			fresh.RuleVersion = detail.RuleVersion
 			fresh.CustomRules = detail.CustomRules
+			fresh.FixedThreshold = detail.FixedThreshold
+			if fresh.FixedThreshold < 1 {
+				fresh.FixedThreshold = defaultPolicy().FixedThreshold
+			}
 			detail = fresh
 			encoded, _ := json.Marshal(targets)
 			if _, err := tx.ExecContext(ctx, "UPDATE scan_tasks SET targets=? WHERE id=?", string(encoded), id); err != nil {

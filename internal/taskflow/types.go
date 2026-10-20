@@ -96,25 +96,28 @@ type Chunk struct {
 }
 
 type Task struct {
-	EffectiveExclusions   []portprobe.Range   `json:"effectiveExclusions,omitempty"`
-	QuarantinedPorts      []int               `json:"quarantinedPorts,omitempty"`
-	ID                    string              `json:"id"`
-	ScopeID               string              `json:"scopeId"`
-	ScopeName             string              `json:"scopeName"`
-	Engines               []string            `json:"engines"`
-	Status                string              `json:"status"`
-	Archived              bool                `json:"archived,omitempty"`
-	FindingCount          int                 `json:"findingCount"`
-	HardDeadline          string              `json:"hardDeadline"`
-	TotalChunks           int                 `json:"totalChunks"`
-	CompletedChunks       int                 `json:"completedChunks"`
-	TargetCount           int                 `json:"targetCount"`
-	CreatedAt             time.Time           `json:"createdAt"`
-	Chunks                []Chunk             `json:"chunks"`
-	Synthetic             bool                `json:"synthetic"`
-	SkippedTargets        []string            `json:"skippedTargets"`
-	TimeWindows           []scheduler.Window  `json:"timeWindows"`
-	RuleVersion           string              `json:"ruleVersion"`
+	EffectiveExclusions []portprobe.Range  `json:"effectiveExclusions,omitempty"`
+	QuarantinedPorts    []int              `json:"quarantinedPorts,omitempty"`
+	ID                  string             `json:"id"`
+	ScopeID             string             `json:"scopeId"`
+	ScopeName           string             `json:"scopeName"`
+	Engines             []string           `json:"engines"`
+	Status              string             `json:"status"`
+	Archived            bool               `json:"archived,omitempty"`
+	FindingCount        int                `json:"findingCount"`
+	HardDeadline        string             `json:"hardDeadline"`
+	TotalChunks         int                `json:"totalChunks"`
+	CompletedChunks     int                `json:"completedChunks"`
+	TargetCount         int                `json:"targetCount"`
+	CreatedAt           time.Time          `json:"createdAt"`
+	Chunks              []Chunk            `json:"chunks"`
+	Synthetic           bool               `json:"synthetic"`
+	SkippedTargets      []string           `json:"skippedTargets"`
+	TimeWindows         []scheduler.Window `json:"timeWindows"`
+	RuleVersion         string             `json:"ruleVersion"`
+	// FixedThreshold is frozen with the task and used only by the Server when
+	// evaluating the finding lifecycle. It is deliberately not sent to Worker.
+	FixedThreshold        int                 `json:"-"`
 	InputPath             string              `json:"inputPath,omitempty"`
 	InputKind             string              `json:"inputKind,omitempty"`
 	Scheme                string              `json:"scheme,omitempty"`
@@ -199,6 +202,7 @@ type Finding struct {
 	BusinessGroup     string              `json:"businessGroup"`
 	Owner             string              `json:"owner"`
 	VerifiedInRun     bool                `json:"verifiedInRun"`
+	ResolvedAt        *time.Time          `json:"resolvedAt,omitempty"`
 	Synthetic         bool                `json:"synthetic"`
 	MatchedPath       string              `json:"matchedPath,omitempty"`
 	Package           string              `json:"package,omitempty"`
@@ -265,6 +269,13 @@ type Report struct {
 	ApplicationScanStatus string              `json:"applicationScanStatus,omitempty"`
 	ApplicationResults    []ApplicationResult `json:"applicationResults,omitempty"`
 	AssetProfile          inventory.Profile   `json:"assetProfile,omitempty"`
+	// Completion metadata is a fail-closed gate for automatic FIXED updates.
+	// Older Workers may omit it; such reports still ingest findings but cannot
+	// mark missing findings as fixed.
+	CompletedFully  bool     `json:"completedFully,omitempty"`
+	RulesExecuted   bool     `json:"rulesExecuted,omitempty"`
+	ExecutedEngines []string `json:"executedEngines,omitempty"`
+	RuleVersion     string   `json:"ruleVersion,omitempty"`
 }
 
 type AutoResult struct {
@@ -275,6 +286,9 @@ type AutoResult struct {
 	ApplicationStatus  string
 	ApplicationResults []ApplicationResult
 	AssetProfile       inventory.Profile
+	CompletedFully     bool
+	RulesExecuted      bool
+	ExecutedEngines    []string
 }
 
 // EngineStatus is based on local binary and data checks, not a successful scan.

@@ -28,6 +28,196 @@ func approveFixturePort(t *testing.T, store *RuntimeStore, actor, address string
 	}
 }
 
+func installNucleiFixtureBundle(t *testing.T, store *RuntimeStore, version string) {
+	t.Helper()
+	data, err := json.Marshal(rules.Bundle{Version: version, Engines: []string{"nuclei"}, IsCurrent: true, IntegrityVerified: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(context.Background(), "INSERT INTO local_rule_bundles(version,data) VALUES(?,?)", version, string(data)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func createClaimedNucleiTask(t *testing.T, store *RuntimeStore, actor, worker string) taskflow.Task {
+	t.Helper()
+	task, err := store.CreateLocalTask(context.Background(), taskflow.TaskInput{Engine: "nuclei", Scheme: "http", Targets: []string{"192.0.2.20:80"}}, actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := store.ClaimRuntimeTask(context.Background(), worker)
+	if err != nil || claimed == nil || claimed.ID != task.ID {
+		t.Fatalf("claim task: %+v %v", claimed, err)
+	}
+	return *claimed
+}
+
+func completeNucleiFixture(t *testing.T, store *RuntimeStore, task taskflow.Task, findings ...taskflow.Detection) {
+	t.Helper()
+	report := taskflow.Report{TaskID: task.ID, WorkerID: task.Chunks[0].WorkerNodeID, Status: "COMPLETED", Findings: findings,
+		CompletedFully: true, RulesExecuted: true, ExecutedEngines: []string{"nuclei"}, RuleVersion: task.RuleVersion}
+	if err := store.CompleteRuntimeTask(context.Background(), report); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func fixtureNucleiFinding() taskflow.Detection {
+	return taskflow.Detection{Engine: "nuclei", Target: "192.0.2.20:80", TemplateID: "fixture-header", Title: "fixture header", Severity: "LOW", MatchedPath: "/"}
+}
+
+func TestFindingLifecycleMarksFixedOnlyAfterCompleteEligibleMiss(t *testing.T) {
+	store, actor := localFixture(t)
+	ctx := context.Background()
+	approveFixturePort(t, store, actor, "192.0.2.20", 80)
+	installNucleiFixtureBundle(t, store, "20261020.05")
+
+	first := createClaimedNucleiTask(t, store, actor, "fixed-worker")
+	completeNucleiFixture(t, store, first, fixtureNucleiFinding())
+	items, err := store.ListRuntimeFindings(ctx)
+	if err != nil || len(items) != 1 || items[0].Status != "OPEN" || items[0].ConsecutiveMisses != 0 || !items[0].VerifiedInRun {
+		t.Fatalf("first eligible report did not create OPEN finding: %+v %v", items, err)
+	}
+
+	second := createClaimedNucleiTask(t, store, actor, "fixed-worker")
+	completeNucleiFixture(t, store, second)
+	items, err = store.ListRuntimeFindings(ctx)
+	if err != nil || len(items) != 1 || items[0].Status != "FIXED" || items[0].ConsecutiveMisses != 1 || items[0].VerifiedInRun || items[0].ResolvedAt == nil {
+		t.Fatalf("eligible missing finding did not become FIXED: %+v %v", items, err)
+	}
+
+	third := createClaimedNucleiTask(t, store, actor, "fixed-worker")
+	completeNucleiFixture(t, store, third, fixtureNucleiFinding())
+	items, err = store.ListRuntimeFindings(ctx)
+	if err != nil || len(items) != 1 || items[0].Status != "REOPENED" || items[0].ConsecutiveMisses != 0 || !items[0].VerifiedInRun || items[0].ResolvedAt != nil {
+		t.Fatalf("reappearance did not reopen finding: %+v %v", items, err)
+	}
+}
+
+func TestFindingLifecycleRequiresCompleteMatchingRulesAndScope(t *testing.T) {
+	store, actor := localFixture(t)
+	ctx := context.Background()
+	approveFixturePort(t, store, actor, "192.0.2.20", 80)
+	installNucleiFixtureBundle(t, store, "20261020.06")
+	first := createClaimedNucleiTask(t, store, actor, "lifecycle-worker")
+	completeNucleiFixture(t, store, first, fixtureNucleiFinding())
+
+	// A report without the new metadata is accepted for compatibility, but it
+	// cannot make an absent finding count as a verified miss.
+	old := createClaimedNucleiTask(t, store, actor, "lifecycle-worker")
+	if err := store.CompleteRuntimeTask(ctx, taskflow.Report{TaskID: old.ID, WorkerID: "lifecycle-worker", Status: "COMPLETED"}); err != nil {
+		t.Fatal(err)
+	}
+	items, _ := store.ListRuntimeFindings(ctx)
+	if items[0].Status != "OPEN" || items[0].ConsecutiveMisses != 0 {
+		t.Fatalf("old report changed lifecycle: %+v", items[0])
+	}
+
+	failed := createClaimedNucleiTask(t, store, actor, "lifecycle-worker")
+	if err := store.CompleteRuntimeTask(ctx, taskflow.Report{TaskID: failed.ID, WorkerID: "lifecycle-worker", Status: "FAILED", Error: "fixture"}); err != nil {
+		t.Fatal(err)
+	}
+	items, _ = store.ListRuntimeFindings(ctx)
+	if items[0].ConsecutiveMisses != 0 {
+		t.Fatalf("failed report changed lifecycle: %+v", items[0])
+	}
+
+	mismatch := createClaimedNucleiTask(t, store, actor, "lifecycle-worker")
+	bad := taskflow.Report{TaskID: mismatch.ID, WorkerID: "lifecycle-worker", Status: "COMPLETED", CompletedFully: true, RulesExecuted: true, ExecutedEngines: []string{"nuclei"}, RuleVersion: "wrong-version"}
+	if err := store.CompleteRuntimeTask(ctx, bad); err != nil {
+		t.Fatal(err)
+	}
+	items, _ = store.ListRuntimeFindings(ctx)
+	if items[0].ConsecutiveMisses != 0 {
+		t.Fatalf("version mismatch changed lifecycle: %+v", items[0])
+	}
+
+	// A finding for a different port is outside this task's exact target and
+	// must not be touched by a later eligible 80/tcp scan. Seed it directly to
+	// keep this test independent of the fixture's registered-port approvals.
+	var assetID string
+	if err := store.db.QueryRowContext(ctx, "SELECT id FROM assets WHERE address=?", "192.0.2.20").Scan(&assetID); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	outOfScope := taskflow.Finding{ID: "finding-out-of-scope", TaskID: first.ID, Fingerprint: "out-of-scope", AssetID: assetID, Severity: "LOW", Title: "out of scope", Engine: "nuclei", TemplateOrCVE: "fixture-other", Target: "192.0.2.20:443", Status: "OPEN", FirstSeen: now, LastSeen: now, VerifiedInRun: true}
+	raw, _ := json.Marshal(outOfScope)
+	if _, err := store.db.ExecContext(ctx, "INSERT INTO security_findings(id,task_id,data) VALUES(?,?,?)", outOfScope.ID, first.ID, string(raw)); err != nil {
+		t.Fatal(err)
+	}
+	scopeCheck := createClaimedNucleiTask(t, store, actor, "lifecycle-worker")
+	completeNucleiFixture(t, store, scopeCheck)
+	items, _ = store.ListRuntimeFindings(ctx)
+	for _, item := range items {
+		if item.Target == "192.0.2.20:443" && item.Status != "OPEN" {
+			t.Fatalf("out-of-scope finding was changed: %+v", item)
+		}
+	}
+}
+
+func TestFindingLifecycleUsesFrozenThreshold(t *testing.T) {
+	store, actor := localFixture(t)
+	ctx := context.Background()
+	approveFixturePort(t, store, actor, "192.0.2.20", 80)
+	installNucleiFixtureBundle(t, store, "20261020.07")
+	policy := defaultPolicy()
+	policy.FixedThreshold = 2
+	if _, err := store.SaveScanPolicy(ctx, policy, actor); err != nil {
+		t.Fatal(err)
+	}
+	first := createClaimedNucleiTask(t, store, actor, "threshold-worker")
+	if first.FixedThreshold != 2 {
+		t.Fatalf("task did not freeze fixed threshold: %d", first.FixedThreshold)
+	}
+	completeNucleiFixture(t, store, first, fixtureNucleiFinding())
+	for i := 0; i < 2; i++ {
+		task := createClaimedNucleiTask(t, store, actor, "threshold-worker")
+		completeNucleiFixture(t, store, task)
+		items, _ := store.ListRuntimeFindings(ctx)
+		wantStatus := "OPEN"
+		wantMisses := i + 1
+		if i == 1 {
+			wantStatus = "FIXED"
+		}
+		if items[0].Status != wantStatus || items[0].ConsecutiveMisses != wantMisses {
+			t.Fatalf("threshold=%d iteration=%d: %+v", first.FixedThreshold, i, items[0])
+		}
+	}
+}
+
+func TestFindingLifecyclePreservesManualDisposition(t *testing.T) {
+	for _, status := range []string{"FALSE_POSITIVE", "ACCEPTED_RISK"} {
+		t.Run(status, func(t *testing.T) {
+			store, actor := localFixture(t)
+			ctx := context.Background()
+			approveFixturePort(t, store, actor, "192.0.2.20", 80)
+			installNucleiFixtureBundle(t, store, "20261020.08")
+			first := createClaimedNucleiTask(t, store, actor, "manual-state-worker")
+			completeNucleiFixture(t, store, first, fixtureNucleiFinding())
+			items, err := store.ListRuntimeFindings(ctx)
+			if err != nil || len(items) != 1 {
+				t.Fatalf("initial finding missing: %+v %v", items, err)
+			}
+			if status == "FALSE_POSITIVE" {
+				if _, err := store.UpdateFinding(ctx, items[0].ID, status, actor); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				items[0].Status = status
+				raw, _ := json.Marshal(items[0])
+				if _, err := store.db.ExecContext(ctx, "UPDATE security_findings SET data=? WHERE id=?", string(raw), items[0].ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			second := createClaimedNucleiTask(t, store, actor, "manual-state-worker")
+			completeNucleiFixture(t, store, second)
+			items, err = store.ListRuntimeFindings(ctx)
+			if err != nil || len(items) != 1 || items[0].Status != status || items[0].ConsecutiveMisses != 0 {
+				t.Fatalf("manual disposition changed by missing scan: %+v %v", items, err)
+			}
+		})
+	}
+}
+
 func TestRealTasksMultipleResultsDedupAndFailure(t *testing.T) {
 	store, actor := localFixture(t)
 	ctx := context.Background()

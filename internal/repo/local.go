@@ -43,6 +43,7 @@ type taskDetails struct {
 	SystemStatus        string                       `json:"systemScanStatus,omitempty"`
 	ApplicationStatus   string                       `json:"applicationScanStatus,omitempty"`
 	ApplicationResults  []taskflow.ApplicationResult `json:"applicationResults,omitempty"`
+	FixedThreshold      int                          `json:"fixedThreshold"`
 	Deadline            string                       `json:"deadline"`
 	RuleVersion         string                       `json:"ruleVersion"`
 	Error               string                       `json:"error,omitempty"`
@@ -362,6 +363,14 @@ func createLocalTask(ctx context.Context, tx *sql.Tx, in taskflow.TaskInput, act
 	detail.CustomRules, err = customTemplates(ctx, tx, detail.Input)
 	if err != nil {
 		return taskflow.Task{}, fmt.Errorf("load custom scan rules: %w", err)
+	}
+	policy, err := policyIn(ctx, tx)
+	if err != nil {
+		return taskflow.Task{}, err
+	}
+	detail.FixedThreshold = policy.FixedThreshold
+	if detail.FixedThreshold < 1 {
+		detail.FixedThreshold = defaultPolicy().FixedThreshold
 	}
 	status := "PENDING"
 	_, allowed, err := scheduler.AllowedUntil(in.TimeWindows, now)

@@ -52,6 +52,14 @@ func (r *Runner) AutoScan(ctx context.Context, task taskflow.Task) (taskflow.Aut
 	}
 	services := identifyServices(ctx, task.Chunks[0].Targets[0], openApproved, task.PortProbeConfig)
 	result := taskflow.AutoResult{Ports: open, Services: services, Findings: []taskflow.Detection{}, SystemStatus: taskflow.SystemScanNotStarted, ApplicationStatus: taskflow.ApplicationScanNotStarted, AssetProfile: inferProfile(services)}
+	markEngine := func(engine string) {
+		for _, existing := range result.ExecutedEngines {
+			if existing == engine {
+				return
+			}
+		}
+		result.ExecutedEngines = append(result.ExecutedEngines, engine)
+	}
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
@@ -79,6 +87,7 @@ func (r *Runner) AutoScan(ctx context.Context, task taskflow.Task) (taskflow.Aut
 			if err != nil {
 				return result, err
 			}
+			markEngine("nuclei")
 			result.Findings = append(result.Findings, findings...)
 			if r.zapReady() {
 				taskflow.ReportProgress(ctx, "http_scan", 0, 0)
@@ -87,6 +96,7 @@ func (r *Runner) AutoScan(ctx context.Context, task taskflow.Task) (taskflow.Aut
 				if err != nil {
 					return result, err
 				}
+				markEngine("zap")
 				result.Findings = append(result.Findings, findings...)
 			}
 		}
@@ -130,6 +140,7 @@ func (r *Runner) AutoScan(ctx context.Context, task taskflow.Task) (taskflow.Aut
 						result.SystemStatus = taskflow.SystemScanTrivyFailed
 					}
 				} else {
+					markEngine("trivy")
 					host := task.Chunks[0].Targets[0]
 					for i := range findings {
 						findings[i].Target = net.JoinHostPort(host, strconv.Itoa(sshPort))
@@ -146,7 +157,37 @@ func (r *Runner) AutoScan(ctx context.Context, task taskflow.Task) (taskflow.Aut
 	if err := r.scanApplications(ctx, task, &result); err != nil {
 		return result, err
 	}
+	for _, app := range result.ApplicationResults {
+		if app.AnalyzedCount > 0 {
+			markEngine("trivy")
+			break
+		}
+	}
+	result.RulesExecuted = len(result.ExecutedEngines) > 0
+	result.CompletedFully = autoScanCompleted(result)
 	return result, nil
+}
+
+// autoScanCompleted is deliberately conservative. A known inability to
+// collect or analyze a configured SSH/application input means the authorized
+// scope was not fully checked, so its absence cannot close old findings.
+func autoScanCompleted(result taskflow.AutoResult) bool {
+	switch result.SystemStatus {
+	case taskflow.SystemScanNotStarted, taskflow.SystemScanPortOutOfScope,
+		taskflow.SystemScanPortClosed, taskflow.SystemScanCollectionFailed,
+		taskflow.SystemScanInvalidSnapshot, taskflow.SystemScanTrivyUnavailable,
+		taskflow.SystemScanUnsupportedOS, taskflow.SystemScanTrivyFailed,
+		taskflow.SystemScanAuthFailed, taskflow.SystemScanHostKeyMismatch,
+		taskflow.SystemScanPythonMissing, taskflow.SystemScanClientMissing:
+		return false
+	}
+	switch result.ApplicationStatus {
+	case taskflow.ApplicationScanNotStarted, taskflow.ApplicationScanCollecting,
+		taskflow.ApplicationScanPortOutOfScope, taskflow.ApplicationScanScanning, taskflow.ApplicationScanCollectionFailed,
+		taskflow.ApplicationScanAnalysisFailed:
+		return false
+	}
+	return true
 }
 
 func openPorts(results []taskflow.PortProbeResult) []int {
