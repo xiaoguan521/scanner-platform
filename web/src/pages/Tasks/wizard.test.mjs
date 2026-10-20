@@ -7,7 +7,7 @@ async function load(relative) {
   const js=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2020,module:ts.ModuleKind.ESNext}}).outputText;
   return import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`);
 }
-const {isAutoTaskWizard,wizardStepFields,assertTaskSubmission}=await load('./wizard.ts');
+const {isAutoTaskWizard,wizardStepFields,assertTaskSubmission,getScanPlanDefaults}=await load('./wizard.ts');
 const {previewProbePorts,parsePortRanges}=await load('./policy.ts');
 assert.equal(isAutoTaskWizard({engine:'auto',mode:'now'},false),true);
 for(const engine of ['synthetic','nuclei','trivy','zap','port-probe'])assert.equal(isAutoTaskWizard({engine,mode:'now'},false),false);
@@ -26,6 +26,9 @@ assert.throws(()=>assertTaskSubmission({engine:'port-probe',opsApproved:false},t
 assert.doesNotThrow(()=>assertTaskSubmission({engine:'auto',opsApproved:true},true,true,3));
 for(const engine of ['trivy','synthetic','nuclei','zap'])assert.doesNotThrow(()=>assertTaskSubmission({engine},true,false,0));
 assert.doesNotThrow(()=>assertTaskSubmission({engine:'auto',mode:'schedule',opsApproved:true},true,false,0));
+assert.deepEqual(getScanPlanDefaults('quick'),{portPreset:'common',intensity:'gentle',portRanges:'',portExclusions:'',customRuleIds:[]});
+assert.deepEqual(getScanPlanDefaults('standard'),{portPreset:'common-and-custom',intensity:'standard',portRanges:'',portExclusions:'',customRuleIds:[]});
+assert.deepEqual(getScanPlanDefaults('unexpected'),getScanPlanDefaults('quick'),'unknown plans fail closed to the quick preset');
 const asset={id:'example-host',kind:'host',address:'192.0.2.10',ports:[{port:22,kind:'NON_WEB'},{port:80,kind:'WEB'},{port:443,kind:'EXCLUDED_PROXY'}],services:[{port:8080}],quarantinedPorts:[9000]};
 const policy={commonPorts:[22,80,443,9000],exclusions:[{start:22,end:22}]};
 const cases=[

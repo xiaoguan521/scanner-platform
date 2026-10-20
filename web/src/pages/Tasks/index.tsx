@@ -10,7 +10,7 @@ import { mockAssets, mockTasks } from '../../mock/data';
 import type { CustomRule, PortProbeRange, ScanTask, Schedule, ScheduleRun, TaskInput, ScanPolicy } from '../../types';
 
 import { parsePortRanges, showRanges, coversAllPorts, presetLabels, summarizePorts, compressPorts, previewProbePorts } from './policy';
-import { assertTaskSubmission, isAutoTaskWizard, wizardStepFields } from './wizard';
+import { assertTaskSubmission, getScanPlanDefaults, isAutoTaskWizard, wizardStepFields } from './wizard';
 const dayOptions=['周日','周一','周二','周三','周四','周五','周六'].map((label,value)=>({label,value}));
 const names:Record<string,string>={PENDING:'待领取',RUNNING:'执行中',WAITING_WINDOW:'等待时间窗',PAUSED_WINDOW:'窗口结束，等待恢复',COMPLETED:'已完成',CANCELED:'已取消',FAILED:'失败'};
 const scheduleRunNames:Record<string,string>={...names,DELETED:'任务记录已删除'};
@@ -20,7 +20,11 @@ const ApplicationCoverage:React.FC<{task:ScanTask}>=({task})=><>
   <Typography.Text>Java / Go 应用：{task.applicationScanStatus?applicationStatuses[task.applicationScanStatus]??'状态未知':'等待 Worker 回报（旧任务未记录应用覆盖）'}</Typography.Text>
   {task.applicationResults?.map(app=><Typography.Text key={app.alias} type={['collection_failed','analysis_failed'].includes(app.status)?'danger':undefined}>应用 {app.alias}：{applicationStatuses[app.status]??'状态未知'}；已分析 {app.analyzedCount} / 选中 {app.selectedCount} 个文件</Typography.Text>)}
 </>;
-type Values={engine:'auto'|'synthetic'|'nuclei'|'trivy'|'zap'|'port-probe';scheme:'http'|'https';inputPath:string;inputKind:'filesystem'|'image-archive'|'rootfs'|'artifact';targets:string[];assetId:string;portPreset:'common'|'custom'|'common-and-custom'|'registered'|'full';intensity:'gentle'|'standard'|'aggressive';portRanges:string;portExclusions:string;opsApproved:boolean;customRuleIds:string[];mode:'now'|'schedule';name:string;nextRun:string;intervalMinutes:number;window:boolean;weekdays:number[];start:string;end:string;timeZone:string};
+type Values={engine:'auto'|'synthetic'|'nuclei'|'trivy'|'zap'|'port-probe';scheme:'http'|'https';inputPath:string;inputKind:'filesystem'|'image-archive'|'rootfs'|'artifact';targets:string[];assetId:string;scanPlan:'quick'|'standard';portPreset:'common'|'custom'|'common-and-custom'|'registered'|'full';intensity:'gentle'|'standard'|'aggressive';portRanges:string;portExclusions:string;opsApproved:boolean;customRuleIds:string[];mode:'now'|'schedule';name:string;nextRun:string;intervalMinutes:number;window:boolean;weekdays:number[];start:string;end:string;timeZone:string};
+const scanPlans=[
+  {id:'quick' as const,title:'快速检测',summary:'常见端口、温和速率、只读 HTTP 基线',detail:'适合首次确认资产暴露面，连接数和目标负载较低。',defaults:getScanPlanDefaults('quick')},
+  {id:'standard' as const,title:'标准检测',summary:'常见端口加可选自定义范围、标准速率',detail:'适合日常例检；仍只处理本次明确授权的端口。',defaults:getScanPlanDefaults('standard')},
+];
 function validateProbeRanges(text?:string):void{
   const ranges=parsePortRanges(text);
   if(ranges.length===0) throw new Error('此模式至少填写一个端口或端口范围');
@@ -39,7 +43,7 @@ export const TasksPage:React.FC=()=>{
   const [editingSchedule,setEditingSchedule]=useState<Schedule|null>(null);
   const [historySchedule,setHistorySchedule]=useState<Schedule|null>(null);const [scheduleRunPage,setScheduleRunPage]=useState(1);const [scheduleRuns,setScheduleRuns]=useState<ScheduleRun[]>([]);const [scheduleRunTotal,setScheduleRunTotal]=useState(0);const [scheduleRunLoading,setScheduleRunLoading]=useState(false);const [scheduleRunError,setScheduleRunError]=useState('');
   const [taskFilter,setTaskFilter]=useState('');const [statusFilter,setStatusFilter]=useState('all');const [engineFilter,setEngineFilter]=useState('all');
-  const engine=Form.useWatch('engine',form)??'auto';const mode=Form.useWatch('mode',form);const useWindow=Form.useWatch('window',form);const portPreset=Form.useWatch('portPreset',form)??'common';
+  const engine=Form.useWatch('engine',form)??'auto';const mode=Form.useWatch('mode',form);const useWindow=Form.useWatch('window',form);const portPreset=Form.useWatch('portPreset',form)??'common';const selectedPlan=Form.useWatch('scanPlan',form)??'quick';
   const wizard=isAutoTaskWizard({engine,mode},Boolean(editingSchedule));
   const watchedValues=Form.useWatch([],form) as Partial<Values>|undefined;
   const selectedAsset=assets.find(asset=>asset.id===watchedValues?.assetId&&asset.kind==='host');
@@ -80,6 +84,7 @@ export const TasksPage:React.FC=()=>{
     return()=>controller.abort();
   },[historySchedule,scheduleRunPage]);
   const confirmFull=()=>new Promise<boolean>(resolve=>Modal.confirm({title:'确认全端口探测',content:'将对这台主机的 TCP 1–65535 端口发起连接（排除项会跳过）。按每次连接超时 1 秒、并发 16 粗略估算约 69 分钟；实际时间取决于速率、超时和响应，服务识别与漏洞检测会额外耗时。可能增加目标连接数及日志量，请确认维护窗口和授权范围。',okText:'确认全端口范围',cancelText:'返回修改',onOk:()=>resolve(true),onCancel:()=>resolve(false)}));
+  const choosePlan=(plan:'quick'|'standard')=>{form.setFieldsValue({scanPlan:plan,...getScanPlanDefaults(plan)});};
   const create=async(values:Values)=>{
     if(busy)return;
     setBusy(true);
@@ -118,7 +123,7 @@ export const TasksPage:React.FC=()=>{
   };
   const openScheduleEdit=(schedule:Schedule)=>{
     const window=schedule.timeWindows?.[0];const nextRun=new Date(schedule.nextRun);
-    form.setFieldsValue({engine:schedule.synthetic?'synthetic':schedule.engine??'synthetic',scheme:schedule.scheme??'http',inputPath:schedule.inputPath??'',inputKind:schedule.inputKind??'filesystem',targets:schedule.targets??[],assetId:schedule.assetId??'',portPreset:schedule.portProbe?.preset??'common',intensity:schedule.portProbe?.intensity??'gentle',portRanges:schedule.portProbe?.ranges?.map(r=>r.start===r.end?String(r.start):`${r.start}-${r.end}`).join(', ')??'',portExclusions:schedule.portProbe?.exclusions?.map(r=>r.start===r.end?String(r.start):`${r.start}-${r.end}`).join(', ')??'',customRuleIds:schedule.customRuleIds??[],mode:'schedule',name:schedule.name,nextRun:Number.isFinite(nextRun.getTime())?new Date(nextRun.getTime()-nextRun.getTimezoneOffset()*60000).toISOString().slice(0,16):'',intervalMinutes:schedule.intervalMinutes,window:Boolean(schedule.timeWindows?.length),weekdays:window?.weekdays??[1,2,3,4,5],start:window?.start??'09:00',end:window?.end??'18:00',timeZone:window?.timeZone??'Asia/Shanghai'});
+    form.setFieldsValue({engine:schedule.synthetic?'synthetic':schedule.engine??'synthetic',scheme:schedule.scheme??'http',inputPath:schedule.inputPath??'',inputKind:schedule.inputKind??'filesystem',targets:schedule.targets??[],assetId:schedule.assetId??'',scanPlan:'standard',portPreset:schedule.portProbe?.preset??'common',intensity:schedule.portProbe?.intensity??'gentle',portRanges:schedule.portProbe?.ranges?.map(r=>r.start===r.end?String(r.start):`${r.start}-${r.end}`).join(', ')??'',portExclusions:schedule.portProbe?.exclusions?.map(r=>r.start===r.end?String(r.start):`${r.start}-${r.end}`).join(', ')??'',customRuleIds:schedule.customRuleIds??[],mode:'schedule',name:schedule.name,nextRun:Number.isFinite(nextRun.getTime())?new Date(nextRun.getTime()-nextRun.getTimezoneOffset()*60000).toISOString().slice(0,16):'',intervalMinutes:schedule.intervalMinutes,window:Boolean(schedule.timeWindows?.length),weekdays:window?.weekdays??[1,2,3,4,5],start:window?.start??'09:00',end:window?.end??'18:00',timeZone:window?.timeZone??'Asia/Shanghai'});
     setWizardStep(0);setEditingSchedule(schedule);setOpen(true);
   };
   const copyTask=(task:ScanTask)=>{
@@ -126,7 +131,7 @@ export const TasksPage:React.FC=()=>{
     const taskEngine:Values['engine']=task.synthetic?'synthetic':task.engines[0]==='port-probe'?'auto':task.engines[0];const window=task.timeWindows?.[0];
     const portConfig=task.portProbeConfig;
     const rangeText=(ranges?:PortProbeRange[])=>ranges?.map(range=>range.start===range.end?String(range.start):`${range.start}-${range.end}`).join(', ')??'';
-    form.setFieldsValue({engine:taskEngine,scheme:task.scheme==='https'?'https':'http',inputPath:task.inputPath??'',inputKind:(task.inputKind as Values['inputKind'])??'filesystem',targets:task.chunks?.flatMap(chunk=>chunk.targets)??[],assetId:task.assetId??'',portPreset:portConfig?.preset??'common',intensity:portConfig?.intensity??'gentle',portRanges:rangeText(portConfig?.ranges),portExclusions:rangeText(portConfig?.exclusions),opsApproved:false,mode:'now',window:Boolean(task.timeWindows?.length),weekdays:window?.weekdays??[0,1,2,3,4,5,6],start:window?.start??'09:00',end:window?.end??'18:00',timeZone:window?.timeZone??'Asia/Shanghai'});
+    form.setFieldsValue({engine:taskEngine,scheme:task.scheme==='https'?'https':'http',inputPath:task.inputPath??'',inputKind:(task.inputKind as Values['inputKind'])??'filesystem',targets:task.chunks?.flatMap(chunk=>chunk.targets)??[],assetId:task.assetId??'',scanPlan:'standard',portPreset:portConfig?.preset??'common',intensity:portConfig?.intensity??'gentle',portRanges:rangeText(portConfig?.ranges),portExclusions:rangeText(portConfig?.exclusions),opsApproved:false,mode:'now',window:Boolean(task.timeWindows?.length),weekdays:window?.weekdays??[0,1,2,3,4,5,6],start:window?.start??'09:00',end:window?.end??'18:00',timeZone:window?.timeZone??'Asia/Shanghai'});
     setWizardStep(0);setEditingSchedule(null);setOpen(true);
   };
   const removeSchedule=(schedule:Schedule)=>Modal.confirm({title:'删除定时任务',content:`删除“${schedule.name}”后将停止后续调度，已创建的扫描任务和结果会保留。`,okText:'删除',okButtonProps:{danger:true},cancelText:'取消',onOk:async()=>{try{await deleteSchedule(schedule.id);setSchedules(prev=>prev.filter(item=>item.id!==schedule.id));message.success('定时任务已删除');}catch(cause){message.error(cause instanceof Error?cause.message:'删除失败');throw cause;}}});
@@ -190,12 +195,12 @@ export const TasksPage:React.FC=()=>{
       {wizardStep<3?<Button type="primary" onClick={()=>void nextWizardStep()}>下一步</Button>:<Button type="primary" loading={busy} disabled={!canWrite||!watchedValues?.opsApproved} onClick={()=>form.submit()}>确认并创建</Button>}
     </Space>:undefined}>
       {wizard&&<Steps current={wizardStep} size="small" style={{marginBottom:24}} items={[{title:'目标'},{title:'方案'},{title:'执行方式'},{title:'确认'}]}/>}
-      <Form<Values> form={form} disabled={busy} layout="vertical" onValuesChange={changed=>{if(wizard&&!Object.prototype.hasOwnProperty.call(changed,'opsApproved'))form.setFieldValue('opsApproved',false);}} onFinish={create} onKeyDown={event=>{if(wizard&&wizardStep<3&&event.key==='Enter'&&!(event.target as HTMLElement).closest('.ant-select, textarea')){event.preventDefault();void nextWizardStep();}}} initialValues={{engine:'auto',scheme:'http',inputKind:'filesystem',mode:'now',portPreset:'common',intensity:'gentle',portRanges:'',portExclusions:'',opsApproved:false,customRuleIds:[],window:false,weekdays:[0,1,2,3,4,5,6],start:'09:00',end:'18:00',timeZone:'Asia/Shanghai',intervalMinutes:0}}>
+      <Form<Values> form={form} disabled={busy} layout="vertical" onValuesChange={changed=>{if(wizard&&!Object.prototype.hasOwnProperty.call(changed,'opsApproved'))form.setFieldValue('opsApproved',false);}} onFinish={create} onKeyDown={event=>{if(wizard&&wizardStep<3&&event.key==='Enter'&&!(event.target as HTMLElement).closest('.ant-select, textarea')){event.preventDefault();void nextWizardStep();}}} initialValues={{engine:'auto',scheme:'http',inputKind:'filesystem',mode:'now',scanPlan:'quick',portPreset:'common',intensity:'gentle',portRanges:'',portExclusions:'',opsApproved:false,customRuleIds:[],window:false,weekdays:[0,1,2,3,4,5,6],start:'09:00',end:'18:00',timeZone:'Asia/Shanghai',intervalMinutes:0}}>
         <div hidden={wizard&&wizardStep!==0}><Form.Item name="engine" label="执行任务"><Select options={[{value:'auto',label:'自动综合扫描（推荐）'},{value:'synthetic',label:'模拟任务（不连接目标）'},{value:'trivy',label:'离线输入扫描（系统包 / 应用 / 镜像）'}]}/></Form.Item></div>
         {(engine==='nuclei'||engine==='zap')&&<Form.Item name="scheme" label="Web 协议" rules={[{required:true}]}><Select options={[{value:'http',label:'HTTP'},{value:'https',label:'HTTPS（允许自签名证书）'}]}/></Form.Item>}
         {engine==='trivy'?<><Form.Item name="inputKind" label="输入类型"><Select options={[{value:'rootfs',label:'Linux 系统包快照（rootfs）'},{value:'filesystem',label:'应用依赖清单（lock 文件）'},{value:'artifact',label:'已部署应用 / 中间件（JAR / Go 文件）'},{value:'image-archive',label:'Docker 镜像归档（docker save / OCI tar）'}]}/></Form.Item><Form.Item name="inputPath" label="Worker 本机输入路径（只填相对路径）" rules={[{required:true,message:'请填写已复制到 Worker 的输入目录'}]} extra="系统包示例：将已授权采集的输入目录（含隐藏校验文件）复制到 Worker 的 runtime/inputs/，此处填相对路径。"><Input placeholder="例如 lab-a/os" maxLength={240}/></Form.Item><Alert style={{marginBottom:16}} type="info" showIcon message="Trivy 读取 Worker 上的离线快照，不会自行联网或连接目标。"/></>:engine==='port-probe'||engine==='auto'?<>
           <div hidden={wizard&&wizardStep!==0}><Form.Item name="assetId" label="已登记主机" rules={[{required:true,message:'请选择一台已登记的主机'}]}><Select showSearch optionFilterProp="label" options={assets.filter(a=>a.kind==='host').map(a=>({value:a.id,label:`${a.address} · ${a.businessGroup}`}))} placeholder="只选择一台主机"/></Form.Item></div>
-          <div hidden={wizard&&wizardStep!==1}><Form.Item name="portPreset" label="探测范围"><Select onChange={v=>{if(v==='full')form.setFieldValue('intensity','gentle');}} options={Object.entries(presetLabels).map(([value,label])=>({value,label}))}/></Form.Item>
+          <div hidden={wizard&&wizardStep!==1}><Form.Item name="scanPlan" hidden><Input /></Form.Item><Form.Item label="预置扫描方案"><Space wrap align="start">{scanPlans.map(plan=><Card key={plan.id} size="small" hoverable onClick={()=>choosePlan(plan.id)} style={{width:250,cursor:'pointer',borderColor:selectedPlan===plan.id?'#1677ff':undefined,boxShadow:selectedPlan===plan.id?'0 0 0 1px #1677ff':undefined}}><Typography.Text strong>{plan.title}</Typography.Text><Typography.Paragraph style={{margin:'6px 0 2px'}}>{plan.summary}</Typography.Paragraph><Typography.Text type="secondary">{plan.detail}</Typography.Text></Card>)}</Space></Form.Item><Form.Item name="portPreset" label="探测范围"><Select onChange={v=>{if(v==='full')form.setFieldValue('intensity','gentle');}} options={Object.entries(presetLabels).map(([value,label])=>({value,label}))}/></Form.Item>
           {(portPreset==='common'||portPreset==='common-and-custom')&&<Alert style={{marginBottom:16}} showIcon type={policyError?'error':'info'} message={policyError?'常见端口策略读取失败':`常见端口来自系统策略：${policy?.commonPorts?.length??'—'} 个`} description={(policy?summarizePorts(policy.commonPorts):null)||policyError||'由 Server 统一确定，创建任务时冻结策略。'}/>}
           {portPreset==='full'&&<Alert style={{marginBottom:16}} showIcon type="warning" message="全端口探测耗时较长，请预留维护窗口" description="最多 65535 个 TCP 端口，默认使用温和强度；提交时需要再次确认。排除和隔离端口始终跳过。"/>}
           <Form.Item name="intensity" label="扫描强度"><Select options={[{value:'gentle',label:'温和 · 较低并发和请求速率'},{value:'standard',label:'标准'},{value:'aggressive',label:'积极 · 连接数和目标负载较高'}]}/></Form.Item>
@@ -214,7 +219,7 @@ export const TasksPage:React.FC=()=>{
         {wizard&&wizardStep===3&&<>
           <Descriptions bordered size="small" column={1} title="确认扫描配置" items={[
             {key:'target',label:'实际目标',children:selectedAsset?`${selectedAsset.address} · ${selectedAsset.businessGroup}`:'主机已不可用，请返回重新选择'},
-            {key:'plan',label:'扫描方案',children:'自动综合扫描：TCP 探测 → 受限服务识别 → 只读 HTTP(S) 检查；SSH 采集依 Worker 档案和范围执行'},
+            {key:'plan',label:'扫描方案',children:`${scanPlans.find(plan=>plan.id===selectedPlan)?.title??'自定义方案'}：TCP 探测 → 受限服务识别 → 只读 HTTP(S) 检查；SSH 采集依 Worker 档案和范围执行`},
             {key:'preset',label:'端口策略',children:presetLabels[portPreset]},
             {key:'ports',label:`有效 TCP 端口预览（${portPreview?.effective.length??0} 个）`,children:<Typography.Paragraph style={{marginBottom:0,overflowWrap:'anywhere'}} ellipsis={{rows:3,expandable:true,symbol:'展开全部端口'}}>{portPreview?compressPorts(portPreview.effective)||'无':'当前策略不可用'}</Typography.Paragraph>},
             {key:'intensity',label:'扫描强度',children:({gentle:'温和 · 较低并发和请求速率',standard:'标准',aggressive:'积极 · 连接数和目标负载较高'})[watchedValues?.intensity??'gentle']},

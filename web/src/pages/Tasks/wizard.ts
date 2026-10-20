@@ -6,6 +6,24 @@ export interface WizardValues {
   opsApproved?: boolean;
 }
 
+export type ScanPlan = 'quick' | 'standard';
+export interface ScanPlanDefaults {
+  portPreset: 'common' | 'common-and-custom';
+  intensity: 'gentle' | 'standard';
+  portRanges: string;
+  portExclusions: string;
+  customRuleIds: string[];
+}
+
+export const scanPlanDefaults: Record<ScanPlan, ScanPlanDefaults> = {
+  quick: { portPreset: 'common', intensity: 'gentle', portRanges: '', portExclusions: '', customRuleIds: [] },
+  standard: { portPreset: 'common-and-custom', intensity: 'standard', portRanges: '', portExclusions: '', customRuleIds: [] },
+};
+
+export function getScanPlanDefaults(plan: string): ScanPlanDefaults {
+  return scanPlanDefaults[plan as ScanPlan] ?? scanPlanDefaults.quick;
+}
+
 export function isAutoTaskWizard(values: WizardValues, editingSchedule: boolean): boolean {
   return values.engine === 'auto' && values.mode === 'now' && !editingSchedule;
 }
