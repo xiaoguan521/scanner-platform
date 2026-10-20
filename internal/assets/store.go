@@ -160,6 +160,7 @@ func NewWithPinger(db *sql.DB, pinger Pinger) (*Store, error) {
     address TEXT NOT NULL,resolved_ip TEXT,business_group TEXT NOT NULL,
     owner TEXT NOT NULL,created_at TEXT NOT NULL,
     UNIQUE(kind,address))`,
+		`CREATE TABLE IF NOT EXISTS asset_import_previews(id TEXT PRIMARY KEY,actor TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,rows_json TEXT NOT NULL,expires_at INTEGER NOT NULL,state TEXT NOT NULL CHECK(state IN ('PENDING','CONFIRMED')))`,
 		`CREATE TABLE IF NOT EXISTS asset_profiles(asset_id TEXT PRIMARY KEY REFERENCES assets(id) ON DELETE CASCADE,data TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS asset_services(asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,port INTEGER NOT NULL,data TEXT NOT NULL,PRIMARY KEY(asset_id,port))`,
 		`CREATE TABLE IF NOT EXISTS asset_login_entries(asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,entry_key TEXT NOT NULL,data TEXT NOT NULL,PRIMARY KEY(asset_id,entry_key))`,

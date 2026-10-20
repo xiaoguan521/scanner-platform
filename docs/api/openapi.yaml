@@ -1830,6 +1830,103 @@ paths:
         "403": {description: Insufficient role or invalid same-origin mutation header}
         "404": {description: Report or template not found}
         "409": {description: Report is not READY or retry requires FAILED}
+  "/api/v1/assets/import/template":
+    get:
+      tags: [assets]
+      summary: Download UTF-8 CSV template (admin/security_engineer)
+      security: [{sessionCookie: []}]
+      responses:
+        '200':
+          description: Fixed kind,address,businessGroup,owner,name header and documentation examples
+          content:
+            text/csv:
+              schema: {type: string}
+        '401': {description: Unauthenticated}
+        '403': {description: Role denied}
+  "/api/v1/assets/import/preview":
+    post:
+      tags: [assets]
+      summary: Validate and stage an asset CSV without registering assets or contacting targets
+      description: 'Admin/security_engineer. UTF-8 without BOM; exact ordered kind,address,businessGroup,owner header with optional final name. At most 1 MiB and 1000 data records. Numeric IP hosts and existing image_repo format only. No port columns. Each invalid row includes its CSV line and reason. Any invalid/duplicate row blocks the entire import. A valid preview is staged for 15 minutes, bound to its user, and replaces that user''s earlier preview.'
+      security: [{sessionCookie: []}]
+      parameters:
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema: {type: string, enum: [XMLHttpRequest]}
+      requestBody:
+        required: true
+        content:
+          text/csv:
+            schema: {type: string, maxLength: 1048576}
+      responses:
+        '200':
+          description: Row validation results; previewId and expiresAt exist only for fully valid batches
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [total, valid, invalid, rows]
+                properties:
+                  previewId: {type: string}
+                  expiresAt: {type: string, format: date-time}
+                  total: {type: integer}
+                  valid: {type: integer}
+                  invalid: {type: integer}
+                  rows:
+                    type: array
+                    maxItems: 1000
+                    items:
+                      type: object
+                      required: [row, kind, address, businessGroup, owner]
+                      properties:
+                        row: {type: integer, minimum: 2}
+                        kind: {type: string}
+                        address: {type: string}
+                        businessGroup: {type: string}
+                        owner: {type: string}
+                        name: {type: string}
+                        reason: {type: string}
+        '400': {description: Invalid encoding/header/CSV format or empty data}
+        '401': {description: Unauthenticated}
+        '403': {description: Role or CSRF guard denied}
+        '413': {description: Byte or row limit exceeded}
+        '415': {description: text/csv with UTF-8 required}
+  "/api/v1/assets/import/confirm":
+    post:
+      tags: [assets]
+      summary: Atomically confirm the same user's unexpired staged preview
+      description: 'Admin/security_engineer. Only previewId is accepted; client rows cannot override staging. Repeated, expired, replaced or other-user previews fail closed. A unique asset conflict after preview rolls back all assets, profiles and audit changes. No ports, authorization or target requests are created. Successful audit contains only imported count; staged row data is cleared.'
+      security: [{sessionCookie: []}]
+      parameters:
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema: {type: string, enum: [XMLHttpRequest]}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [previewId]
+              properties:
+                previewId: {type: string, maxLength: 128}
+      responses:
+        '201':
+          description: Complete batch registered
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [imported]
+                properties:
+                  imported: {type: integer, minimum: 1, maximum: 1000}
+        '400': {description: Invalid confirmation JSON or unknown fields}
+        '401': {description: Unauthenticated}
+        '403': {description: Role or CSRF guard denied}
+        '409': {description: Preview unavailable/expired/confirmed or asset conflict; nothing imported}
 components:
   securitySchemes:
     sessionCookie:

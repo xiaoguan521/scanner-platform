@@ -237,3 +237,12 @@
 - 当前活动策略新增 `fixedThreshold`（1–3，默认 1），在任务创建时冻结；活动发现项达到阈值后标记 `FIXED` 并记录 `resolvedAt`，再次检出恢复为 `REOPENED`、清零计数。`FALSE_POSITIVE` 与 `ACCEPTED_RISK` 不受自动状态机影响。自动综合扫描按实际成功执行的 Nuclei/ZAP/Trivy 引擎集合和 SSH/应用采集状态决定是否具备完整性。
 - 新增仓储 race 测试覆盖首检、完整缺失、重现、旧元数据、失败、版本不匹配、范围隔离和阈值 2；实际运行 `go test -race ./internal/repo ./internal/taskflow ./internal/executor -count=1` 通过。
 - 本批仅使用临时 SQLite、合成回报和文档保留地址，未连接外部网络或生产资产。真实靶机的中断/熔断抓包、节点认证和跨进程引擎回报仍待 lab 验收，不能据此宣称 PoC #5 已完成实机验收。
+
+### 2026-10-20：资产 CSV 预览与事务确认（本地回归）
+
+- 新增 Assets 页模板下载、文件上传、逐行预览和明确确认闭环。API 为 `GET /api/v1/assets/import/template`、`POST /api/v1/assets/import/preview`（原始 `text/csv`）和 `POST /api/v1/assets/import/confirm`（仅 `previewId`）。管理员/安全工程师及现有 CSRF 请求头限制同时生效；viewer/ops_approver 不可导入。
+- CSV 严格采用 UTF-8 无 BOM 和固定顺序表头，限制 1 MiB / 1000 条数据记录；支持数字 IP host 与现有 image_repo 格式，name 可省略，拒绝任何端口列。非法行、文件内重复、已有资产逐行给原因；任何错误阻止整批确认。
+- SQLite 动态初始化新增 `asset_import_previews`，仅暂存全有效规范化行、当前用户和 15 分钟有效期。新预览替换同用户旧预览；确认事务先原子领取预览，再按资产唯一约束整批插入 assets/profile 和仅含数量的审计，失败全部回滚。成功后清空暂存行，重复/过期/跨用户确认拒绝。
+- 新增表驱动解析/权限/CSRF测试、解析 fuzz 种子、预览资产/profile/审计零写入、确认重复/过期/替换/同用户限制、后发资产冲突整批回滚和并发确认一次成功回归；Pinger 为失败即报错替身，没有连接目标或启动扫描。前端回归覆盖空文件/体积、显式勾选、错误预览和过期确认门禁。
+- 实际运行 `go test -race ./internal/assets ./internal/api`、`go vet ./internal/assets ./internal/api`、`node web/src/pages/Assets/import.test.mjs`、`npm --prefix web run build`、`make build`、`git diff --check` 及 Ruby YAML 解析通过。全仓门禁由协调代理另行记录。
+- 待验收：真实浏览器文件选择和操作体验；PostgreSQL 资产写入、导入历史查询和 CSV 导出尚未实现。本批不改变既有 Server 清册可达性后台轮询，确认后的新主机可能在后续正常轮询中被检测；导入端点自身没有 DNS/Ping/扫描调用。测试只使用临时 SQLite、文档保留地址和示例镜像地址。

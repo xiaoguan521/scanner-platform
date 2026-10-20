@@ -1,3 +1,4 @@
+import type { AssetImportPreview } from '../pages/Assets/import';
 import type { Asset, AuthorizedScope, Finding, NodeInfo, PortQuarantine, RuleBundle, ScanTask, User, UserRole, PortRequest, TimeWindow, ApprovalDecision, Schedule, RuleJob, CustomRule, AssetProfile, KnowledgeEntry, DetectionCapability, VulnerabilityCategory, ScanPolicy } from '../types';
 
 export const dataMode: 'demo' | 'server' = import.meta.env.VITE_DATA_MODE === 'server' ? 'server' : 'demo';
@@ -56,7 +57,7 @@ export async function requestJSON<T>(path: string, method = 'GET', body?: unknow
     try {
       const err: ApiErrorBody = await response.json();
       if (typeof err.message === 'string') {
-      const messages:Record<string,string>={invalid_user:'用户名、角色或密码不符合要求（密码 12–72 字节）',user_exists:'用户名已存在',invalid_asset:'请输入有效数字 IP、业务组、负责人和端口；跳过端口须属于目标端口',asset_exists:'资产已存在',asset_in_use_remove_authorization_first:'资产仍有授权记录，请先撤销或删除关联授权',host_asset_required:'仅支持对已登记主机检查 Ping 可达性',reachability_check_failed:'可达性检测失败，请稍后重试',invalid_port_request:'端口申请格式无效',port_request_conflict:'端口已申请、已跳过或处于隔离状态',task_not_found:'扫描任务不存在或已删除',task_not_terminal:'只能归档或删除已结束的任务',task_has_findings:'任务有关联发现项，不能彻底删除；可以归档隐藏',invalid_archive_filter:'归档筛选条件无效',forbidden:'当前账号无权执行此操作',invalid_approval:'审批记录或时间窗格式不正确',approval_conflict:'记录已审核、已过期或端口被标记跳过',db_error:'保存失败，请查看 Server 日志',already_initialized:'管理员已初始化，请直接登录'};
+      const messages:Record<string,string>={asset_import_unavailable:'预览已过期、已确认或被替换，请重新上传预览',asset_import_conflict:'资产在预览后发生冲突，整批未导入；请重新上传预览',invalid_user:'用户名、角色或密码不符合要求（密码 12–72 字节）',user_exists:'用户名已存在',invalid_asset:'请输入有效数字 IP、业务组、负责人和端口；跳过端口须属于目标端口',asset_exists:'资产已存在',asset_in_use_remove_authorization_first:'资产仍有授权记录，请先撤销或删除关联授权',host_asset_required:'仅支持对已登记主机检查 Ping 可达性',reachability_check_failed:'可达性检测失败，请稍后重试',invalid_port_request:'端口申请格式无效',port_request_conflict:'端口已申请、已跳过或处于隔离状态',task_not_found:'扫描任务不存在或已删除',task_not_terminal:'只能归档或删除已结束的任务',task_has_findings:'任务有关联发现项，不能彻底删除；可以归档隐藏',invalid_archive_filter:'归档筛选条件无效',forbidden:'当前账号无权执行此操作',invalid_approval:'审批记录或时间窗格式不正确',approval_conflict:'记录已审核、已过期或端口被标记跳过',db_error:'保存失败，请查看 Server 日志',already_initialized:'管理员已初始化，请直接登录'};
         description=messages[err.error]??err.message;
       }
     } catch { /* Unknown error bodies stay generic. */ }
@@ -65,6 +66,16 @@ export async function requestJSON<T>(path: string, method = 'GET', body?: unknow
   return response.json() as Promise<T>;
 }
 export const apiClient = {
+  async previewAssetImport(file:File):Promise<AssetImportPreview> {
+    const response=await fetch('/api/v1/assets/import/preview',{method:'POST',headers:{'Content-Type':'text/csv; charset=utf-8','X-Requested-With':'XMLHttpRequest'},body:file,credentials:'same-origin',cache:'no-store'});
+    if(!response.ok){
+      if(response.status===401)window.dispatchEvent(new Event('scanner-session-expired'));
+      const messages:Record<number,string>={400:'CSV 格式无效，请检查 UTF-8 编码、表头和内容',403:'当前账号无导入权限或会话校验失败',413:'文件超过 1 MiB 或 1000 行上限',415:'请上传 UTF-8 CSV 文件'};
+      throw new ApiRequestError(response.status,messages[response.status]??'导入预览失败，请重试');
+    }
+    return response.json() as Promise<AssetImportPreview>;
+  },
+  confirmAssetImport(previewId:string) {return requestJSON<{imported:number}>('/api/v1/assets/import/confirm','POST',{previewId});},
   scanPolicy() { return requestJSON<ScanPolicy>('/api/v1/scan-policy'); },
   saveScanPolicy(input:ScanPolicy) { return requestJSON<ScanPolicy>('/api/v1/scan-policy','PUT',input); },
   releaseQuarantine(assetId:string,port:number,reason:string) { return requestJSON('/api/v1/port-quarantines/release','POST',{assetId,port,reason}); },

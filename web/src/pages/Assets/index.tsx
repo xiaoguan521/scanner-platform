@@ -1,3 +1,4 @@
+import { AssetImport } from './AssetImport';
 import React, { useMemo, useState } from 'react';
 import { Alert, Button, Card, Form, Input, message, Modal, Select, Space, Table, Tag, Typography, Drawer, Descriptions, Checkbox, Row, Col } from 'antd';
 import type { FormInstance } from 'antd';
@@ -189,6 +190,7 @@ export const AssetsPage: React.FC = () => {
     </Card>}
     <Card title="资产登记台账" extra={<Space>
       <Input.Search placeholder="搜索地址、组或负责人" allowClear value={filter} onChange={e=>setFilter(e.target.value)} style={{width:220}}/>
+      <AssetImport disabled={!canEdit||isDemoMode} onImported={async()=>{const result=await apiClient.collection('assets');setAssets(result.items);}}/>
       <Button type="primary" icon={<PlusOutlined/>} disabled={!canEdit} onClick={()=>setCreateOpen(true)}>登记资产</Button>
     </Space>}>
       <Table<Asset> rowKey="id" dataSource={rows} loading={loading||taskLoading} tableLayout="fixed" scroll={{x:1600}} pagination={{pageSize:10}}
