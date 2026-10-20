@@ -15,6 +15,7 @@ import {
   Descriptions,
   Drawer,
   Timeline,
+  Modal,
   message,
 } from 'antd';
 import { SafetyCertificateOutlined } from '@ant-design/icons';
@@ -22,7 +23,7 @@ import { mockFindings } from '../../mock/data';
 import { Finding, FindingEvent, FindingAssignee, FindingNote, FindingSeverity, FindingStatus } from '../../types';
 import { isDemoMode } from '../../api/client';
 import { useAuth } from '../../auth/AuthProvider';
-import { updateFinding, fetchFindingEvents, fetchFindingAssignees, assignFinding, fetchFindingNotes, addFindingNote } from '../../api/runtime';
+import { batchFindingDisposition, updateFinding, fetchFindingEvents, fetchFindingAssignees, assignFinding, fetchFindingNotes, addFindingNote } from '../../api/runtime';
 import { useCollection } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
 
@@ -31,6 +32,7 @@ import { FindingFilters, readFindingFilters, writeFindingFilters } from './filte
 import { detailText, detailList, detailIdentifiers, selectedFindingForDrawer } from './drawer';
 import { canAcceptRisk, acceptanceInput } from './disposition';
 import { findingNoteInput } from './work';
+import { FindingSelection, batchSelectionChanged, batchTransitionAllowed, updateBatchSelection } from './batch';
 const { Text } = Typography;
 
 export const FindingsPage: React.FC = () => {
@@ -97,6 +99,28 @@ export const FindingsPage: React.FC = () => {
     if(isDemoMode){message.info('演示模式不会保存备注');return}
     try{const body=findingNoteInput(noteBody);setWorkSaving(true);await addFindingNote(id,body);setWorkRevision(n=>n+1);message.success('备注已追加并记录审计')}
     catch(e){message.error(e instanceof Error?e.message:String(e))}finally{setWorkSaving(false)}
+  };
+
+  const [batchSelection,setBatchSelection]=useState<FindingSelection[]>([]);
+  const [batchStatus,setBatchStatus]=useState<FindingStatus>('IN_PROGRESS');
+  const [batchOpen,setBatchOpen]=useState(false);
+  const [batchReason,setBatchReason]=useState('');
+  const [batchUntil,setBatchUntil]=useState('');
+  const [batchSaving,setBatchSaving]=useState(false);
+  const selectionChanged=batchSelectionChanged(batchSelection,findings);
+  const batchAllowed=batchSelection.length>0&&batchSelection.length<=100&&!selectionChanged&&batchSelection.every(item=>batchTransitionAllowed(item.expectedStatus,batchStatus));
+  const saveBatch=async()=>{
+    if(isDemoMode){message.info('演示模式不会保存批量处置');return}
+    if(!canWrite||!batchAllowed)return;
+    try{
+      const acceptance=batchStatus==='ACCEPTED_RISK'?acceptanceInput(batchReason,batchUntil):undefined;
+      setBatchSaving(true);
+      const result=await batchFindingDisposition(batchSelection,batchStatus,acceptance);
+      const updated=new Map(result.items.map(item=>[item.id,item]));
+      setFindings(previous=>previous.map(item=>updated.get(item.id)??item));
+      setBatchSelection([]);setBatchOpen(false);setBatchReason('');setBatchUntil('');setEventRevision(n=>n+1);
+      message.success(`已更新 ${result.updated} 项并记录审计`);
+    }catch(e){message.error(`${e instanceof Error?e.message:String(e)}；整批未保存，请核对当前状态后重新选择`)}finally{setBatchSaving(false)}
   };
 
   const filteredFindings = findings.filter((f) => {
@@ -220,9 +244,24 @@ export const FindingsPage: React.FC = () => {
           </Space>
         }
       >
+        <Space wrap style={{marginBottom:16}}>
+          <Text>已选择 {batchSelection.length} 项（最多 100 项，包含其他分页和筛选中的已选项）</Text>
+          <Select aria-label="批量处置状态" value={batchStatus} disabled={batchSaving} onChange={setBatchStatus} style={{width:180}} options={[
+            {value:'IN_PROGRESS',label:'标记修复中'}, {value:'FALSE_POSITIVE',label:'标记误报'}, {value:'ACCEPTED_RISK',label:'接受风险'}, {value:'OPEN',label:'恢复待处理'},
+          ]}/>
+          <Button type="primary" disabled={(!isDemoMode&&!canWrite)||!batchAllowed||batchSaving} onClick={()=>{setBatchReason('');setBatchUntil('');setBatchOpen(true)}}>批量处置</Button>
+          <Button disabled={!batchSelection.length||batchSaving} onClick={()=>setBatchSelection([])}>清空选择</Button>
+          {batchSelection.length>0&&!batchAllowed&&<Text type="warning">{selectionChanged?'已选记录状态已变化，请清空后重新选择':'选中记录包含不允许的状态流转，请调整选择或目标状态'}</Text>}
+        </Space>
         <Table
           dataSource={filteredFindings}
           rowKey="id"
+          rowSelection={{
+            selectedRowKeys:batchSelection.map(item=>item.id),
+            preserveSelectedRowKeys:true,
+            onChange:keys=>setBatchSelection(previous=>updateBatchSelection(previous,keys,findings)),
+            getCheckboxProps:record=>({disabled:batchSaving||(!isDemoMode&&!canWrite)||record.status==='FIXED'||(batchSelection.length>=100&&!batchSelection.some(item=>item.id===record.id))}),
+          }}
           pagination={{showTotal:total=>`共 ${total} 项`}}
           scroll={{x:1600}}
           columns={[
@@ -340,6 +379,16 @@ export const FindingsPage: React.FC = () => {
           ]}
         />
       </Card>
+      <Modal title="确认批量处置" open={batchOpen} onCancel={()=>{if(!batchSaving)setBatchOpen(false)}} onOk={()=>void saveBatch()} confirmLoading={batchSaving} okText="确认保存" cancelText="取消" okButtonProps={{disabled:!batchAllowed}} cancelButtonProps={{disabled:batchSaving}} closable={!batchSaving} maskClosable={!batchSaving}>
+        <Space direction="vertical" style={{width:'100%'}}>
+          <Text>将以下 {batchSelection.length} 项统一更新为 {batchStatus}。任一记录状态发生变化或不允许流转时，整批不保存。</Text>
+          <div style={{maxHeight:180,overflowY:'auto',overflowWrap:'anywhere'}}>{batchSelection.map(item=><div key={item.id}><Text code>{item.id}</Text> · {item.expectedStatus}</div>)}</div>
+          {batchStatus==='ACCEPTED_RISK'&&<>
+            <Input.TextArea aria-label="批量接受风险原因" placeholder="统一接受原因（1–500 UTF-8 字节）" value={batchReason} onChange={e=>setBatchReason(e.target.value)} disabled={batchSaving}/>
+            <Input aria-label="批量接受风险到期时间" type="datetime-local" value={batchUntil} onChange={e=>setBatchUntil(e.target.value)} disabled={batchSaving}/>
+          </>}
+        </Space>
+      </Modal>
       <Drawer
         title="发现项详情"
         open={Boolean(selectedFinding)}

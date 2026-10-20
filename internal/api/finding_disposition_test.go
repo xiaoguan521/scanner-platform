@@ -126,6 +126,36 @@ func TestFindingDispositionAPIAuthValidationAndEvents(t *testing.T) {
 	if res.Code != 400 {
 		t.Fatal("noop", res.Code)
 	}
+	// Batch mutations share role/CSRF checks and reject unknown or stale input.
+	batchPath := "/api/v1/findings/batch-disposition"
+	batchBody := `{"items":[{"id":"` + id + `","expectedStatus":"OPEN"}],"status":"IN_PROGRESS"}`
+	for _, tc := range []struct {
+		body, role string
+		guard      bool
+		want       int
+	}{
+		{batchBody, "", true, 401}, {batchBody, "viewer", true, 403}, {batchBody, "ops_approver", true, 403}, {batchBody, "admin", false, 403},
+		{`{"items":[],"status":"OPEN"}`, "admin", true, 400},
+		{`{"items":[{"id":"` + id + `","expectedStatus":"OPEN","extra":true}],"status":"IN_PROGRESS"}`, "admin", true, 400},
+		{`{"items":[{"id":"` + id + `","expectedStatus":"OPEN"}],"status":"IN_PROGRESS","extra":true}`, "admin", true, 400},
+		{`{"items":[{"id":"` + id + `","expectedStatus":"FIXED"}],"status":"IN_PROGRESS"}`, "admin", true, 409},
+	} {
+		res := send("POST", batchPath, tc.body, cookies[tc.role], tc.guard)
+		if res.Code != tc.want {
+			t.Fatalf("batch %s %d: %d %s", tc.role, tc.want, res.Code, res.Body.String())
+		}
+	}
+	batchRes := send("POST", batchPath, batchBody, cookies["security_engineer"], true)
+	var batchResult struct {
+		Updated int                `json:"updated"`
+		Items   []taskflow.Finding `json:"items"`
+	}
+	if err := json.Unmarshal(batchRes.Body.Bytes(), &batchResult); batchRes.Code != 200 || err != nil || batchResult.Updated != 1 || len(batchResult.Items) != 1 || batchResult.Items[0].Status != "IN_PROGRESS" {
+		t.Fatal(batchRes.Code, batchRes.Body.String(), err)
+	}
+	if res := send("POST", batchPath, batchBody, cookies["admin"], true); res.Code != 409 {
+		t.Fatal("stale batch", res.Code)
+	}
 	// Finding work routes share authenticated reads and writer/CSRF protections.
 	for _, tc := range []struct {
 		method, suffix, body, role string
@@ -181,6 +211,15 @@ func TestFindingDispositionAPIAuthValidationAndEvents(t *testing.T) {
 	}
 	if res := send("PUT", path+"/assignee", `{"assigneeId":""}`, cookies["admin"], true); res.Code != 200 {
 		t.Fatal(res.Code, res.Body.String())
+	}
+
+	// Standalone local mode matches the existing single-item disposition route.
+	localHandler := NewRuntimeHandler(store, nil, "")
+	localRequest := httptest.NewRequest("POST", batchPath, strings.NewReader(`{"items":[{"id":"`+id+`","expectedStatus":"IN_PROGRESS"}],"status":"OPEN"}`))
+	localResponse := httptest.NewRecorder()
+	localHandler.ServeHTTP(localResponse, localRequest)
+	if localResponse.Code != 200 {
+		t.Fatal("local batch semantics", localResponse.Code, localResponse.Body.String())
 	}
 
 }

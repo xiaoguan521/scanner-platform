@@ -11,6 +11,7 @@ export const updateSchedule = (id:string,input: Omit<Schedule,'id'|'enabled'|'la
 export const deleteSchedule = (id:string) => requestJSON<{status:string}>('/api/v1/schedules/'+encodeURIComponent(id),'DELETE');
 export const toggleSchedule = (id:string,enabled:boolean) => requestJSON('/api/v1/schedules/'+encodeURIComponent(id),'PATCH',{enabled});
 export const updateFinding = (id:string,status:string,acceptance?:{reason:string;acceptedUntil:string}) => requestJSON<Finding>('/api/v1/findings/'+encodeURIComponent(id),'PATCH',{status,...acceptance});
+export const batchFindingDisposition = (items:{id:string;expectedStatus:string}[],status:string,acceptance?:{reason:string;acceptedUntil:string}) => requestJSON<{updated:number;items:Finding[]}>('/api/v1/findings/batch-disposition','POST',{items,status,...acceptance});
 export const fetchFindingEvents = (id:string,signal?:AbortSignal) => requestJSON<{items:FindingEvent[];total:number}>('/api/v1/findings/'+encodeURIComponent(id)+'/events','GET',undefined,signal);
 export const createCustomRule = (input:Omit<CustomRule,'template'>) => requestJSON<CustomRule>('/api/v1/custom-rules','POST',input);
 export const updateCustomRule = (id:string,input:Omit<CustomRule,'template'>) => requestJSON<CustomRule>('/api/v1/custom-rules/'+encodeURIComponent(id),'PUT',input);

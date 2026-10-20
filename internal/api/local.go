@@ -84,6 +84,16 @@ func registerLocalHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui func
 			runtimeJSON(w, http.StatusOK, map[string]string{"status": "DELETED"})
 		}
 	}))
+	mux.HandleFunc("POST /api/v1/findings/batch-disposition", ui(true, func(w http.ResponseWriter, r *http.Request) {
+		var body repo.FindingBatchDisposition
+		if !runtimeDecode(w, r, &body) {
+			return
+		}
+		items, err := store.BatchFindingDisposition(r.Context(), body, actor(r))
+		if !runtimeStoreError(w, err) {
+			runtimeJSON(w, http.StatusOK, map[string]any{"updated": len(items), "items": items})
+		}
+	}))
 	mux.HandleFunc("GET /api/v1/findings/{id}/events", ui(false, func(w http.ResponseWriter, r *http.Request) {
 		items, err := store.ListFindingEvents(r.Context(), r.PathValue("id"))
 		if !runtimeStoreError(w, err) {
