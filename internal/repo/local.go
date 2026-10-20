@@ -91,6 +91,10 @@ func (s *RuntimeStore) initLocal(ctx context.Context) error {
 	for _, q := range []string{
 		`CREATE TABLE IF NOT EXISTS audit_logs(id TEXT PRIMARY KEY,actor TEXT NOT NULL,action TEXT NOT NULL,object_type TEXT,object_id TEXT,detail TEXT,created_at TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS task_schedules(id TEXT PRIMARY KEY,data TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS schedule_runs(
+			id TEXT PRIMARY KEY, schedule_id TEXT NOT NULL, task_id TEXT NOT NULL DEFAULT '',
+			triggered_at TEXT NOT NULL, error TEXT NOT NULL DEFAULT '')`,
+		`CREATE INDEX IF NOT EXISTS schedule_runs_history ON schedule_runs(schedule_id,triggered_at DESC,id DESC)`,
 		`CREATE TABLE IF NOT EXISTS local_nodes(id TEXT PRIMARY KEY,data TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS scan_task_progress(
 			task_id TEXT PRIMARY KEY REFERENCES scan_tasks(id) ON DELETE CASCADE,
@@ -750,6 +754,64 @@ func (s *RuntimeStore) ListSchedules(ctx context.Context) ([]taskflow.Schedule, 
 	return out, rows.Err()
 }
 
+// ListScheduleRuns returns a bounded, safe history projection. The task join
+// keeps the status live while retaining a run row after its schedule or task
+// is deleted.
+func (s *RuntimeStore) ListScheduleRuns(ctx context.Context, scheduleID string, limit, offset int) ([]taskflow.ScheduleRun, int, error) {
+	if strings.TrimSpace(scheduleID) == "" {
+		return nil, 0, ErrInvalidTask
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	var total int
+	if err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM schedule_runs WHERE schedule_id=?", scheduleID).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count schedule runs: %w", err)
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT r.id,r.schedule_id,r.task_id,r.triggered_at,
+		CASE
+			WHEN r.error <> '' THEN 'FAILED'
+			WHEN r.task_id = '' THEN 'FAILED'
+			WHEN t.id IS NULL THEN 'DELETED'
+			ELSE t.status
+		END,
+		r.error
+		FROM schedule_runs r
+		LEFT JOIN scan_tasks t ON t.id=r.task_id
+		WHERE r.schedule_id=?
+		ORDER BY r.triggered_at DESC,r.id DESC
+		LIMIT ? OFFSET ?`, scheduleID, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list schedule runs: %w", err)
+	}
+	defer rows.Close()
+	items := make([]taskflow.ScheduleRun, 0, limit)
+	for rows.Next() {
+		var item taskflow.ScheduleRun
+		if err := rows.Scan(&item.ID, &item.ScheduleID, &item.TaskID, &item.TriggeredAt, &item.Status, &item.Error); err != nil {
+			return nil, 0, fmt.Errorf("scan schedule run: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterate schedule runs: %w", err)
+	}
+	return items, total, nil
+}
+
+func insertScheduleRun(ctx context.Context, tx *sql.Tx, scheduleID, taskID string, triggeredAt time.Time, runError string) error {
+	if strings.TrimSpace(scheduleID) == "" || len(taskID) > 128 || len(runError) > 512 {
+		return ErrInvalidTask
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO schedule_runs(id,schedule_id,task_id,triggered_at,error) VALUES(?,?,?,?,?)`,
+		"schedule-run-"+randomLocalID(), scheduleID, taskID, triggeredAt.UTC().Format(time.RFC3339Nano), runError)
+	return err
+}
+
 func (s *RuntimeStore) ToggleSchedule(ctx context.Context, id, actor string, enabled bool) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -836,12 +898,28 @@ func (s *RuntimeStore) Tick(ctx context.Context, now time.Time) error {
 		id := "task-" + randomLocalID()
 		_, createErr := createLocalTask(ctx, tx, item.TaskInput, item.CreatedBy, id, now)
 		if createErr != nil {
-			tx.Rollback()
 			if !errors.Is(createErr, ErrInvalidTask) {
+				tx.Rollback()
 				return createErr
 			}
 			item.Enabled = false
 			item.LastError = createErr.Error()
+			if err := insertScheduleRun(ctx, tx, item.ID, "", now, createErr.Error()); err != nil {
+				tx.Rollback()
+				return err
+			}
+			data, err := json.Marshal(item)
+			if err != nil {
+				tx.Rollback()
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, "UPDATE task_schedules SET data=? WHERE id=?", string(data), item.ID); err != nil {
+				tx.Rollback()
+				return err
+			}
+			if err := tx.Commit(); err != nil {
+				return err
+			}
 		} else {
 			item.LastTaskID = id
 			item.LastError = ""
@@ -850,7 +928,15 @@ func (s *RuntimeStore) Tick(ctx context.Context, now time.Time) error {
 			} else {
 				item.NextRun = now.Add(time.Duration(item.IntervalMinutes) * time.Minute).UTC().Format(time.RFC3339Nano)
 			}
-			data, _ := json.Marshal(item)
+			if err := insertScheduleRun(ctx, tx, item.ID, id, now, ""); err != nil {
+				tx.Rollback()
+				return err
+			}
+			data, err := json.Marshal(item)
+			if err != nil {
+				tx.Rollback()
+				return err
+			}
 			_, err = tx.ExecContext(ctx, "UPDATE task_schedules SET data=? WHERE id=?", string(data), item.ID)
 			if err != nil {
 				tx.Rollback()
@@ -860,10 +946,6 @@ func (s *RuntimeStore) Tick(ctx context.Context, now time.Time) error {
 				return err
 			}
 			continue
-		}
-		data, _ := json.Marshal(item)
-		if _, err := s.db.ExecContext(ctx, "UPDATE task_schedules SET data=? WHERE id=?", string(data), item.ID); err != nil {
-			return err
 		}
 	}
 	tasks, err := s.ListRuntimeTasks(ctx)

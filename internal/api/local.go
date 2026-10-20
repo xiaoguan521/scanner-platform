@@ -116,6 +116,17 @@ func registerLocalHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui func
 			runtimeJSON(w, 200, ListResponse[taskflow.Schedule]{Items: items, Total: len(items)})
 		}
 	}))
+	mux.HandleFunc("GET /api/v1/schedules/{id}/runs", ui(false, func(w http.ResponseWriter, r *http.Request) {
+		limit, offset, err := parseScheduleRunPagination(r)
+		if err != nil {
+			bad(w, http.StatusBadRequest, "invalid_schedule_run_pagination")
+			return
+		}
+		items, total, err := store.ListScheduleRuns(r.Context(), r.PathValue("id"), limit, offset)
+		if !runtimeStoreError(w, err) {
+			runtimeJSON(w, http.StatusOK, ListResponse[taskflow.ScheduleRun]{Items: items, Total: total})
+		}
+	}))
 	mux.HandleFunc("POST /api/v1/schedules", ui(true, func(w http.ResponseWriter, r *http.Request) {
 		var body taskflow.Schedule
 		if !runtimeDecode(w, r, &body) {

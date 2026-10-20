@@ -312,3 +312,9 @@
 - 新增 `GET /api/v1/audit-logs` 和 `/audit` 页面，仅管理员可查询；支持操作者、动作、对象类型、RFC3339 时间范围和 1–200 条分页筛选，列表按时间和 ID 倒序返回。
 - API 只返回稳定审计投影（记录 ID、操作者、动作、对象类型/ID、时间），刻意省略历史 `detail`，因此不会通过查询页面暴露目标地址、凭据或备注正文；没有编辑、删除或敏感导出入口。
 - 新增仓储过滤/排序/分页及 API 认证、角色、非法参数和 detail 不返回测试；前端 helper 覆盖筛选裁剪和分页偏移。`go test -race ./internal/repo ./internal/api`、`make test`、`make lint`、`make build`、前端生产构建、Ruby YAML 解析和 `git diff --check` 均已通过；真实浏览器权限交互、大数据量查询和 PostgreSQL 运行时仍待环境验收。
+
+## 2026-10-21：定时计划历史运行
+
+- 定时计划触发现在写入独立 `schedule_runs` 表；成功触发关联生成的任务，任务状态查询时实时映射，非法触发写入失败记录并停用该单次计划。删除计划不删除历史，任务被删除后历史状态显示为 `DELETED`。
+- 新增 `GET /api/v1/schedules/{id}/runs`，限制 1–200 条分页，仅返回触发时间、状态、任务 ID 和安全错误摘要；任务中心增加“历史运行”只读弹窗，未返回目标、输入路径或引擎输出。
+- 仓储/API 测试覆盖成功、失败、分页、状态映射和删除计划后保留历史；`go test -race -count=1 ./...`、18 项 Python 测试、`make lint`、`make build`、前端生产构建、OpenAPI/Workflow YAML 检查和 `git diff --check` 均已通过。PostgreSQL 运行时和真实浏览器交互仍待验收。

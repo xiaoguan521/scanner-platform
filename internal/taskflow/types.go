@@ -35,6 +35,17 @@ type Schedule struct {
 	CreatedBy       string `json:"createdBy"`
 }
 
+// ScheduleRun is the safe execution history projection for a persisted
+// schedule. It contains no task input, target or engine output.
+type ScheduleRun struct {
+	ID          string `json:"id"`
+	ScheduleID  string `json:"scheduleId"`
+	TaskID      string `json:"taskId"`
+	TriggeredAt string `json:"triggeredAt"`
+	Status      string `json:"status"`
+	Error       string `json:"error,omitempty"`
+}
+
 const SyntheticTitle = "模拟发现项：任务链路已完成（未执行真实扫描）"
 
 const (

@@ -4,15 +4,16 @@ import { PlusOutlined } from '@ant-design/icons';
 import { useCollection } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
 import { apiClient, isDemoMode } from '../../api/client';
-import { archiveTask, cancelTask, createTask, deleteSchedule, deleteTask, restoreTask, saveSchedule, toggleSchedule, updateSchedule } from '../../api/runtime';
+import { archiveTask, cancelTask, createTask, deleteSchedule, deleteTask, fetchScheduleRuns, restoreTask, saveSchedule, toggleSchedule, updateSchedule } from '../../api/runtime';
 import { useAuth } from '../../auth/AuthProvider';
 import { mockAssets, mockTasks } from '../../mock/data';
-import type { CustomRule, PortProbeRange, ScanTask, Schedule, TaskInput, ScanPolicy } from '../../types';
+import type { CustomRule, PortProbeRange, ScanTask, Schedule, ScheduleRun, TaskInput, ScanPolicy } from '../../types';
 
 import { parsePortRanges, showRanges, coversAllPorts, presetLabels, summarizePorts, compressPorts, previewProbePorts } from './policy';
 import { assertTaskSubmission, isAutoTaskWizard, wizardStepFields } from './wizard';
 const dayOptions=['周日','周一','周二','周三','周四','周五','周六'].map((label,value)=>({label,value}));
 const names:Record<string,string>={PENDING:'待领取',RUNNING:'执行中',WAITING_WINDOW:'等待时间窗',PAUSED_WINDOW:'窗口结束，等待恢复',COMPLETED:'已完成',CANCELED:'已取消',FAILED:'失败'};
+const scheduleRunNames:Record<string,string>={...names,DELETED:'任务记录已删除'};
 const progressPhases:Record<string,string>={tcp_probe:'TCP 端口探测',service_identification:'服务识别',http_scan:'HTTP 基线扫描',ssh_collection:'SSH 信息采集',trivy_scan:'Trivy 系统包与应用分析',engine_scan:'引擎扫描'};
 const applicationStatuses:Record<string,string>={not_configured:'未配置部署目录',not_started:'尚未开始',port_out_of_scope:'未采集：SSH 端口不在本次范围',collecting:'采集中',collection_failed:'采集未完成',scanning:'分析中',analysis_failed:'分析未完成',completed:'已完成'};
 const ApplicationCoverage:React.FC<{task:ScanTask}>=({task})=><>
@@ -36,6 +37,7 @@ export const TasksPage:React.FC=()=>{
   const [open,setOpen]=useState(false);const [busy,setBusy]=useState(false);const [form]=Form.useForm<Values>();
   const [wizardStep,setWizardStep]=useState(0);
   const [editingSchedule,setEditingSchedule]=useState<Schedule|null>(null);
+  const [historySchedule,setHistorySchedule]=useState<Schedule|null>(null);const [scheduleRunPage,setScheduleRunPage]=useState(1);const [scheduleRuns,setScheduleRuns]=useState<ScheduleRun[]>([]);const [scheduleRunTotal,setScheduleRunTotal]=useState(0);const [scheduleRunLoading,setScheduleRunLoading]=useState(false);const [scheduleRunError,setScheduleRunError]=useState('');
   const [taskFilter,setTaskFilter]=useState('');const [statusFilter,setStatusFilter]=useState('all');const [engineFilter,setEngineFilter]=useState('all');
   const engine=Form.useWatch('engine',form)??'auto';const mode=Form.useWatch('mode',form);const useWindow=Form.useWatch('window',form);const portPreset=Form.useWatch('portPreset',form)??'common';
   const wizard=isAutoTaskWizard({engine,mode},Boolean(editingSchedule));
@@ -70,6 +72,13 @@ export const TasksPage:React.FC=()=>{
       (engineFilter==='all'||task.engines?.[0]===engineFilter);
   }),[tasks,taskFilter,statusFilter,engineFilter,showArchived]);
   useEffect(()=>{if(engine==='port-probe'&&mode==='schedule')form.setFieldValue('mode','now');},[engine,mode,form]);
+  useEffect(()=>{
+    const controller=new AbortController();
+    if(!historySchedule||isDemoMode)return()=>controller.abort();
+    setScheduleRunLoading(true);setScheduleRunError('');
+    fetchScheduleRuns(historySchedule.id,scheduleRunPage,controller.signal).then(response=>{if(!controller.signal.aborted){setScheduleRuns(response.items);setScheduleRunTotal(response.total);}}).catch(cause=>{if(!controller.signal.aborted)setScheduleRunError(cause instanceof Error?cause.message:'历史运行记录加载失败');}).finally(()=>{if(!controller.signal.aborted)setScheduleRunLoading(false);});
+    return()=>controller.abort();
+  },[historySchedule,scheduleRunPage]);
   const confirmFull=()=>new Promise<boolean>(resolve=>Modal.confirm({title:'确认全端口探测',content:'将对这台主机的 TCP 1–65535 端口发起连接（排除项会跳过）。按每次连接超时 1 秒、并发 16 粗略估算约 69 分钟；实际时间取决于速率、超时和响应，服务识别与漏洞检测会额外耗时。可能增加目标连接数及日志量，请确认维护窗口和授权范围。',okText:'确认全端口范围',cancelText:'返回修改',onOk:()=>resolve(true),onCancel:()=>resolve(false)}));
   const create=async(values:Values)=>{
     if(busy)return;
@@ -169,6 +178,7 @@ export const TasksPage:React.FC=()=>{
         {title:'操作',width:360,render:(_,s)=><Space wrap>
           <Button size="small" disabled={!canWrite} onClick={async()=>{try{await toggleSchedule(s.id,!s.enabled);setSchedules(prev=>prev.map(item=>item.id===s.id?{...item,enabled:!s.enabled}:item));message.success('定时任务状态已保存');}catch(e){message.error(String(e));}}}>{s.enabled?'停用':'启用'}</Button>
           <Button size="small" disabled={!canWrite} onClick={async()=>{if(s.portProbe&&(s.portProbe.preset==='full'||coversAllPorts(s.portProbe.ranges??[]))&&!(await confirmFull()))return;try{await createTask({synthetic:s.synthetic,engine:s.engine,scheme:s.scheme,inputPath:s.inputPath,inputKind:s.inputKind,assetId:s.assetId,portProbe:s.portProbe,customRuleIds:s.customRuleIds,targets:s.targets,timeWindows:s.timeWindows});message.success('已另建一条任务，仍遵守时间窗');}catch(e){message.error(String(e));}}}>手动运行</Button>
+          <Button size="small" onClick={()=>{setScheduleRunPage(1);setHistorySchedule(s);}}>历史运行</Button>
           <Button size="small" disabled={!canWrite} onClick={()=>openScheduleEdit(s)}>修改</Button>
           <Button size="small" danger disabled={!canWrite} onClick={()=>removeSchedule(s)}>删除</Button>
         </Space>},
@@ -219,6 +229,17 @@ export const TasksPage:React.FC=()=>{
         </>}
         {(engine==='auto'||engine==='port-probe')&&<div hidden={wizard&&wizardStep!==3} style={{marginTop:16}}><Form.Item name="opsApproved" valuePropName="checked" rules={[{validator:(_,value)=>value?Promise.resolve():Promise.reject(new Error('请确认运维授权和四层转发排除情况'))}]}><Checkbox>我已获得运维对这台主机和所选 TCP 端口范围的探测授权，并已排除已知的 Nginx 四层转发端口</Checkbox></Form.Item></div>}
       </Form>
+    </Modal>
+    <Modal title={`定时任务历史运行${historySchedule?`：${historySchedule.name}`:''}`} open={Boolean(historySchedule)} onCancel={()=>setHistorySchedule(null)} footer={<Button onClick={()=>setHistorySchedule(null)}>关闭</Button>} width={780}>
+      {isDemoMode&&<Alert type="warning" showIcon message="演示模式不读取历史运行记录"/>}
+      {!isDemoMode&&scheduleRunError&&<Alert type="error" showIcon message="历史运行记录加载失败" description={scheduleRunError}/>}
+      <Table<ScheduleRun> rowKey="id" loading={scheduleRunLoading} dataSource={scheduleRuns} locale={{emptyText:'暂无运行记录'}} pagination={{current:scheduleRunPage,pageSize:50,total:scheduleRunTotal,hideOnSinglePage:true,showSizeChanger:false,onChange:page=>setScheduleRunPage(page)}} columns={[
+        {title:'触发时间',dataIndex:'triggeredAt',width:190,render:(value:string)=>new Date(value).toLocaleString()},
+        {title:'状态',dataIndex:'status',width:150,render:(value:string)=><Tag color={value==='COMPLETED'?'success':value==='FAILED'?'error':value==='RUNNING'?'processing':'default'}>{scheduleRunNames[value]??value}</Tag>},
+        {title:'任务 ID',dataIndex:'taskId',width:240,ellipsis:true,render:(value:string)=>value||'—'},
+        {title:'错误',dataIndex:'error',ellipsis:true,render:(value:string)=>value||'—'},
+      ]}/>
+      <Typography.Paragraph type="secondary" style={{marginBottom:0}}>历史记录只展示触发时间、任务状态和任务标识；任务结果仍在扫描任务清册及漏洞页面查看。删除定时计划不会删除这份历史。</Typography.Paragraph>
     </Modal>
   </div>;
 };

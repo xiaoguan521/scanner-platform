@@ -18,6 +18,7 @@ UI 使用 HttpOnly 的 `scanner_session` Cookie，所有写请求携带 `X-Reque
 - `/detection-capabilities`、`/vulnerability-categories`、`/scan-policy`、`/knowledge`:检测能力状态、32 类字典、管理员端口策略、规范 JSON 知识库维护与导入;不自动抓取外部数据。
 - `POST /port-quarantines/release`:管理员填写复核原因后解除隔离并审计。
 - `/schedules`：首次运行时间、分钟间隔（0=单次）、显式目标、时间窗；`PUT /schedules/{id}` 修改，`PATCH` 启停，`DELETE` 删除后续调度，返回最近任务及错误。
+- `GET /schedules/{id}/runs`：按时间倒序分页查看每次定时触发的任务状态；保留已删除计划的历史，只返回触发时间、状态、任务 ID 和安全错误摘要，不返回目标、输入或引擎输出。
 - `/nodes`：真实本机心跳，10 秒未上报显示离线，并回报固定版本、安装与就绪状态 `engines`。`/nodes/heartbeat`、`/worker/*`、`/updater/*` 仅为绑定回环地址的本机进程协议，不是生产部署接口。
 - `/rules`、`/rule-jobs`：Updater 回报的版本与操作状态。`/rules/import` 上传不超过 256 MiB 的 ZIP；`/rules/fetch` 提交 HTTPS ZIP URL 和包哈希，大签名包由 Updater 流式下载（最多 2 GiB）；`/rules/{version}/activate` 激活或通过 `rollback: true` 显式回滚。人工下载的大签名 ZIP 使用 Updater 的 `--import-bundle-file`，不经过 Server SQLite BLOB。
 

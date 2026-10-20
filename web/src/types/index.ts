@@ -254,6 +254,9 @@ export interface Schedule extends TaskInput {
   id: string; name: string; nextRun: string; intervalMinutes: number; enabled: boolean;
   lastTaskId: string; lastError: string; createdBy: string;
 }
+export interface ScheduleRun {
+  id: string; scheduleId: string; taskId: string; triggeredAt: string; status: string; error?: string;
+}
 export interface RuleJob {
   id: string; kind: 'IMPORT'|'FETCH'|'ACTIVATE'; status: 'PENDING'|'RUNNING'|'COMPLETED'|'FAILED';
   version: string; message: string; createdAt: string; completedAt: string;

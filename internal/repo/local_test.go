@@ -89,6 +89,15 @@ func TestLocalTargetsSchedulesAndCancellation(t *testing.T) {
 	if err != nil || len(tasks) != 3 {
 		t.Fatalf("missed ticks replayed %d %v", len(tasks), err)
 	}
+	runs, total, err := store.ListScheduleRuns(ctx, schedule.ID, 10, 0)
+	if err != nil || total != 2 || len(runs) != 2 {
+		t.Fatalf("schedule run history missing: total=%d runs=%+v err=%v", total, runs, err)
+	}
+	for _, run := range runs {
+		if run.ScheduleID != schedule.ID || run.TaskID == "" || run.Status != "PENDING" || run.Error != "" {
+			t.Fatalf("unexpected schedule run projection: %+v", run)
+		}
+	}
 	if err := store.ToggleSchedule(ctx, schedule.ID, actor, false); err != nil {
 		t.Fatal(err)
 	}
@@ -105,12 +114,57 @@ func TestLocalTargetsSchedulesAndCancellation(t *testing.T) {
 	if items, err := store.ListSchedules(ctx); err != nil || len(items) != 0 {
 		t.Fatalf("schedule delete left records: %+v err=%v", items, err)
 	}
+	runs, total, err = store.ListScheduleRuns(ctx, schedule.ID, 1, 1)
+	if err != nil || total != 2 || len(runs) != 1 || runs[0].Status != "PENDING" {
+		t.Fatalf("schedule history was not retained or paginated: total=%d runs=%+v err=%v", total, runs, err)
+	}
 	if err := store.Tick(ctx, due.Add(20*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	tasks, _ = store.ListRuntimeTasks(ctx)
 	if len(tasks) != 3 {
 		t.Fatal("disabled schedule triggered")
+	}
+}
+
+func TestScheduleInvalidTriggerIsRecordedAndStopsOneShot(t *testing.T) {
+	store, actor := localFixture(t)
+	ctx := context.Background()
+	due := time.Now().Add(time.Minute).Truncate(time.Second)
+	schedule, err := store.SaveSchedule(ctx, taskflow.Schedule{
+		Name:      "Invalid trigger",
+		TaskInput: taskflow.TaskInput{Synthetic: true, Targets: []string{"192.0.2.20:80"}},
+		NextRun:   due.Format(time.RFC3339),
+	}, actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw string
+	if err := store.db.QueryRowContext(ctx, "SELECT data FROM task_schedules WHERE id=?", schedule.ID).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	var tampered taskflow.Schedule
+	if err := json.Unmarshal([]byte(raw), &tampered); err != nil {
+		t.Fatal(err)
+	}
+	tampered.Engine = "nuclei"
+	encoded, err := json.Marshal(tampered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, "UPDATE task_schedules SET data=? WHERE id=?", string(encoded), schedule.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Tick(ctx, due); err != nil {
+		t.Fatal(err)
+	}
+	runs, total, err := store.ListScheduleRuns(ctx, schedule.ID, 10, 0)
+	if err != nil || total != 1 || len(runs) != 1 || runs[0].Status != "FAILED" || runs[0].TaskID != "" || runs[0].Error == "" {
+		t.Fatalf("invalid trigger history missing: total=%d runs=%+v err=%v", total, runs, err)
+	}
+	items, err := store.ListSchedules(ctx)
+	if err != nil || len(items) != 1 || items[0].Enabled || items[0].LastError == "" {
+		t.Fatalf("invalid schedule was not disabled with error: items=%+v err=%v", items, err)
 	}
 }
 
