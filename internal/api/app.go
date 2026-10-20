@@ -292,6 +292,38 @@ func NewDevelopmentHandler(s account.Repository, assetStore assets.Repository, a
 		}
 		respond(w, http.StatusOK, ListResponse[assets.Asset]{Items: list, Total: len(list)})
 	}))
+	mux.HandleFunc("POST /api/v1/assets/reachability-test", auth(s, false, func(w http.ResponseWriter, r *http.Request, user account.User) {
+		if user.Role != "admin" && user.Role != "security_engineer" {
+			bad(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		if !mutationGuard(w, r) {
+			return
+		}
+		var input struct {
+			Address string `json:"address"`
+		}
+		if !readJSON(w, r, &input) {
+			return
+		}
+		tester, ok := assetStore.(interface {
+			TestReachability(context.Context, string) (assets.Reachability, error)
+		})
+		if !ok {
+			bad(w, http.StatusInternalServerError, "reachability_check_failed")
+			return
+		}
+		result, err := tester.TestReachability(r.Context(), input.Address)
+		if err != nil {
+			if errors.Is(err, assets.ErrInvalid) {
+				bad(w, http.StatusBadRequest, "invalid_asset")
+				return
+			}
+			bad(w, http.StatusInternalServerError, "reachability_check_failed")
+			return
+		}
+		respond(w, http.StatusOK, result)
+	}))
 	mux.HandleFunc("POST /api/v1/assets", auth(s, false, func(w http.ResponseWriter, r *http.Request, user account.User) {
 		if user.Role != "admin" && user.Role != "security_engineer" {
 			bad(w, http.StatusForbidden, "forbidden")

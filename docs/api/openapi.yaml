@@ -287,6 +287,45 @@ paths:
           type: string
           enum:
           - XMLHttpRequest
+  "/api/v1/assets/reachability-test":
+    post:
+      tags:
+      - assets
+      summary: Test the numeric IP currently entered in an asset form
+      description: Only admin or security_engineer. Sends one ICMP echo with a 2.5 second timeout. The address need not be saved, and the result is not persisted.
+      security:
+      - sessionCookie: []
+      parameters:
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema:
+          type: string
+          enum:
+          - XMLHttpRequest
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - address
+              properties:
+                address:
+                  type: string
+                  description: A single numeric IPv4 or IPv6 address; no hostname or CIDR.
+      responses:
+        '200':
+          description: Reachability hint; NO_RESPONSE does not prove the host is offline
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Reachability"
+        '400':
+          description: Address is not an allowed numeric IP
+        '403':
+          description: Insufficient role
   "/api/v1/assets/{id}":
     patch:
       tags:
@@ -362,8 +401,8 @@ paths:
     post:
       tags:
       - assets
-      summary: Send one bounded ICMP echo to a registered numeric host IP
-      description: Only admin or security_engineer. One echo request with a 2.5 second timeout. No response does not prove the host is offline.
+      summary: Immediately refresh one registered host's ICMP reachability status
+      description: Only admin or security_engineer. Used by the asset form after registration or an IP change. One echo request with a 2.5 second timeout. The Server also checks registered hosts periodically. No response does not prove the host is offline.
       security:
       - sessionCookie: []
       parameters:
@@ -781,7 +820,16 @@ paths:
           description: Already reviewed or quarantined
   "/api/v1/tasks":
     get:
-      summary: Authenticated local tasks
+      summary: Authenticated local tasks with an optional archive-state filter
+      parameters:
+      - in: query
+        name: archived
+        required: false
+        schema:
+          type: string
+          enum: ["true", "false", "all"]
+          default: all
+        description: true returns archived tasks, false returns active tasks, and all or omitted returns both.
       responses:
         '200':
           description: Local operation result
@@ -1000,6 +1048,83 @@ paths:
       responses:
         '200':
           description: Local operation result
+      security:
+      - sessionCookie: []
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema:
+          type: string
+          enum:
+          - XMLHttpRequest
+  "/api/v1/tasks/{id}/archive":
+    post:
+      summary: Archive a terminal task and hide it from default task lists
+      responses:
+        '200':
+          description: Task archived
+        '404':
+          description: Task not found
+        '409':
+          description: Task is not terminal
+      security:
+      - sessionCookie: []
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema:
+          type: string
+          enum:
+          - XMLHttpRequest
+  "/api/v1/tasks/{id}/restore":
+    post:
+      summary: Restore an archived terminal task to the default task list
+      responses:
+        '200':
+          description: Task restored
+        '404':
+          description: Task not found
+        '409':
+          description: Task is not terminal
+      security:
+      - sessionCookie: []
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema:
+          type: string
+          enum:
+          - XMLHttpRequest
+  "/api/v1/tasks/{id}":
+    delete:
+      summary: Permanently delete a terminal task that has no associated findings (admin only)
+      responses:
+        '200':
+          description: Task deleted; audit record and frozen report snapshots are retained
+        '403':
+          description: Admin role required
+        '404':
+          description: Task not found
+        '409':
+          description: Task is active or has associated findings
       security:
       - sessionCookie: []
       parameters:
@@ -2016,6 +2141,21 @@ components:
         reviewedAt:
           type: string
           format: date-time
+    Reachability:
+      type: object
+      required:
+      - status
+      - checkedAt
+      properties:
+        status:
+          type: string
+          enum:
+          - REACHABLE
+          - NO_RESPONSE
+          - CHECK_FAILED
+        checkedAt:
+          type: string
+          format: date-time
     Asset:
       type: object
       required:
@@ -2287,6 +2427,7 @@ components:
       - targetCount
       - createdAt
       - chunks
+      - findingCount
       properties:
         id:
           type: string
@@ -2315,6 +2456,14 @@ components:
           - COMPLETED
           - FAILED
           - CANCELED
+        archived:
+          type: boolean
+          default: false
+          description: Archived terminal tasks are hidden from the default task list.
+        findingCount:
+          type: integer
+          minimum: 0
+          description: Number of finding observations associated with this task.
         hardDeadline:
           type: string
           description: RFC3339 deadline after claim; empty before dispatch.

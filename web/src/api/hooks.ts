@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { apiClient, isDemoMode } from './client';
 import type { Resources, SystemStatus, Capabilities } from './client';
 
-export function useCollection<K extends keyof Resources>(name: K, demoFixtures: Resources[K][]) {
+export function useCollection<K extends keyof Resources>(name: K, demoFixtures: Resources[K][], query = '') {
   const [data, setData] = useState<Resources[K][]>(() => isDemoMode ? [...demoFixtures] : []);
   const [loading, setLoading] = useState(!isDemoMode);
   const [error, setError] = useState<string | null>(null);
@@ -15,7 +15,7 @@ export function useCollection<K extends keyof Resources>(name: K, demoFixtures: 
     const load = () => {
       if (inFlight) return;
       inFlight = true;
-      apiClient.collection(name, controller.signal).then((response) => {
+      apiClient.collection(name, controller.signal, query).then((response) => {
       if (!controller.signal.aborted) {
         setData(response.items);
         setError(null);
@@ -31,12 +31,13 @@ export function useCollection<K extends keyof Resources>(name: K, demoFixtures: 
     });
     };
     load();
-    const timer = ['tasks','findings','nodes','rules','schedules','rule-jobs','custom-rules'].includes(name) ? window.setInterval(load, 1000) : undefined;
+    const pollInterval = name === 'assets' ? 10_000 : ['tasks','findings','nodes','rules','schedules','rule-jobs','custom-rules'].includes(name) ? 1000 : undefined;
+    const timer = pollInterval === undefined ? undefined : window.setInterval(load, pollInterval);
     return () => {
       controller.abort();
       if (timer !== undefined) window.clearInterval(timer);
     };
-  }, [name]);
+  }, [name, query]);
   return { data, setData, loading, error };
 }
 

@@ -754,25 +754,17 @@ func (s *Store) CheckReachability(ctx context.Context, actor, id string) (Reacha
 	if kind != "host" {
 		return Reachability{}, ErrInvalid
 	}
-	status := "CHECK_FAILED"
-	reachable, pingErr := s.pinger(ctx, address)
-	if pingErr == nil {
-		status = "NO_RESPONSE"
-		if reachable {
-			status = "REACHABLE"
-		}
-	}
-	if err := ctx.Err(); err != nil {
+	result, err := s.probeReachability(ctx, address)
+	if err != nil {
 		return Reachability{}, err
 	}
-	checkedAt := time.Now().UTC().Format(time.RFC3339Nano)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Reachability{}, err
 	}
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx, `INSERT INTO asset_reachability(asset_id,status,checked_at) VALUES(?,?,?)
- ON CONFLICT(asset_id) DO UPDATE SET status=excluded.status,checked_at=excluded.checked_at`, id, status, checkedAt); err != nil {
+	 ON CONFLICT(asset_id) DO UPDATE SET status=excluded.status,checked_at=excluded.checked_at`, id, result.Status, result.CheckedAt); err != nil {
 		return Reachability{}, err
 	}
 	if err := auditTx(ctx, tx, actor, "check_asset_reachability", id); err != nil {
@@ -781,5 +773,79 @@ func (s *Store) CheckReachability(ctx context.Context, actor, id string) (Reacha
 	if err := tx.Commit(); err != nil {
 		return Reachability{}, err
 	}
-	return Reachability{Status: status, CheckedAt: checkedAt}, nil
+	return result, nil
+}
+
+// TestReachability checks the exact numeric IP currently entered in an asset form.
+// It does not require the asset to be saved and does not persist the result.
+func (s *Store) TestReachability(ctx context.Context, address string) (Reachability, error) {
+	address = strings.TrimSpace(address)
+	ip := net.ParseIP(address)
+	if ip == nil || ip.IsUnspecified() || ip.IsMulticast() || ip.Equal(net.IPv4bcast) {
+		return Reachability{}, ErrInvalid
+	}
+	return s.probeReachability(ctx, ip.String())
+}
+
+// RefreshReachability checks only numeric host addresses already registered in the asset inventory.
+// Each target receives one bounded ICMP echo per pass; no response is not an offline determination.
+func (s *Store) RefreshReachability(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,address FROM assets WHERE kind='host' ORDER BY id`)
+	if err != nil {
+		return err
+	}
+	type target struct {
+		id      string
+		address string
+	}
+	targets := make([]target, 0)
+	for rows.Next() {
+		var item target
+		if err := rows.Scan(&item.id, &item.address); err != nil {
+			rows.Close()
+			return err
+		}
+		targets = append(targets, item)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, item := range targets {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		result, err := s.probeReachability(ctx, item.address)
+		if err != nil {
+			return err
+		}
+		_, err = s.db.ExecContext(ctx, `INSERT INTO asset_reachability(asset_id,status,checked_at)
+			SELECT id,?,? FROM assets WHERE id=? AND kind='host' AND address=?
+			ON CONFLICT(asset_id) DO UPDATE SET status=excluded.status,checked_at=excluded.checked_at`,
+			result.Status, result.CheckedAt, item.id, item.address)
+		if err != nil {
+			return fmt.Errorf("store reachability for registered host: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *Store) probeReachability(ctx context.Context, address string) (Reachability, error) {
+	checkCtx, cancel := context.WithTimeout(ctx, 2500*time.Millisecond)
+	defer cancel()
+	reachable, pingErr := s.pinger(checkCtx, address)
+	if err := ctx.Err(); err != nil {
+		return Reachability{}, err
+	}
+	status := "CHECK_FAILED"
+	if pingErr == nil || errors.Is(checkCtx.Err(), context.DeadlineExceeded) {
+		status = "NO_RESPONSE"
+		if reachable && pingErr == nil {
+			status = "REACHABLE"
+		}
+	}
+	return Reachability{Status: status, CheckedAt: time.Now().UTC().Format(time.RFC3339Nano)}, nil
 }

@@ -86,12 +86,23 @@ func NewRuntimeHandler(store *repo.RuntimeStore, fallback http.Handler, uiDir st
 	}
 	registerProductHandlers(mux, store, ui, admin, actor)
 	registerReportHandlers(mux, store, ui, actor)
-	registerLocalHandlers(mux, store, ui, actor)
+	registerLocalHandlers(mux, store, ui, admin, actor)
 	registerRuleHandlers(mux, store, ui, actor)
 	mux.HandleFunc("GET /api/v1/tasks", ui(false, func(w http.ResponseWriter, r *http.Request) {
+		archived := r.URL.Query().Get("archived")
+		if archived != "" && archived != "true" && archived != "false" && archived != "all" {
+			bad(w, http.StatusBadRequest, "invalid_archive_filter")
+			return
+		}
 		items, err := store.ListRuntimeTasks(r.Context())
 		if !runtimeStoreError(w, err) {
-			runtimeJSON(w, http.StatusOK, ListResponse[taskflow.Task]{Items: items, Total: len(items)})
+			filtered := make([]taskflow.Task, 0, len(items))
+			for _, item := range items {
+				if archived == "" || archived == "all" || item.Archived == (archived == "true") {
+					filtered = append(filtered, item)
+				}
+			}
+			runtimeJSON(w, http.StatusOK, ListResponse[taskflow.Task]{Items: filtered, Total: len(filtered)})
 		}
 	}))
 	mux.HandleFunc("POST /api/v1/tasks", ui(true, func(w http.ResponseWriter, r *http.Request) {
@@ -197,6 +208,18 @@ func runtimeStoreError(w http.ResponseWriter, err error) bool {
 	}
 	if errors.Is(err, repo.ErrTaskConflict) {
 		runtimeJSON(w, http.StatusConflict, APIError{Error: "task_conflict", Message: "任务或结果与领取记录不一致"})
+		return true
+	}
+	if errors.Is(err, repo.ErrTaskNotFound) {
+		runtimeJSON(w, http.StatusNotFound, APIError{Error: "task_not_found", Message: "扫描任务不存在"})
+		return true
+	}
+	if errors.Is(err, repo.ErrTaskNotTerminal) {
+		runtimeJSON(w, http.StatusConflict, APIError{Error: "task_not_terminal", Message: "只能归档或删除已结束的任务"})
+		return true
+	}
+	if errors.Is(err, repo.ErrTaskHasFindings) {
+		runtimeJSON(w, http.StatusConflict, APIError{Error: "task_has_findings", Message: "任务存在关联发现项，请归档以保留扫描记录"})
 		return true
 	}
 	slog.Error("task database operation failed", "error", err)

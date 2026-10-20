@@ -1,0 +1,25 @@
+name: scanner-lab-target
+
+services:
+  linux-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: scanner-lab-server:debian12
+    ports:
+      - target: 22
+        published: "12222"
+        host_ip: 127.0.0.1
+        protocol: tcp
+      - target: 80
+        published: "18080"
+        host_ip: 127.0.0.1
+        protocol: tcp
+    volumes:
+      - type: bind
+        source: ../../runtime/ssh/orbstack-target.pub
+        target: /run/target-authorized-key
+        read_only: true
+        bind:
+          create_host_path: false
+    restart: "no"

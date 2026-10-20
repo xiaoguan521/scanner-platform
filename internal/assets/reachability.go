@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+const ReachabilityInterval = time.Minute
+
 type Reachability struct {
 	Status    string `json:"status"`
 	CheckedAt string `json:"checkedAt"`

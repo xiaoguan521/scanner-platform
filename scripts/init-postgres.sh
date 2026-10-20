@@ -19,7 +19,7 @@ fi
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 directory="$root/internal/repo/migrations/postgres"
-versions=(0001_core 0002_scanning 0003_rules_sbom 0004_report_inventory)
+versions=(0001_core 0002_scanning 0003_rules_sbom 0004_report_inventory 0005_task_archive)
 
 echo "Target PostgreSQL: host=$PGHOST database=$PGDATABASE user=$PGUSER"
 journal="$(psql -X -qAt -v ON_ERROR_STOP=1 -c "SELECT to_regclass('public.schema_migrations') IS NOT NULL")"

@@ -36,9 +36,15 @@ BEGIN
     IF missing IS NOT NULL THEN
         RAISE EXCEPTION 'Missing PostgreSQL tables: %', array_to_string(missing, ', ');
     END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'scan_tasks' AND column_name = 'archived_at'
+    ) THEN
+        RAISE EXCEPTION 'Missing scan_tasks.archived_at';
+    END IF;
     IF (SELECT count(*) FROM public.schema_migrations
-         WHERE version IN ('0001_core','0002_scanning','0003_rules_sbom','0004_report_inventory')) <> 4 THEN
-        RAISE EXCEPTION 'Not all four migrations have been recorded';
+         WHERE version IN ('0001_core','0002_scanning','0003_rules_sbom','0004_report_inventory','0005_task_archive')) <> 5 THEN
+        RAISE EXCEPTION 'Not all five migrations have been recorded';
     END IF;
 END
 $$;

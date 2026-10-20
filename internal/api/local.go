@@ -6,7 +6,7 @@ import (
 	"scanner-platform/internal/taskflow"
 )
 
-func registerLocalHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui func(bool, http.HandlerFunc) http.HandlerFunc, actor func(*http.Request) string) {
+func registerLocalHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui func(bool, http.HandlerFunc) http.HandlerFunc, admin func(http.HandlerFunc) http.HandlerFunc, actor func(*http.Request) string) {
 	mux.HandleFunc("POST /api/v1/nodes/heartbeat", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			ID          string                  `json:"id"`
@@ -38,6 +38,21 @@ func registerLocalHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui func
 	mux.HandleFunc("POST /api/v1/tasks/{id}/cancel", ui(true, func(w http.ResponseWriter, r *http.Request) {
 		if !runtimeStoreError(w, store.CancelTask(r.Context(), r.PathValue("id"), actor(r))) {
 			runtimeJSON(w, 200, map[string]string{"status": "CANCELED"})
+		}
+	}))
+	mux.HandleFunc("POST /api/v1/tasks/{id}/archive", ui(true, func(w http.ResponseWriter, r *http.Request) {
+		if !runtimeStoreError(w, store.SetTaskArchived(r.Context(), r.PathValue("id"), actor(r), true)) {
+			runtimeJSON(w, http.StatusOK, map[string]string{"status": "ARCHIVED"})
+		}
+	}))
+	mux.HandleFunc("POST /api/v1/tasks/{id}/restore", ui(true, func(w http.ResponseWriter, r *http.Request) {
+		if !runtimeStoreError(w, store.SetTaskArchived(r.Context(), r.PathValue("id"), actor(r), false)) {
+			runtimeJSON(w, http.StatusOK, map[string]string{"status": "ACTIVE"})
+		}
+	}))
+	mux.HandleFunc("DELETE /api/v1/tasks/{id}", admin(func(w http.ResponseWriter, r *http.Request) {
+		if !runtimeStoreError(w, store.DeleteRuntimeTask(r.Context(), r.PathValue("id"), actor(r))) {
+			runtimeJSON(w, http.StatusOK, map[string]string{"status": "DELETED"})
 		}
 	}))
 	mux.HandleFunc("PATCH /api/v1/findings/{id}", ui(true, func(w http.ResponseWriter, r *http.Request) {

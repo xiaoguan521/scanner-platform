@@ -3,7 +3,7 @@
 > 本版整合了 V3.0 / V3.1 与前几轮评审意见,并纳入运维提出的三项生产要求。
 > 标记 **【待核对】** 的内容表示尚未在官方文档或实测中确认,编码前必须验证。
 > 2026-10-19 报告能力修订:用户明确授权的目标内允许自动端口发现、受限服务识别和只读漏洞检查;不要求开放端口逐项再审批。端口范围支持常见、自定义、已登记和全端口(二次确认),单任务最多 65535 个 TCP 端口,有界并发不超过 64。排除端口和隔离端口不产生任何连接。具体口径见 `report-capability-plan.md`。
-> 2026-10-19 补充:资产登记后可对该单台数字 IP 自动发送一次 ICMP echo,也可人工重测;超时 2.5 秒,结果仅作可达性提示,无响应可能由防火墙屏蔽,不等于主机离线。修改资产 IP 会撤销原授权范围并清除旧可达性结果。
+> 2026-10-20 补充并替代 2026-10-19 的资产可达性约定:新增/编辑表单可测试当前填写的单个数字 IP,不保存测试结果;Server 启动后立即对清册中已登记的主机发送一次 ICMP echo,之后每轮完成后等待 60 秒再开始下一轮。每次只探测清册中的数字 IP,超时 2.5 秒;无响应仅表示未收到 ICMP 响应,不等于主机离线,也不得跳过 TCP 检测。清册自动刷新状态,不要求用户手动重测。修改资产 IP 会撤销原授权范围并清除旧可达性结果。
 
 ---
 
@@ -175,8 +175,9 @@ SAST、密钥扫描、重型 DAST 爬虫、AI 自动研判、任何自动利用�
 
 ### 5.5 签名与防回滚
 
-- 使用离线私钥(如 Ed25519)签名,公钥内置在 Updater。
-- 私钥离线保管,制定轮换流程。
+- 使用 Ed25519 对 `manifest.json` 原始字节签名,签名文件为同目录下的 `manifest.json.sig`;下载包的 `SHA256SUMS` 也覆盖该签名文件。
+- 当前漏洞库准备工作流只允许在 `main` 运行,使用 GitHub Environment `vulnerability-data-signing` 中的 `BUNDLE_SIGNING_PRIVATE_KEY_PEM` 私钥和 `BUNDLE_SIGNING_PUBLIC_KEY_PEM` 公钥。Environment 应限制可部署分支并配置审批保护;工作流在临时目录中使用密钥,校验密钥类型及公私钥匹配,验签成功后才打包。
+- 定期轮换签名密钥;更换密钥时,必须先同步更新 Updater 受信公钥并验证兼容性。当前规则导入实现尚未验签,因此 CI 生成签名不代表平台已验证签名或可据此信任规则包。
 - **拒绝版本号低于当前的包**,除非通过显式的"回滚"操作并留审计记录。
 
 ### 5.6 版本租约与垃圾回收
@@ -341,6 +342,7 @@ CREATE TABLE scan_tasks (
   engines TEXT NOT NULL,              -- JSON 数组
   status TEXT NOT NULL DEFAULT 'PENDING',
   -- PENDING / WAITING_WINDOW / RUNNING / PAUSED_WINDOW / COMPLETED / FAILED / CANCELED
+  archived_at TIMESTAMP,               -- 归档后从默认任务清册隐藏,可恢复
   hard_deadline TIMESTAMP,            -- 下发给 Worker 的本地强制截止时间
   created_by TEXT NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -422,6 +424,7 @@ CREATE TABLE audit_logs (
 3. **硬截止**:每个任务块下发 `hard_deadline`(时间窗结束与最大运行时长取较早者),由 Worker **本地**强制结束,不依赖 Server 心跳,Server 不可达时同样生效。
 4. **时区**:时间窗必须带时区,并明确跨午夜(如 23:00–05:00)的语义。
 5. **定时**:Server 内置 cron 调度,到点生成任务,遵守上述准入规则。
+6. **任务清理**:终态任务可归档并恢复;归档任务不出现在默认任务清册,但扫描记录仍保留。管理员仅可彻底删除已结束且没有关联发现项的任务;删除动作留审计日志,已生成的冻结报告快照不随任务删除。
 
 ---
 

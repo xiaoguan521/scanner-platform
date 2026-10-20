@@ -32,6 +32,7 @@ type taskDetails struct {
 	EffectiveExclusions []portprobe.Range          `json:"effectiveExclusions,omitempty"`
 	AssetProfile        inventory.Profile          `json:"assetProfile,omitempty"`
 	Input               taskflow.TaskInput         `json:"input"`
+	Archived            bool                       `json:"archived,omitempty"`
 	Skipped             []string                   `json:"skipped"`
 	Owners              map[string]targetOwner     `json:"owners"`
 	ProbePorts          []int                      `json:"probePorts,omitempty"`
@@ -72,6 +73,7 @@ func (s *RuntimeStore) initLocal(ctx context.Context) error {
 		}
 	}
 	for _, q := range []string{
+		`CREATE TABLE IF NOT EXISTS audit_logs(id TEXT PRIMARY KEY,actor TEXT NOT NULL,action TEXT NOT NULL,object_type TEXT,object_id TEXT,detail TEXT,created_at TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS task_schedules(id TEXT PRIMARY KEY,data TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS local_nodes(id TEXT PRIMARY KEY,data TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS local_rule_bundles(version TEXT PRIMARY KEY,data TEXT NOT NULL)`,
@@ -333,7 +335,7 @@ func resolveAutoScan(ctx context.Context, tx *sql.Tx, in taskflow.TaskInput, det
 }
 
 func logLocal(ctx context.Context, tx *sql.Tx, actor, action, kind, id, detail string) error {
-	// Standalone repository tests do not initialize account tables.
+	// Keep compatibility with stores created before runtime audit initialization.
 	var exists int
 	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='audit_logs'").Scan(&exists); err != nil {
 		return err
@@ -451,6 +453,138 @@ func (s *RuntimeStore) CancelTask(ctx context.Context, id, actor string) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+func terminalTaskStatus(status string) bool {
+	return status == "COMPLETED" || status == "FAILED" || status == "CANCELED"
+}
+
+func (s *RuntimeStore) SetTaskArchived(ctx context.Context, id, actor string, archived bool) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var status, raw string
+	if err := tx.QueryRowContext(ctx, `SELECT status,details FROM scan_tasks WHERE id=?`, id).Scan(&status, &raw); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrTaskNotFound
+		}
+		return err
+	}
+	if !terminalTaskStatus(status) {
+		return ErrTaskNotTerminal
+	}
+	var detail taskDetails
+	if err := json.Unmarshal([]byte(raw), &detail); err != nil {
+		return fmt.Errorf("decode task details: %w", err)
+	}
+	if detail.Archived == archived {
+		return tx.Commit()
+	}
+	detail.Archived = archived
+	encoded, err := json.Marshal(detail)
+	if err != nil {
+		return fmt.Errorf("encode task details: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE scan_tasks SET details=? WHERE id=?`, string(encoded), id); err != nil {
+		return err
+	}
+	action, description := "archive_task", "扫描任务已归档"
+	if !archived {
+		action, description = "restore_task", "扫描任务已从归档恢复"
+	}
+	if err := logLocal(ctx, tx, actor, action, "task", id, description); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *RuntimeStore) DeleteRuntimeTask(ctx context.Context, id, actor string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var status string
+	if err := tx.QueryRowContext(ctx, `SELECT status FROM scan_tasks WHERE id=?`, id).Scan(&status); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrTaskNotFound
+		}
+		return err
+	}
+	if !terminalTaskStatus(status) {
+		return ErrTaskNotTerminal
+	}
+	var findingCount int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM (
+		SELECT task_id,finding_id FROM task_finding_observations WHERE task_id=?
+		UNION
+		SELECT task_id,id FROM security_findings WHERE task_id=?
+	)`, id, id).Scan(&findingCount); err != nil {
+		return err
+	}
+	if findingCount > 0 {
+		return ErrTaskHasFindings
+	}
+	if err := clearDeletedTaskScheduleReference(ctx, tx, id); err != nil {
+		return err
+	}
+	if err := logLocal(ctx, tx, actor, "delete_task", "task", id, "终态任务无关联发现项，已彻底删除任务记录"); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `DELETE FROM scan_tasks WHERE id=? AND status IN ('COMPLETED','FAILED','CANCELED')`, id)
+	if err != nil {
+		return err
+	}
+	if count, err := result.RowsAffected(); err != nil {
+		return err
+	} else if count != 1 {
+		return ErrTaskConflict
+	}
+	return tx.Commit()
+}
+
+func clearDeletedTaskScheduleReference(ctx context.Context, tx *sql.Tx, taskID string) error {
+	rows, err := tx.QueryContext(ctx, `SELECT id,data FROM task_schedules`)
+	if err != nil {
+		return err
+	}
+	type scheduleRow struct{ id, data string }
+	items := []scheduleRow{}
+	for rows.Next() {
+		var item scheduleRow
+		if err := rows.Scan(&item.id, &item.data); err != nil {
+			rows.Close()
+			return err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, item := range items {
+		var schedule taskflow.Schedule
+		if err := json.Unmarshal([]byte(item.data), &schedule); err != nil {
+			return fmt.Errorf("decode schedule %s: %w", item.id, err)
+		}
+		if schedule.LastTaskID != taskID {
+			continue
+		}
+		schedule.LastTaskID = ""
+		encoded, err := json.Marshal(schedule)
+		if err != nil {
+			return fmt.Errorf("encode schedule %s: %w", item.id, err)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE task_schedules SET data=? WHERE id=?`, string(encoded), item.id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *RuntimeStore) UpdateFinding(ctx context.Context, id, status, actor string) (taskflow.Finding, error) {

@@ -119,6 +119,8 @@ export interface ScanTask {
   scopeName: string;
   engines: ('auto' | 'nuclei' | 'trivy' | 'zap' | 'synthetic' | 'port-probe')[];
   status: TaskStatus;
+  archived?: boolean;
+  findingCount: number;
   hardDeadline: string;
   totalChunks: number;
   completedChunks: number;

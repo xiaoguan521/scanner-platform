@@ -6,12 +6,13 @@ UI 使用 HttpOnly 的 `scanner_session` Cookie，所有写请求携带 `X-Reque
 
 - `/auth/setup`：首次管理员初始化状态/创建，已有用户后拒绝再次初始化。
 - `/auth/login`、`/auth/me`、`/auth/logout`、`/users`：账号与会话。
-- `/assets`：数字 IP 或镜像仓库登记；`requestedPorts` 为端口申请，`skippedPorts` 为需要排除的端口。新增主机后只对登记 IP 发送一次有界 ICMP echo；可通过 `POST /assets/{id}/reachability-check` 重测，结果只作可达性提示。`PATCH` 可修改资产，改 IP 会撤销已有范围授权并清除旧 Ping 结果；`DELETE` 在存在关联范围记录时返回冲突。`POST /assets/{id}/port-requests` 可把探测候选追加为待审批申请；不会直接授权扫描。`/port-quarantines` 读取实际隔离记录。
+- `/assets`：数字 IP 或镜像仓库登记；`requestedPorts` 为端口申请，`skippedPorts` 为需要排除的端口。`POST /assets/reachability-test` 测试表单中当前填写的单个数字 IP,不要求先登记资产且不保存测试结果。Server 启动后立即探测已登记主机,每轮完成后间隔 60 秒继续,清册状态自动刷新;无响应只作可达性提示。`POST /assets/{id}/reachability-check` 由新增/改 IP 后的页面流程用于立即更新该资产状态。`PATCH` 可修改资产，改 IP 会撤销已有范围授权并清除旧 Ping 结果；`DELETE` 在存在关联范围记录时返回冲突。`POST /assets/{id}/port-requests` 可把探测候选追加为待审批申请；不会直接授权扫描。`/port-quarantines` 读取实际隔离记录。
 - `/scopes`、`/port-requests`：范围与端口审批台账。范围申请可通过 `PUT /scopes/{id}` 修改（重置为待审批）、通过 `POST /scopes/{id}/revoke` 撤销、通过 `DELETE /scopes/{id}` 删除；已批准范围须先撤销。自动任务在明确目标和端口策略授权范围内执行只读检查,无需逐端口再审批;模拟任务不连接目标。
-- `/tasks`:模拟任务不连接目标;自动任务使用 `engine: auto`、单个 `assetId` 和 `portProbe`,支持常见、自定义、已登记、全端口(确认)、强度与排除。独立 `port-probe` 只做 TCP 连接;自动流程继续有界服务识别和只读检查。数字 IP 固定在 Server,Worker 不扩展主机;领取前复核排除与隔离。Task 返回 `effectiveExclusions`、`quarantinedPorts`、`assetProfile`、`serviceResults` 和实际进度。见 [端口策略](../port-probe.md)。
+- `/tasks`:模拟任务不连接目标;自动任务使用 `engine: auto`、单个 `assetId` 和 `portProbe`,支持常见、自定义、已登记、全端口(确认)、强度与排除。独立 `port-probe` 只做 TCP 连接;自动流程继续有界服务识别和只读检查。数字 IP 固定在 Server,Worker 不扩展主机;领取前复核排除与隔离。Task 返回 `effectiveExclusions`、`quarantinedPorts`、`assetProfile`、`serviceResults` 和实际进度。`GET /tasks?archived=false|true|all` 可筛选归档状态；默认返回全部。终态任务可以归档/恢复；管理员可彻底删除没有关联发现项的终态任务。见 [端口策略](../port-probe.md)。
 
 - `/assets/{id}/port-requests/batch`：对已探测到的开放候选一次提交 1–1024 个独立端口申请。操作使用事务，任意端口已申请、跳过或隔离时整批拒绝；该接口不批准申请，也不直接授予扫描权限。
 - `/tasks/{id}/cancel`：取消待处理或执行中任务。`/findings/{id}` 可更新 `OPEN/IN_PROGRESS/FALSE_POSITIVE`；不提供手工 FIXED。
+- `/tasks/{id}/archive` 与 `/restore`：归档或恢复终态任务，并分别写入审计日志。`DELETE /tasks/{id}` 仅允许管理员删除终态且没有关联发现项的任务；操作写入审计日志，已生成的冻结报告快照保留。
 - `/report-templates`、`/reports`:持久化模板、冻结快照、异步生成 HTML/XLSX/DOCX、查询历史、下载和失败重试;已就绪报告可通过 `POST /reports/{id}/formats` 复用同一冻结快照导出其他格式;生成不调用扫描器。见 [报告使用说明](../product/report-usage.md)。
 - `/detection-capabilities`、`/vulnerability-categories`、`/scan-policy`、`/knowledge`:检测能力状态、32 类字典、管理员端口策略、规范 JSON 知识库维护与导入;不自动抓取外部数据。
 - `POST /port-quarantines/release`:管理员填写复核原因后解除隔离并审计。

@@ -101,6 +101,20 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 		*reportDir = filepath.Join(filepath.Dir(absoluteDB), "reports")
 	}
 	go store.RunReports(ctx, *reportDir)
+	go func() {
+		for {
+			if err := assetStore.RefreshReachability(ctx); err != nil && ctx.Err() == nil {
+				slog.Error("asset reachability refresh failed", "error", err)
+			}
+			timer := time.NewTimer(assets.ReachabilityInterval)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+		}
+	}()
 	// Synthetic tasks have no external side effects and may safely restart after a local restart.
 	if _, err := accounts.SQLDB().ExecContext(ctx, `UPDATE scan_tasks SET status='PENDING',worker_id='' WHERE status='RUNNING' AND COALESCE(json_extract(details,'$.input.engine'),'') IN ('','synthetic')`); err != nil {
 		fmt.Fprintln(stderr, err)

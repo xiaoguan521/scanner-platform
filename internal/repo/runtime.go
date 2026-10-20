@@ -20,6 +20,9 @@ import (
 )
 
 var ErrTaskConflict = errors.New("task is not running for this worker")
+var ErrTaskNotFound = errors.New("task not found")
+var ErrTaskNotTerminal = errors.New("task is not terminal")
+var ErrTaskHasFindings = errors.New("task has associated findings")
 
 // RuntimeRepository is owned exclusively by Server. Workers use the HTTP API.
 type RuntimeRepository interface {
@@ -168,6 +171,7 @@ func readRuntimeTask(row rowScanner) (taskflow.Task, error) {
 		return taskflow.Task{}, err
 	}
 	task.HardDeadline = detail.Deadline
+	task.Archived = detail.Archived
 	task.SkippedTargets = detail.Skipped
 	task.TimeWindows = detail.Input.TimeWindows
 	if task.TimeWindows == nil {
@@ -225,7 +229,42 @@ func (s *RuntimeStore) ListRuntimeTasks(ctx context.Context) ([]taskflow.Task, e
 		}
 		items = append(items, item)
 	}
-	return items, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	counts, err := s.runtimeTaskFindingCounts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for index := range items {
+		items[index].FindingCount = counts[items[index].ID]
+	}
+	return items, nil
+}
+
+func (s *RuntimeStore) runtimeTaskFindingCounts(ctx context.Context) (map[string]int, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT task_id,COUNT(*) FROM (
+		SELECT task_id,finding_id FROM task_finding_observations
+		UNION
+		SELECT task_id,id FROM security_findings
+	) GROUP BY task_id`)
+	if err != nil {
+		return nil, fmt.Errorf("count task findings: %w", err)
+	}
+	defer rows.Close()
+	counts := map[string]int{}
+	for rows.Next() {
+		var taskID string
+		var count int
+		if err := rows.Scan(&taskID, &count); err != nil {
+			return nil, err
+		}
+		counts[taskID] = count
+	}
+	return counts, rows.Err()
 }
 
 func (s *RuntimeStore) ClaimRuntimeTask(ctx context.Context, worker string) (*taskflow.Task, error) {

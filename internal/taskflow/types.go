@@ -81,6 +81,8 @@ type Task struct {
 	ScopeName           string             `json:"scopeName"`
 	Engines             []string           `json:"engines"`
 	Status              string             `json:"status"`
+	Archived            bool               `json:"archived,omitempty"`
+	FindingCount        int                `json:"findingCount"`
 	HardDeadline        string             `json:"hardDeadline"`
 	TotalChunks         int                `json:"totalChunks"`
 	CompletedChunks     int                `json:"completedChunks"`

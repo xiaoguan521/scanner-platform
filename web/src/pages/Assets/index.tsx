@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Alert, Button, Card, Form, Input, message, Modal, Select, Space, Table, Tag, Typography, Drawer, Descriptions, Checkbox, Row, Col } from 'antd';
+import type { FormInstance } from 'antd';
 import { PlusOutlined } from '@ant-design/icons';
 import { mockAssets, mockPortQuarantines, mockTasks } from '../../mock/data';
 import type { Asset, AssetProfile, ScanTask } from '../../types';
@@ -45,6 +46,8 @@ export const AssetsPage: React.FC = () => {
   const [filter,setFilter] = useState('');
   const [createForm] = Form.useForm<AssetForm>();
   const [editForm] = Form.useForm<AssetForm>();
+  const createKind = Form.useWatch('kind',createForm) ?? 'host';
+  const [testingForm,setTestingForm] = useState<'create'|'edit'|''>('');
   const rows = useMemo(()=>assets.filter(a=>(a.address+' '+(a.name??'')+' '+a.businessGroup+' '+a.owner).toLowerCase().includes(filter.toLowerCase())),[assets,filter]);
   const checkReachability = async(asset:Asset) => {
     if(asset.kind!=='host')return;
@@ -57,6 +60,19 @@ export const AssetsPage: React.FC = () => {
     } catch(cause) {
       message.error(cause instanceof Error?cause.message:'可达性检测失败');
     } finally {setCheckingAsset('');}
+  };
+  const testFormAddress = async(form:FormInstance<AssetForm>,kind:AssetForm['kind'],source:'create'|'edit') => {
+    const address=String(form.getFieldValue('address')??'').trim();
+    if(!address){message.warning('请先填写资产地址');return;}
+    if(kind!=='host'){message.info('镜像仓库不支持 ICMP Ping');return;}
+    if(isDemoMode){message.info('演示模式不会向目标发送 Ping');return;}
+    setTestingForm(source);
+    try {
+      const result=await apiClient.testAssetAddress(address);
+      const text=result.status==='REACHABLE'?'收到目标 Ping 响应':result.status==='NO_RESPONSE'?'未收到 Ping 响应；目标可能屏蔽 ICMP':'Ping 检测不可用';
+      message[result.status==='REACHABLE'?'success':'warning'](`${text}（${address}）`);
+    } catch(cause) {message.error(cause instanceof Error?cause.message:'连通性测试失败');}
+    finally {setTestingForm('');}
   };
   const deleteAsset = (asset:Asset) => Modal.confirm({
     title:'删除资产',
@@ -161,7 +177,7 @@ export const AssetsPage: React.FC = () => {
     <Alert type="warning" showIcon
       message="端口探测只针对已登记的单台主机"
       description="在任务中心可选择常用 TCP 端口或输入范围（支持 1-65535），Worker 最多并发探测 64 个端口；也可填写排除端口。资产中已标记跳过或隔离的端口会自动排除。开放端口只作候选；提交申请并经运维审批后，才会出现在漏洞扫描目标中。"/>
-    <Alert type="info" showIcon message="资产可达性" description="新增主机后会自动发送一次 ICMP Ping，也可点“重测”。无响应不等于主机离线，目标防火墙可能屏蔽 ICMP。" />
+    <Alert type="info" showIcon message="资产可达性" description="新增或编辑表单可测试当前填写的数字 IP，不保存测试结果。Server 启动后立即探测清册中的主机，此后每轮完成后间隔 60 秒继续；清册每 10 秒自动刷新。无响应不等于主机离线，也不会跳过 TCP 探测。" />
 
     {quarantines.some(q=>q.status==='ACTIVE') && <Card title="疑似四层转发隔离区">
       <Table rowKey={q=>q.assetId+'-'+q.port} dataSource={quarantines.filter(q=>q.status==='ACTIVE')} size="small" pagination={false}
@@ -202,8 +218,7 @@ export const AssetsPage: React.FC = () => {
             return <Space direction="vertical" size={2}><Tag color={color}>{labels[status]??status}</Tag>{asset.reachabilityCheckedAt&&<Text type="secondary">{new Date(asset.reachabilityCheckedAt).toLocaleString()}</Text>}</Space>;
           }},
           {title:'登记时间',dataIndex:'createdAt',width:150,render:(value:string)=>new Date(value).toLocaleDateString()},
-          {title:'操作',width:220,fixed:'right',render:(_:unknown,asset:Asset)=><Space size={4}>
-            {asset.kind==='host'&&<Button type="link" size="small" disabled={!canEdit||isDemoMode||checkingAsset===asset.id} loading={checkingAsset===asset.id} onClick={()=>void checkReachability(asset)}>重测</Button>}
+          {title:'操作',width:160,fixed:'right',render:(_:unknown,asset:Asset)=><Space size={4}>
             <Button type="link" size="small" disabled={!canEdit} onClick={()=>{
               editForm.setFieldsValue({...profileInput(asset),address:asset.address,businessGroup:asset.businessGroup,owner:asset.owner,requestedPorts:asset.requestedPorts?.join(', ')??'',skippedPorts:compressPorts(asset.skippedPorts)});
               setEditing(asset);
@@ -214,7 +229,7 @@ export const AssetsPage: React.FC = () => {
     </Card>
     <Drawer title={`资产画像 · ${detailAsset?.name||detailAsset?.address||''}`} open={!!detailAsset} onClose={()=>setDetailId('')} width={960}>
       {detailAsset&&<Space direction="vertical" size={20} style={{width:'100%'}}>
-        <Descriptions bordered size="small" column={2} items={[{key:'address',label:'地址',children:detailAsset.address},{key:'core',label:'核心资产',children:boolLabel(detailAsset.isCore)},...profileFields.map(f=>({key:f.key,label:f.label,children:String(detailAsset[f.key]||'未提供')})),{key:'business',label:'业务组',children:detailAsset.businessGroup},{key:'owner',label:'责任人',children:detailAsset.owner},{key:'reachability',label:'可达性',children:detailAsset.reachabilityStatus==='REACHABLE'?'Ping 可达':'未核实（无响应不能判定离线）'}]}/>
+        <Descriptions bordered size="small" column={2} items={[{key:'address',label:'地址',children:detailAsset.address},{key:'core',label:'核心资产',children:boolLabel(detailAsset.isCore)},...profileFields.map(f=>({key:f.key,label:f.label,children:String(detailAsset[f.key]||'未提供')})),{key:'business',label:'业务组',children:detailAsset.businessGroup},{key:'owner',label:'责任人',children:detailAsset.owner},{key:'reachability',label:'可达性',children:detailAsset.reachabilityStatus==='REACHABLE'?'Ping 可达':detailAsset.reachabilityStatus==='NO_RESPONSE'?'未收到 Ping 响应（可能被屏蔽，不代表离线）':detailAsset.reachabilityStatus==='CHECK_FAILED'?'检测不可用':'尚未检测'}]}/>
         <Card title="资产排除与隔离" size="small"><Space wrap><Tag color="orange">排除：{summarizePorts(detailAsset.skippedPorts)}</Tag><Tag color="red">隔离：{summarizePorts(detailAsset.quarantinedPorts)}</Tag><Button size="small" disabled={!canEdit} onClick={()=>{editForm.setFieldsValue({...profileInput(detailAsset),...detailAsset,requestedPorts:detailAsset.requestedPorts?.join(', ')??'',skippedPorts:compressPorts(detailAsset.skippedPorts)});setEditing(detailAsset);}}>编辑排除端口</Button></Space><Typography.Paragraph type="secondary" style={{marginTop:10,marginBottom:0}}>系统、资产与任务排除取并集；解除隔离不会撤销排除或授予漏洞扫描权限。</Typography.Paragraph></Card>
         <Card title="服务与技术栈" size="small"><Table dataSource={detailAsset.services??[]} rowKey={r=>`${r.port}-${r.protocol??'tcp'}`} size="small" scroll={{x:1100}} columns={[
           {title:'端口 / 协议',width:110,render:(_,r)=>`${r.port} / ${r.protocol||'TCP'}`},{title:'服务 / 状态',width:160,render:(_,r)=><Space direction="vertical" size={0}><Text>{r.serviceName||r.kind||'未知'} · {r.state||'未知'}</Text>{r.excluded&&<Tag color="orange">已排除</Tag>}{r.quarantined&&<Tag color="red">已隔离</Tag>}</Space>},
@@ -234,13 +249,13 @@ export const AssetsPage: React.FC = () => {
       <Input.TextArea aria-label="解除原因" value={releaseReason} onChange={e=>setReleaseReason(e.target.value)} maxLength={1000} rows={3} placeholder="必填：人工核查依据和解除原因"/>
     </Modal>
     <Modal title={isDemoMode?'演示：登记资产':'登记新资产'} open={createOpen} width={720}
-      onCancel={()=>setCreateOpen(false)} onOk={()=>createForm.submit()} okButtonProps={{loading:saving}}>
+      onCancel={()=>setCreateOpen(false)} onOk={()=>createForm.submit()} okButtonProps={{loading:saving||testingForm==='create'}}>
       <Form form={createForm} layout="vertical" onFinish={create} autoComplete="off">
         <Form.Item name="kind" label="资产类型" initialValue="host" rules={[{required:true}]}>
           <Select options={[{label:'主机（纯数字 IPv4/IPv6）',value:'host'},{label:'镜像仓库',value:'image_repo'}]}/>
         </Form.Item>
-        <Form.Item name="address" label="资产地址" rules={[{required:true}]} extra="主机只接受数字 IP，不展开 CIDR 或域名">
-          <Input placeholder="例如 192.0.2.18"/>
+        <Form.Item name="address" label="资产地址" rules={[{required:true}]} extra="主机只接受数字 IP，不展开 CIDR 或域名；测试只检查当前输入，不会保存资产或测试状态。">
+          <Input placeholder="例如 192.0.2.18" addonAfter={createKind==='host'&&<Button type="link" size="small" disabled={!canEdit||isDemoMode} loading={testingForm==='create'} onClick={()=>void testFormAddress(createForm,createKind,'create')}>测试连接</Button>}/>
         </Form.Item>
         <ProfileFields/><Form.Item name="businessGroup" label="所属业务组" rules={[{required:true}]}><Input maxLength={100}/></Form.Item>
         <Form.Item name="owner" label="责任人" rules={[{required:true}]}><Input maxLength={100}/></Form.Item>
@@ -251,10 +266,10 @@ export const AssetsPage: React.FC = () => {
       </Form>
     </Modal>
     <Modal title={'编辑资产：'+(editing?.address??'')} open={!!editing} width={720}
-      onCancel={()=>setEditing(null)} onOk={()=>editForm.submit()} okButtonProps={{loading:saving}}>
+      onCancel={()=>setEditing(null)} onOk={()=>editForm.submit()} okButtonProps={{loading:saving||testingForm==='edit'}}>
       <Alert type="warning" showIcon style={{marginBottom:16}} message="保存会重置已有端口审批；修改主机 IP 会撤销该资产的授权范围，并重新检查 Ping。" />
       <Form form={editForm} layout="vertical" onFinish={update}>
-        <Form.Item name="address" label="资产地址" rules={[{required:true,message:'请输入资产地址'}]} extra="主机仅接受数字 IP，不支持 CIDR 或域名；修改后需重新申请授权。"><Input maxLength={255}/></Form.Item>
+        <Form.Item name="address" label="资产地址" rules={[{required:true,message:'请输入资产地址'}]} extra={editing?.kind==='host'?'主机仅接受数字 IP，不支持 CIDR 或域名；修改后需重新申请授权。测试只检查当前输入，不保存测试状态。':'镜像仓库地址按仓库格式校验。'}><Input maxLength={255} addonAfter={editing?.kind==='host'&&<Button type="link" size="small" disabled={!canEdit||isDemoMode} loading={testingForm==='edit'} onClick={()=>void testFormAddress(editForm,'host','edit')}>测试连接</Button>}/></Form.Item>
         <ProfileFields/><Form.Item name="businessGroup" label="业务组" rules={[{required:true}]}><Input maxLength={100}/></Form.Item>
         <Form.Item name="owner" label="责任人" rules={[{required:true}]}><Input maxLength={100}/></Form.Item>
         <Form.Item name="requestedPorts" label="拟申请端口" extra="只是申请记录，不是扫描授权"><Input/></Form.Item>

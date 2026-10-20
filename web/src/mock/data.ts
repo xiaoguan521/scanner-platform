@@ -124,6 +124,7 @@ export const mockTasks: ScanTask[] = [
     totalChunks: 8,
     completedChunks: 5,
     targetCount: 64,
+    findingCount: 2,
     createdAt: '2026-10-16T01:00:00+08:00',
     chunks: [
       {
@@ -164,6 +165,7 @@ export const mockTasks: ScanTask[] = [
     totalChunks: 4,
     completedChunks: 0,
     targetCount: 32,
+    findingCount: 0,
     createdAt: '2026-10-16T10:00:00+08:00',
     chunks: [],
   },
@@ -177,6 +179,7 @@ export const mockTasks: ScanTask[] = [
     totalChunks: 6,
     completedChunks: 6,
     targetCount: 48,
+    findingCount: 4,
     createdAt: '2026-10-15T01:00:00+08:00',
     chunks: [],
   },
