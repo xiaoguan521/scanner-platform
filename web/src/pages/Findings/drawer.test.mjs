@@ -50,7 +50,9 @@ const drawer = named('Drawer')[0];
 assert.match(text(attribute(drawer, 'open')), /Boolean\(selectedFinding\)/);
 for (const key of ['keyboard', 'maskClosable', 'onClose', 'afterOpenChange']) assert.ok(attribute(drawer, key), key);
 assert.match(text(attribute(drawer, 'width')), /100vw/, 'drawer fits narrow screens');
-assert.equal(named('Timeline').length, 0, 'existing timestamps are not status events');
+assert.equal(named('Timeline').length, 1, 'timeline uses persisted state events');
+assert.match(page,/events\.map\(event/);
+assert.match(page,/event\.createdAt/);
 assert.match(page, /暂无状态变更记录/);
 assert.doesNotMatch(page, /expandable=|dangerouslySetInnerHTML|<a\b|Typography\.Link|Markdown|href=/);
 assert.match(page, /\{field\.value\}/, 'long fields use React text children');
@@ -65,7 +67,7 @@ const trigger = buttons.find(button => text(button).includes('>查看详情</But
 assert.ok(trigger && attribute(trigger, 'aria-label'), 'explicit accessible keyboard trigger');
 assert.match(text(attribute(trigger, 'onClick')), /event\.stopPropagation\(\)/);
 assert.match(text(attribute(trigger, 'onClick')), /openFindingDetails\(r, event\.currentTarget\)/);
-const statusButtons = buttons.filter(button => text(attribute(button, 'onClick')).includes('handleUpdateStatus'));
+const statusButtons = buttons.filter(button => text(attribute(button, 'onClick')).includes('handleUpdateStatus(r.id'));
 assert.equal(statusButtons.length, 4, 'check every current status action');
 for (const button of statusButtons) assert.match(text(attribute(button, 'onClick')), /event\.stopPropagation\(\)/);
 for (const field of ['title', 'severity', 'status', 'synthetic', 'target', 'port', 'businessGroup', 'owner', 'engine', 'templateOrCve', 'detectMethod', 'confidence', 'riskType', 'vulnCategory', 'cvssScore', 'identifiers', 'description', 'impact', 'solution', 'evidence', 'matchedPath', 'references', 'package', 'installedVersion', 'fixedVersion', 'firstSeen', 'lastSeen', 'resolvedAt', 'consecutiveMisses', 'assetId', 'taskId']) {

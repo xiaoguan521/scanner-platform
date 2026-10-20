@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"scanner-platform/internal/assets"
@@ -43,9 +44,11 @@ type RuntimeRepository interface {
 }
 
 type RuntimeStore struct {
-	db            *sql.DB
-	ownsDB        bool
-	LeaseDuration time.Duration
+	db                *sql.DB
+	ownsDB            bool
+	LeaseDuration     time.Duration
+	findingExpiryMu   sync.Mutex
+	nextFindingExpiry time.Time
 }
 
 func OpenRuntime(path string) (*RuntimeStore, error) {
@@ -96,6 +99,9 @@ func NewRuntime(db *sql.DB) (*RuntimeStore, error) {
 	}
 	store := &RuntimeStore{db: db}
 	if err := store.migrateFindings(ctx); err != nil {
+		return nil, err
+	}
+	if err := store.initFindingEvents(ctx); err != nil {
 		return nil, err
 	}
 	if err := store.initLocal(ctx); err != nil {
@@ -621,6 +627,9 @@ func requiresRuleBundle(input taskflow.TaskInput) bool {
 }
 
 func (s *RuntimeStore) CompleteRuntimeTask(ctx context.Context, report taskflow.Report) error {
+	if err := s.ExpireAcceptedRisks(ctx, time.Now().UTC()); err != nil {
+		return err
+	}
 	if report.Status == "FAILED" || report.Status == "COMPLETED" {
 		return s.completeEngineTask(ctx, report)
 	}
@@ -726,6 +735,9 @@ func (s *RuntimeStore) CompleteRuntimeTask(ctx context.Context, report taskflow.
 }
 
 func (s *RuntimeStore) ListRuntimeFindings(ctx context.Context) ([]taskflow.Finding, error) {
+	if err := s.ExpireAcceptedRisks(ctx, time.Now().UTC()); err != nil {
+		return nil, err
+	}
 	rows, err := s.db.QueryContext(ctx, `SELECT data FROM security_findings ORDER BY rowid DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("list findings: %w", err)

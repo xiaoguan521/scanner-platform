@@ -190,6 +190,8 @@ type PortProbeResult struct {
 type ServiceResult = inventory.Service
 
 type Finding struct {
+	AcceptedReason    string              `json:"acceptedReason,omitempty"`
+	AcceptedUntil     *time.Time          `json:"acceptedUntil,omitempty"`
 	AssetID           string              `json:"assetId,omitempty"`
 	ID                string              `json:"id"`
 	TaskID            string              `json:"taskId"`

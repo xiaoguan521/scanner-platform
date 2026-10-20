@@ -296,6 +296,9 @@ func updateMissingFindingLifecycle(ctx context.Context, tx *sql.Tx, task taskflo
 		finding.ConsecutiveMisses++
 		finding.VerifiedInRun = false
 		if finding.ConsecutiveMisses >= threshold {
+			if err := recordFindingEvent(ctx, tx, id, finding.Status, "FIXED", "system", "完整扫描连续未检出达到阈值", now); err != nil {
+				return err
+			}
 			finding.Status = "FIXED"
 			resolved := now
 			finding.ResolvedAt = &resolved
@@ -543,9 +546,13 @@ func (s *RuntimeStore) completeEngineTask(ctx context.Context, report taskflow.R
 					return err
 				}
 				f.FirstSeen, f.Status = old.FirstSeen, old.Status
+				f.AcceptedReason, f.AcceptedUntil = old.AcceptedReason, old.AcceptedUntil
 				f.ConsecutiveMisses = 0
 				f.ResolvedAt = nil
 				if f.Status == "FIXED" {
+					if err := recordFindingEvent(ctx, tx, id, "FIXED", "REOPENED", "system", "扫描再次检出", now); err != nil {
+						return err
+					}
 					f.Status = "REOPENED"
 				}
 			} else if err != sql.ErrNoRows {

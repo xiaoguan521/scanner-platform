@@ -1142,7 +1142,8 @@ paths:
           - XMLHttpRequest
   "/api/v1/findings/{id}":
     patch:
-      summary: Persist and audit manual finding status; FIXED is not exposed
+      summary: Persist finding disposition and status event
+      description: Admin or security_engineer only. ACCEPTED_RISK requires a 1–500 UTF-8 byte trimmed reason without control characters and an RFC3339 expiry strictly in the future within 365 days. Only OPEN, REOPENED or IN_PROGRESS can accept risk. Accepted risk can only be manually revoked to OPEN. Manual FIXED, changes from FIXED and no-op updates are rejected.
       responses:
         '200':
           description: Local operation result
@@ -1150,6 +1151,12 @@ paths:
             application/json:
               schema:
                 "$ref": "#/components/schemas/Finding"
+        '400':
+          description: Invalid transition or acceptance fields
+        '403':
+          description: Forbidden or mutation guard missing
+        '409':
+          description: Finding missing or concurrent update conflict
       security:
       - sessionCookie: []
       requestBody:
@@ -1165,6 +1172,15 @@ paths:
                   - OPEN
                   - IN_PROGRESS
                   - FALSE_POSITIVE
+                  - ACCEPTED_RISK
+                reason:
+                  type: string
+                  maxLength: 500
+                  description: Required only for ACCEPTED_RISK; limit is UTF-8 bytes.
+                acceptedUntil:
+                  type: string
+                  format: date-time
+                  description: Required only for ACCEPTED_RISK; explicit timezone required.
               required:
               - status
       parameters:
@@ -1180,6 +1196,35 @@ paths:
           type: string
           enum:
           - XMLHttpRequest
+  "/api/v1/findings/{id}/events":
+    get:
+      summary: Read finding state change history
+      description: Authenticated read access. Reasons are returned as plain text; audit logs contain only event identifiers and states. Expired acceptance is reopened before reading.
+      security:
+      - sessionCookie: []
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Chronological finding state events
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, total]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      "$ref": "#/components/schemas/FindingEvent"
+                  total:
+                    type: integer
+        '409':
+          description: Finding missing
   "/api/v1/schedules/{id}":
     put:
       summary: Update a schedule definition
@@ -2735,6 +2780,25 @@ components:
         total:
           type: integer
           minimum: 0
+    FindingEvent:
+      type: object
+      required: [id, findingId, fromStatus, toStatus, actor, createdAt]
+      properties:
+        id:
+          type: string
+        findingId:
+          type: string
+        fromStatus:
+          type: string
+        toStatus:
+          type: string
+        actor:
+          type: string
+        reason:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
     Finding:
       type: object
       required:
@@ -2753,6 +2817,13 @@ components:
       - owner
       - verifiedInRun
       properties:
+        acceptedReason:
+          type: string
+          description: Present while risk acceptance is active.
+        acceptedUntil:
+          type: string
+          format: date-time
+          description: Acceptance expiry; expired or legacy indefinite acceptance is automatically reopened.
         id:
           type: string
         fingerprint:

@@ -2,6 +2,14 @@
 
 记录待核对项的来源、锁定版本、验证日期、结果和未决风险。未经实际验证的项目不得标记为已确认。
 
+## 2026-10-20：单项接受风险、到期与状态事件
+
+- 新增 finding_events SQLite 表及按发现项/时间索引；PATCH 接收状态、原因、到期，GET `/api/v1/findings/{id}/events` 返回时间线。Server 角色/CSRF 沿用现有写权限，非写角色只能查看。
+- 接受风险仅允许 OPEN/REOPENED/IN_PROGRESS；原因按 UTF-8 字节限长且拒控制字符，到期必须 RFC3339 带时区并位于未来 365 天。拒绝手工 FIXED、从 FIXED 修改、重复状态、误报直接接受以及未撤销接受直接流转其他状态。
+- 每分钟 Tick、列表/更新/回报入口补查到期与旧无期限接受；条件更新和事务保证并发只记录一次。扫描重复检出保留接受字段，自动 FIXED/REOPENED 和到期重开记录系统事件；Worker 协议未开放接受字段。架构要求的到期通知渠道尚无现有基础设施，本批只提供事件/时间线，通知投递列为后续缺口。
+- Go 测试覆盖输入/状态边界、角色/CSRF/API、并发过期、旧无期限或格式错误期限、事件失败回滚、审计不含原因、回报前到期及自动生命周期事件。前端 helper/源码契约测试覆盖资格、UTF-8 限长、期限、纯文本表单与时间线；生产构建通过。
+- 已运行 `go test -race ./internal/repo ./internal/api`、`node web/src/pages/Findings/disposition.test.mjs`、`npm --prefix web run build`。未进行真实浏览器交互、服务重启、真实扫描或 PostgreSQL 集成；最终全库门禁由主代理复核。
+
 ## 当前待核对项
 
 | 项目 | 状态 | 说明 |

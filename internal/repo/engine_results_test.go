@@ -202,12 +202,11 @@ func TestFindingLifecyclePreservesManualDisposition(t *testing.T) {
 					t.Fatal(err)
 				}
 			} else {
-				items[0].Status = status
-				raw, _ := json.Marshal(items[0])
-				if _, err := store.db.ExecContext(ctx, "UPDATE security_findings SET data=? WHERE id=?", string(raw), items[0].ID); err != nil {
+				if _, err := store.UpdateFindingDisposition(ctx, items[0].ID, FindingDisposition{Status: status, Reason: "测试风险接受", AcceptedUntil: time.Now().Add(time.Hour).Format(time.RFC3339)}, actor); err != nil {
 					t.Fatal(err)
 				}
 			}
+
 			second := createClaimedNucleiTask(t, store, actor, "manual-state-worker")
 			completeNucleiFixture(t, store, second)
 			items, err = store.ListRuntimeFindings(ctx)

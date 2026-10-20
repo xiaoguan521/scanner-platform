@@ -614,37 +614,6 @@ func clearDeletedTaskScheduleReference(ctx context.Context, tx *sql.Tx, taskID s
 	return nil
 }
 
-func (s *RuntimeStore) UpdateFinding(ctx context.Context, id, status, actor string) (taskflow.Finding, error) {
-	if status != "IN_PROGRESS" && status != "FALSE_POSITIVE" && status != "OPEN" {
-		return taskflow.Finding{}, ErrInvalidTask
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return taskflow.Finding{}, err
-	}
-	defer tx.Rollback()
-	var data string
-	var finding taskflow.Finding
-	if err := tx.QueryRowContext(ctx, "SELECT data FROM security_findings WHERE id=?", id).Scan(&data); err != nil {
-		return finding, ErrTaskConflict
-	}
-	if err := json.Unmarshal([]byte(data), &finding); err != nil {
-		return finding, err
-	}
-	finding.Status = status
-	encoded, _ := json.Marshal(finding)
-	if _, err := tx.ExecContext(ctx, "UPDATE security_findings SET data=? WHERE id=?", string(encoded), id); err != nil {
-		return finding, err
-	}
-	if err := logLocal(ctx, tx, actor, "update_finding", "finding", id, status); err != nil {
-		return finding, err
-	}
-	if err := tx.Commit(); err != nil {
-		return finding, err
-	}
-	return finding, nil
-}
-
 func (s *RuntimeStore) SaveSchedule(ctx context.Context, in taskflow.Schedule, actor string) (taskflow.Schedule, error) {
 	if in.Engine == "port-probe" {
 		return in, ErrInvalidTask
@@ -812,6 +781,15 @@ func (s *RuntimeStore) ToggleSchedule(ctx context.Context, id, actor string, ena
 
 // Tick advances persisted schedules and resumes tasks only within their windows.
 func (s *RuntimeStore) Tick(ctx context.Context, now time.Time) error {
+	s.findingExpiryMu.Lock()
+	if !now.Before(s.nextFindingExpiry) {
+		if err := s.ExpireAcceptedRisks(ctx, now); err != nil {
+			s.findingExpiryMu.Unlock()
+			return err
+		}
+		s.nextFindingExpiry = now.Add(time.Minute)
+	}
+	s.findingExpiryMu.Unlock()
 	if err := s.expireRuntimeLeases(ctx, now); err != nil {
 		return err
 	}

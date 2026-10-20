@@ -84,14 +84,18 @@ func registerLocalHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui func
 			runtimeJSON(w, http.StatusOK, map[string]string{"status": "DELETED"})
 		}
 	}))
-	mux.HandleFunc("PATCH /api/v1/findings/{id}", ui(true, func(w http.ResponseWriter, r *http.Request) {
-		var body struct {
-			Status string `json:"status"`
+	mux.HandleFunc("GET /api/v1/findings/{id}/events", ui(false, func(w http.ResponseWriter, r *http.Request) {
+		items, err := store.ListFindingEvents(r.Context(), r.PathValue("id"))
+		if !runtimeStoreError(w, err) {
+			runtimeJSON(w, 200, ListResponse[repo.FindingEvent]{Items: items, Total: len(items)})
 		}
+	}))
+	mux.HandleFunc("PATCH /api/v1/findings/{id}", ui(true, func(w http.ResponseWriter, r *http.Request) {
+		var body repo.FindingDisposition
 		if !runtimeDecode(w, r, &body) {
 			return
 		}
-		item, err := store.UpdateFinding(r.Context(), r.PathValue("id"), body.Status, actor(r))
+		item, err := store.UpdateFindingDisposition(r.Context(), r.PathValue("id"), body, actor(r))
 		if !runtimeStoreError(w, err) {
 			runtimeJSON(w, 200, item)
 		}

@@ -14,20 +14,22 @@ import {
   Checkbox,
   Descriptions,
   Drawer,
+  Timeline,
   message,
 } from 'antd';
 import { SafetyCertificateOutlined } from '@ant-design/icons';
 import { mockFindings } from '../../mock/data';
-import { Finding, FindingSeverity, FindingStatus } from '../../types';
+import { Finding, FindingEvent, FindingSeverity, FindingStatus } from '../../types';
 import { isDemoMode } from '../../api/client';
 import { useAuth } from '../../auth/AuthProvider';
-import { updateFinding } from '../../api/runtime';
+import { updateFinding, fetchFindingEvents } from '../../api/runtime';
 import { useCollection } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
 
 import { riskLabels, methodLabels, confidenceLabels, isVerifiedFinding, findingCounts } from './presentation';
 import { FindingFilters, readFindingFilters, writeFindingFilters } from './filters';
 import { detailText, detailList, detailIdentifiers, selectedFindingForDrawer } from './drawer';
+import { canAcceptRisk, acceptanceInput } from './disposition';
 const { Text } = Typography;
 
 export const FindingsPage: React.FC = () => {
@@ -53,6 +55,20 @@ export const FindingsPage: React.FC = () => {
   const normalizedQuery = query.trim().toLowerCase();
   const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
   const detailTrigger = useRef<HTMLElement | null>(null);
+  const [acceptReason,setAcceptReason]=useState('');
+  const [acceptUntil,setAcceptUntil]=useState('');
+  const [saving,setSaving]=useState(false);
+  const [events,setEvents]=useState<FindingEvent[]>([]);
+  const [eventsError,setEventsError]=useState('');
+  const [eventRevision,setEventRevision]=useState(0);
+  useEffect(()=>{
+    setAcceptReason('');setAcceptUntil('');setEvents([]);setEventsError('');
+    if(!selectedFindingId || isDemoMode)return;
+    const controller=new AbortController();
+    const load=()=>fetchFindingEvents(selectedFindingId,controller.signal).then(result=>{if(!controller.signal.aborted){setEvents(result.items);setEventsError('')}}).catch(()=>{if(!controller.signal.aborted)setEventsError('状态记录加载失败，请稍后重试')});
+    void load();const timer=window.setInterval(()=>void load(),10000);
+    return ()=>{controller.abort();window.clearInterval(timer)};
+  },[selectedFindingId,eventRevision]);
 
   const filteredFindings = findings.filter((f) => {
     if(methodFilter!=='ALL'&&(f.detectMethod??'unknown')!==methodFilter)return false;
@@ -80,18 +96,17 @@ export const FindingsPage: React.FC = () => {
     }
   };
 
-  const handleUpdateStatus = async (id: string, newStatus: FindingStatus) => {
+  const handleUpdateStatus = async (id: string, newStatus: FindingStatus, acceptance?:{reason:string;acceptedUntil:string}) => {
     // FIXED is a Server-only decision based on a complete verified scan.
     if (newStatus === 'FIXED') {
       message.warning('FIXED 必须经 Server 确认完整扫描、规则执行和未检出阈值，目前不可操作');
       return;
     }
     if (!isDemoMode) {
-      try{const item=await updateFinding(id,newStatus);setFindings(prev=>prev.map(f=>f.id===id?item:f));message.success('状态已保存并记录审计');}catch(e){message.error(String(e));}
+      setSaving(true);try{const item=await updateFinding(id,newStatus,acceptance);setFindings(prev=>prev.map(f=>f.id===id?item:f));setEventRevision(n=>n+1);message.success('状态已保存并记录审计');}catch(e){message.error(String(e));}finally{setSaving(false)}
       return;
     }
-    setFindings((prev) => prev.map((f) => f.id === id ? { ...f, status: newStatus } : f));
-    message.info('仅演示：本地漏洞状态已更新，Server 数据和审计日志没有变化');
+    message.info('仅演示：该操作不会保存，Server 数据和审计日志没有变化');
   };
 
   const getSeverityTag = (sev: FindingSeverity) => {
@@ -278,7 +293,7 @@ export const FindingsPage: React.FC = () => {
                       标记修复
                     </Button>
                   )}
-                  {r.status !== 'FALSE_POSITIVE' && r.status !== 'FIXED' && (
+                  {r.status !== 'FALSE_POSITIVE' && r.status !== 'FIXED' && r.status !== 'ACCEPTED_RISK' && (
                     <Button
                       type="link"
                       size="small"
@@ -366,7 +381,27 @@ export const FindingsPage: React.FC = () => {
                 { label: '连续未检出次数', children: detailText(selectedFinding.consecutiveMisses) },
               ].map((item, key) => ({ ...item, key }))}
             />
-            <Text type="secondary">暂无状态变更记录</Text>
+            <section style={{width:'100%'}}>
+              <Typography.Title level={5}>风险处置</Typography.Title>
+              {selectedFinding.status==='ACCEPTED_RISK' && <Space direction="vertical" style={{width:'100%'}}>
+                <Text style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>接受原因：{detailText(selectedFinding.acceptedReason)}</Text>
+                <Text>到期时间：{detailText(selectedFinding.acceptedUntil)}</Text>
+                <Button loading={saving} disabled={!isDemoMode&&!canWrite} onClick={()=>void handleUpdateStatus(selectedFinding.id,'OPEN')}>撤销接受风险</Button>
+              </Space>}
+              {canAcceptRisk(selectedFinding.status)&&<Space direction="vertical" style={{width:'100%'}}>
+                <label htmlFor="accept-risk-reason">接受原因（最多 500 UTF-8 字节）</label>
+                <Input.TextArea id="accept-risk-reason" value={acceptReason} onChange={e=>setAcceptReason(e.target.value)} autoSize={{minRows:2,maxRows:6}} disabled={saving||(!isDemoMode&&!canWrite)} />
+                <label htmlFor="accept-risk-until">到期时间（本地时间，未来 365 天内）</label>
+                <Input id="accept-risk-until" type="datetime-local" value={acceptUntil} onChange={e=>setAcceptUntil(e.target.value)} disabled={saving||(!isDemoMode&&!canWrite)} />
+                <Button loading={saving} disabled={!isDemoMode&&!canWrite} onClick={()=>{try{void handleUpdateStatus(selectedFinding.id,'ACCEPTED_RISK',acceptanceInput(acceptReason,acceptUntil))}catch(e){message.error(e instanceof Error?e.message:'接受风险输入无效')}}}>接受风险</Button>
+              </Space>}
+              {selectedFinding.status==='FIXED'&&<Text type="secondary">修复状态由完整扫描判定。</Text>}
+            </section>
+            <section style={{width:'100%'}}>
+              <Typography.Title level={5}>状态变更记录</Typography.Title>
+              {eventsError&&<Alert type="error" message={eventsError} />}
+              {events.length?<Timeline items={events.map(event=>({key:event.id,children:<Space direction="vertical" size={2}><Text>{event.fromStatus} → {event.toStatus}</Text><Text type="secondary">{event.createdAt} · {event.actor}</Text>{event.reason&&<Text style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{event.reason}</Text>}</Space>}))}/>:<Text type="secondary">{isDemoMode?'演示模式没有服务端状态记录':'暂无状态变更记录'}</Text>}
+            </section>
             <Descriptions title="关联标识" column={1} size="small" bordered
               styles={{ content: { overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' } }}
               items={[

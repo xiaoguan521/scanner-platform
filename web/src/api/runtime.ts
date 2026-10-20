@@ -1,5 +1,5 @@
 import { requestJSON } from './client';
-import type { ScanTask, TaskInput, Schedule, Finding, RuleJob, CustomRule, KnowledgeEntry } from '../types';
+import type { ScanTask, TaskInput, Schedule, Finding, FindingEvent, RuleJob, CustomRule, KnowledgeEntry } from '../types';
 
 export const createTask = (input:TaskInput) => requestJSON<ScanTask>('/api/v1/tasks','POST',input);
 export const cancelTask = (id:string) => requestJSON('/api/v1/tasks/'+encodeURIComponent(id)+'/cancel','POST');
@@ -10,7 +10,8 @@ export const saveSchedule = (input: Omit<Schedule,'id'|'enabled'|'lastTaskId'|'l
 export const updateSchedule = (id:string,input: Omit<Schedule,'id'|'enabled'|'lastTaskId'|'lastError'|'createdBy'>) => requestJSON<Schedule>('/api/v1/schedules/'+encodeURIComponent(id),'PUT',input);
 export const deleteSchedule = (id:string) => requestJSON<{status:string}>('/api/v1/schedules/'+encodeURIComponent(id),'DELETE');
 export const toggleSchedule = (id:string,enabled:boolean) => requestJSON('/api/v1/schedules/'+encodeURIComponent(id),'PATCH',{enabled});
-export const updateFinding = (id:string,status:string) => requestJSON<Finding>('/api/v1/findings/'+encodeURIComponent(id),'PATCH',{status});
+export const updateFinding = (id:string,status:string,acceptance?:{reason:string;acceptedUntil:string}) => requestJSON<Finding>('/api/v1/findings/'+encodeURIComponent(id),'PATCH',{status,...acceptance});
+export const fetchFindingEvents = (id:string,signal?:AbortSignal) => requestJSON<{items:FindingEvent[];total:number}>('/api/v1/findings/'+encodeURIComponent(id)+'/events','GET',undefined,signal);
 export const createCustomRule = (input:Omit<CustomRule,'template'>) => requestJSON<CustomRule>('/api/v1/custom-rules','POST',input);
 export const updateCustomRule = (id:string,input:Omit<CustomRule,'template'>) => requestJSON<CustomRule>('/api/v1/custom-rules/'+encodeURIComponent(id),'PUT',input);
 export const deleteCustomRule = (id:string) => requestJSON<{status:string}>('/api/v1/custom-rules/'+encodeURIComponent(id),'DELETE');
