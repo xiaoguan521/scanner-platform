@@ -12,9 +12,9 @@
 | PoC #1 应用层准入（2026-10-16） | 单元测试通过，实验验收未运行 | 显式 IP:端口、审批/到期、端口隔离、时间窗均为纯逻辑验证；网络围栏、降权、DROP 告警和隔离靶场验收未做。 |
 | PoC #1 Linux 围栏与受限启动预备代码（2026-10-16） | 本地模拟通过，实验待验证 | nftables 原子规则、默认 DROP、精确协议+IP:端口白名单，netns 父句柄检查及 setpriv 去特权启动参数已实现；未接入 cmd/worker，未在 Linux 实测 nft 和 setpriv。必须人工核对 Linux 工具版本、ns 隔离有效性、内核行为、实际无外联和 DROP 统计。 |
 | 引擎受限启动硬闸（2026-10-16） | 默认阻断，待参数验证 | 未接入 `internal/executor` 经版本锁定的参数白名单前，`RestrictedExec.Launch` 显式拒绝真正运行 Nuclei/Trivy；当前 setpriv 仅验证参数构造，未实测进程 UID/capabilities。 |
-| GitHub Actions 六平台 CI / Release（2026-10-16） | 本地 actionlint、YAML、Go 测试和六平台交叉编译/压缩包校验通过；GitHub 云端未运行 | CI 可复用且覆盖六类原生 Runner；标签构建只有完整 CI 通过才打包；发布权限仅 Release Job，标签仅创建 Draft + Pre-release。Go 工具链以 go.mod 的 1.26.0 为准；本地 actionlint 1.7.12。运行 GitHub Actions 后需查看各 Runner 实际日志与 Release 草稿资产。 |
-| 漏洞库 Ed25519 签名与平台验签 | 工作流已有签名；本地平台实现与隔离测试通过；本轮未核查云端运行结果 | 普通导入、下载与激活要求包外受信公钥，对原始 manifest 字节和 raw64 签名验签后再检查内容。显式本机准备使用同一实例的一次性本地激活记录，历史 unsigned 签名状态为 false。单公钥轮换、多密钥过渡与完整引擎兼容矩阵仍未完成。 |
-| SSH 指定目录 Java/Go 应用 | 代码与隔离测试通过；未部署到当前测试实例 | 配置内产物逐文件采集、快照校验、Trivy 类型确认及别名覆盖计数；任何应用未完成则任务失败，不入库部分发现。真实 SSH/Java 索引/Go 产物及独立挂载目录场景仍待实验验收。 |
+| GitHub Actions 六平台 CI / Release（2026-10-16） | 本地检查及 GitHub 云端 CI 通过；Release 未发布 | 提交 `798f832` 的 CI 已通过前端、race 测试、lint 和 Linux/macOS/Windows 六平台构建。标签构建只有完整 CI 通过才打包；发布权限仅 Release Job，标签仅创建 Draft + Pre-release。漏洞库手工工作流需另看当前签名步骤结果。 |
+| 漏洞库 Ed25519 签名与平台验签 | 本地平台实现与隔离测试通过；当前主分支签名工作流已触发，等待云端完成 | 普通导入、下载与激活要求包外受信公钥，对原始 manifest 字节和 raw64 签名验签后再检查内容。当前工作流使用 `vulnerability-data-signing` 环境、`BUNDLE_SIGNING_PRIVATE_KEY_PEM` 密钥和 `BUNDLE_SIGNING_PUBLIC_KEY_PEM` 变量；单公钥轮换、多密钥过渡与完整引擎兼容矩阵仍未完成。 |
+| SSH 指定目录 Java/Go 应用 | Go 真实 SSH 隔离靶机路径通过；Java 缺少索引时按设计失败 | Go ELF 目录已完成 SSH 采集、快照校验、Trivy 类型确认和覆盖计数；Java JAR 目录同样完成采集，但因当前规则库没有 Java 索引而明确为 `analysis_failed`，没有伪装成无漏洞。Java 成功路径仍需先准备 Java DB；独立挂载目录场景仍待验收。 |
 | 自动综合扫描 HTTP 失败状态回报 | Worker/Server 回归与 V4 排除端口验证通过；最新 V5 任务界面显示已完成，结果仍待逐项复核 | HTTP 错误保持 FAILED 并保存明确的系统包阶段状态。此前路由阻塞记录为历史状态；本轮开发期间未重启原测试实例，新应用能力不属于该次实扫验收范围。 |
 | 正式客户端签名/公证和供应链证明 | 未实施 | Phase 0 归档仅是占位骨架。缺少 Windows 代码签名、macOS 签名/公证及 Artifact Attestation；不能直接当作受信任的可部署产品发布。 |
 | PoC #2 租约守护（2026-10-16） | 本地模拟单测通过；Server/Worker 联调未执行 | 根据最后确认租约截止和本地 hard deadline 取消工作，网络超时/失联不延长租期，未确认停止时返回 shutdown timeout；必须在真实进程层验证强杀、Node API 身份/时间戳与租约刷新。 |
@@ -161,7 +161,16 @@
 - 独立首轮回归发现 Java ZIP 的 `../escape` 可绕过单独 path.Clean 检查，开发显式拒绝父路径前缀后独立复验通过；未放松原检查。最后增补 C1 控制字符拒绝与种子回归。
 - 主代理全仓 `make test`（race 与 18 项 Python 合成测试）、`make lint`、`go build ./...`、web 下 `tsc --noEmit`、OpenAPI YAML/全部本地 schema 引用检查、`bash -n scripts/dev.sh` 和差异检查通过。新增目录解析与 Trivy 类型门槛各实际 fuzz 2 秒通过。Windows amd64、Linux arm64 的 `go build ./...` 交叉编译通过，编译未生成或覆盖 dist/web/dist。
 - 独立验证实际运行 `go test -race -count=1 ./internal/sshcollect ./internal/executor ./internal/taskflow ./internal/repo`、对应包 vet、无输出构建、web 类型检查、Python 18 项与差异检查，均通过。分工：方案 GPT-6 Sol、开发 GPT-6.1 Sol、独立验证配置 GPT-6 Luna；协调代理完成协议/持久化/前端贯穿与全仓检查。
-- 未重启服务、修改当前运行数据库/规则/SSH 配置/靶机/网络，未执行真实 SSH、扫描引擎或 lab。本批拒绝根设备之外的独立挂载目录，无法通过设备号区分同设备 bind mount；ZIP64、分卷、较大归档及超限目录仍不支持。完整应用安全覆盖、真实凭据/索引/产物联调均需后续隔离靶场验收，当前实例尚未启用这批新代码。
+- 上一轮代码验收未重启服务、修改当前运行数据库/规则/SSH 配置/靶机/网络，也未执行真实 SSH、扫描引擎或 lab。本批拒绝根设备之外的独立挂载目录，无法通过设备号区分同设备 bind mount；ZIP64、分卷、较大归档及超限目录仍不支持。完整应用安全覆盖、真实凭据/索引/产物联调需后续隔离靶场验收。
+
+### 2026-10-20：SSH 应用隔离靶场验收续测
+
+- 重新构建并启动最新 Server、Worker、Updater 和 Server-mode 前端；`/healthz`、`/readyz` 正常，当前本地服务继续使用既有 SQLite、规则目录和 SSH profile。
+- 发现 `scripts/dev.sh` 在 `set -u` 下展开空的可选参数数组会导致启动失败；改为按是否配置 SSH 公钥和 SSH profile 分支启动，并用带 SSH profile、无 SSH profile 两种方式回归通过。修复已提交为 `db41202` 并推送到 `main`。
+- 在隔离 OrbStack 靶机中放入合成 Go ELF 和 Java JAR，使用一次性临时 Server/SQLite 验收真实 SSH 采集链路。Go 路径任务完成，应用覆盖计数为选中 1、分析 1；系统包、SSH 服务和 HTTP 服务阶段也完成。靶机临时采集目录在任务结束后清理。
+- Java 路径任务成功完成 SSH 采集，但由于当前规则目录缺少 Trivy Java 索引，任务以 `analysis_failed` 结束，应用计数为选中 1、分析 0；没有插入部分成功结果，验证了失败即关闭行为。准备 Java DB 后仍需重新执行 Java 成功路径。
+- 独立运行 `go test -race -count=1 ./internal/versionmgr ./internal/scheduler ./internal/workerfence`、`go vet ./...`、`bash -n scripts/dev.sh` 和差异检查，均通过。未运行全端口扫描，也未修改主运行实例的数据库、规则库、网络或 SSH 凭据。
+- 提交 `798f832` 的 GitHub CI 已云端完成并通过全部矩阵。当前主分支的 `Build Offline Vulnerability Data` 手工工作流已触发，待其完成后再记录签名步骤和制品结果；此前历史运行早于签名步骤，不能作为当前签名验收证据。
 
 ### 开发期间原测试状态补充
 
