@@ -45,17 +45,24 @@ until curl --fail --silent "http://127.0.0.1:$SCANNER_PORT/readyz" >/dev/null; d
   sleep 0.1
 done
 if ! kill -0 "$server_pid" 2>/dev/null; then cat "$SCANNER_LOG_DIR/server.log"; exit 1; fi
-worker_ssh_args=()
 if [[ -n "$SCANNER_SSH_CONFIG" ]]; then
-  worker_ssh_args+=(--ssh-config "$SCANNER_SSH_CONFIG")
+  ./dist/sec-worker --server "http://127.0.0.1:$SCANNER_PORT" --bin-dir "$SCANNER_BIN" \
+    --rules-dir "$SCANNER_RULES" --inputs-dir "$SCANNER_INPUTS" \
+    --runtime-dir "$SCANNER_LOG_DIR/worker" --ssh-config "$SCANNER_SSH_CONFIG" \
+    >"$SCANNER_LOG_DIR/worker.log" 2>&1 &
+else
+  ./dist/sec-worker --server "http://127.0.0.1:$SCANNER_PORT" --bin-dir "$SCANNER_BIN" \
+    --rules-dir "$SCANNER_RULES" --inputs-dir "$SCANNER_INPUTS" \
+    --runtime-dir "$SCANNER_LOG_DIR/worker" >"$SCANNER_LOG_DIR/worker.log" 2>&1 &
 fi
-./dist/sec-worker --server "http://127.0.0.1:$SCANNER_PORT" --bin-dir "$SCANNER_BIN" --rules-dir "$SCANNER_RULES" --inputs-dir "$SCANNER_INPUTS" --runtime-dir "$SCANNER_LOG_DIR/worker" "${worker_ssh_args[@]}" >"$SCANNER_LOG_DIR/worker.log" 2>&1 &
 worker_pid=$!
-updater_trust_args=()
 if [[ -n "$SCANNER_RULE_PUBLIC_KEY_FILE" ]]; then
-  updater_trust_args+=(--trusted-rule-public-key "$SCANNER_RULE_PUBLIC_KEY_FILE")
+  ./dist/sec-updater --server "http://127.0.0.1:$SCANNER_PORT" --rules-dir "$SCANNER_RULES" \
+    --trusted-rule-public-key "$SCANNER_RULE_PUBLIC_KEY_FILE" >"$SCANNER_LOG_DIR/updater.log" 2>&1 &
+else
+  ./dist/sec-updater --server "http://127.0.0.1:$SCANNER_PORT" --rules-dir "$SCANNER_RULES" \
+    >"$SCANNER_LOG_DIR/updater.log" 2>&1 &
 fi
-./dist/sec-updater --server "http://127.0.0.1:$SCANNER_PORT" --rules-dir "$SCANNER_RULES" "${updater_trust_args[@]}" >"$SCANNER_LOG_DIR/updater.log" 2>&1 &
 updater_pid=$!
 printf '\n打开：http://127.0.0.1:%s\n首次使用在网页设置管理员；已有账号直接登录。\n模拟任务不连接目标；真实扫描只在网页明确选择引擎并创建任务后执行。\n按 Ctrl+C 停止，SQLite 保留在 %s\n' "$SCANNER_PORT" "$SCANNER_DB"
 while :; do
