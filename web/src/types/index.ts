@@ -190,7 +190,10 @@ export type RiskType = 'system'|'web'|'weak_credential'|'login_entry';
 export type DetectMethod = 'principle'|'version'|'configuration';
 export type Confidence = 'high'|'medium'|'low';
 export interface FindingEvent { id:string; findingId:string; fromStatus:FindingStatus; toStatus:FindingStatus; actor:string; reason?:string; createdAt:string }
+export interface FindingAssignee { id:string; name:string }
+export interface FindingNote { id:string; findingId:string; actor:string; actorName:string; body:string; createdAt:string }
 export interface Finding {
+  assigneeId?:string; assigneeName?:string;
   acceptedReason?:string; acceptedUntil?:string;
   assetId?: string; taskId?: string; riskType?: RiskType; detectMethod?: DetectMethod; confidence?: Confidence;
   cvssScore?: number; vulnCategory?: string; identifiers?: Record<string,string[]>;

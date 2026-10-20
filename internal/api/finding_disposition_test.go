@@ -126,4 +126,61 @@ func TestFindingDispositionAPIAuthValidationAndEvents(t *testing.T) {
 	if res.Code != 400 {
 		t.Fatal("noop", res.Code)
 	}
+	// Finding work routes share authenticated reads and writer/CSRF protections.
+	for _, tc := range []struct {
+		method, suffix, body, role string
+		guard                      bool
+		want                       int
+	}{
+		{"GET", "/notes", "", "", false, 401},
+		{"GET", "/notes", "", "viewer", false, 200},
+		{"POST", "/notes", `{"body":"note"}`, "viewer", true, 403},
+		{"POST", "/notes", `{"body":"note"}`, "ops_approver", true, 403},
+		{"POST", "/notes", `{"body":"note"}`, "admin", false, 403},
+		{"POST", "/notes", `{"body":""}`, "admin", true, 400},
+		{"POST", "/notes", `{"body":"a\u2028b"}`, "admin", true, 400},
+		{"POST", "/notes", `{"body":"a\u2029b"}`, "admin", true, 400},
+		{"PUT", "/assignee", `{}`, "admin", true, 400},
+		{"PUT", "/assignee", `{"assigneeId":null}`, "admin", true, 400},
+		{"PUT", "/assignee", `{"assigneeId":"missing"}`, "admin", true, 400},
+		{"PUT", "/assignee", `{"assigneeId":""}`, "viewer", true, 403},
+	} {
+		res := send(tc.method, path+tc.suffix, tc.body, cookies[tc.role], tc.guard)
+		if res.Code != tc.want {
+			t.Fatalf("work %s %s %s: %d %s", tc.method, tc.suffix, tc.role, res.Code, res.Body.String())
+		}
+	}
+	if res := send("GET", "/api/v1/findings/assignees", "", nil, false); res.Code != 401 {
+		t.Fatal(res.Code)
+	}
+	for _, role := range []string{"viewer", "ops_approver"} {
+		if res := send("GET", "/api/v1/findings/assignees", "", cookies[role], false); res.Code != 403 {
+			t.Fatalf("candidate access %s: %d", role, res.Code)
+		}
+	}
+	candidatesResponse := send("GET", "/api/v1/findings/assignees", "", cookies["security_engineer"], false)
+	var candidates ListResponse[repo.FindingAssignee]
+	if err := json.Unmarshal(candidatesResponse.Body.Bytes(), &candidates); err != nil || candidates.Total != 2 {
+		t.Fatal(candidatesResponse.Code, candidates, err)
+	}
+	if strings.Contains(candidatesResponse.Body.String(), "password") || strings.Contains(candidatesResponse.Body.String(), "isActive") {
+		t.Fatal("account metadata exposed")
+	}
+	assignment, _ := json.Marshal(map[string]string{"assigneeId": admin.ID})
+	if res := send("PUT", path+"/assignee", string(assignment), cookies["security_engineer"], true); res.Code != 200 {
+		t.Fatal(res.Code, res.Body.String())
+	}
+	noteResponse := send("POST", path+"/notes", `{"body":"处理前需要复核补丁"}`, cookies["security_engineer"], true)
+	if noteResponse.Code != 201 {
+		t.Fatal(noteResponse.Code, noteResponse.Body.String())
+	}
+	notesResponse := send("GET", path+"/notes", "", cookies["viewer"], false)
+	var notes ListResponse[repo.FindingNote]
+	if err := json.Unmarshal(notesResponse.Body.Bytes(), &notes); err != nil || notes.Total != 1 || notes.Items[0].Body != "处理前需要复核补丁" {
+		t.Fatal(notes, err)
+	}
+	if res := send("PUT", path+"/assignee", `{"assigneeId":""}`, cookies["admin"], true); res.Code != 200 {
+		t.Fatal(res.Code, res.Body.String())
+	}
+
 }

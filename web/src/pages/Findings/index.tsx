@@ -19,10 +19,10 @@ import {
 } from 'antd';
 import { SafetyCertificateOutlined } from '@ant-design/icons';
 import { mockFindings } from '../../mock/data';
-import { Finding, FindingEvent, FindingSeverity, FindingStatus } from '../../types';
+import { Finding, FindingEvent, FindingAssignee, FindingNote, FindingSeverity, FindingStatus } from '../../types';
 import { isDemoMode } from '../../api/client';
 import { useAuth } from '../../auth/AuthProvider';
-import { updateFinding, fetchFindingEvents } from '../../api/runtime';
+import { updateFinding, fetchFindingEvents, fetchFindingAssignees, assignFinding, fetchFindingNotes, addFindingNote } from '../../api/runtime';
 import { useCollection } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
 
@@ -30,6 +30,7 @@ import { riskLabels, methodLabels, confidenceLabels, isVerifiedFinding, findingC
 import { FindingFilters, readFindingFilters, writeFindingFilters } from './filters';
 import { detailText, detailList, detailIdentifiers, selectedFindingForDrawer } from './drawer';
 import { canAcceptRisk, acceptanceInput } from './disposition';
+import { findingNoteInput } from './work';
 const { Text } = Typography;
 
 export const FindingsPage: React.FC = () => {
@@ -70,6 +71,34 @@ export const FindingsPage: React.FC = () => {
     return ()=>{controller.abort();window.clearInterval(timer)};
   },[selectedFindingId,eventRevision]);
 
+  const [assignees,setAssignees]=useState<FindingAssignee[]>([]);
+  const [assigneeId,setAssigneeId]=useState('');
+  const [notes,setNotes]=useState<FindingNote[]>([]);
+  const [noteBody,setNoteBody]=useState('');
+  const [workError,setWorkError]=useState('');
+  const [workSaving,setWorkSaving]=useState(false);
+  const [workRevision,setWorkRevision]=useState(0);
+  useEffect(()=>{
+    setNotes([]);setNoteBody('');setAssignees([]);setWorkError('');
+    if(!selectedFindingId||isDemoMode)return;
+    const controller=new AbortController();
+    void Promise.all([canWrite?fetchFindingAssignees(controller.signal):Promise.resolve({items:[] as FindingAssignee[],total:0}),fetchFindingNotes(selectedFindingId,controller.signal)]).then(([users,result])=>{
+      if(!controller.signal.aborted){setAssignees(users.items);setNotes(result.items)}
+    }).catch(()=>{if(!controller.signal.aborted)setWorkError('指派候选或备注加载失败，请关闭详情后重试')});
+    return()=>controller.abort();
+  },[selectedFindingId,workRevision,canWrite]);
+  const saveAssignment=async(id:string)=>{
+    if(isDemoMode){message.info('演示模式不会保存指派');return}
+    setWorkSaving(true);
+    try{const item=await assignFinding(id,assigneeId);setFindings(previous=>previous.map(f=>f.id===id?item:f));message.success('指派已保存并记录审计')}
+    catch(e){message.error(String(e))}finally{setWorkSaving(false)}
+  };
+  const saveNote=async(id:string)=>{
+    if(isDemoMode){message.info('演示模式不会保存备注');return}
+    try{const body=findingNoteInput(noteBody);setWorkSaving(true);await addFindingNote(id,body);setWorkRevision(n=>n+1);message.success('备注已追加并记录审计')}
+    catch(e){message.error(e instanceof Error?e.message:String(e))}finally{setWorkSaving(false)}
+  };
+
   const filteredFindings = findings.filter((f) => {
     if(methodFilter!=='ALL'&&(f.detectMethod??'unknown')!==methodFilter)return false;
     if(confidenceFilter!=='ALL'&&(f.confidence??'unknown')!==confidenceFilter)return false;
@@ -87,6 +116,7 @@ export const FindingsPage: React.FC = () => {
   const openFindingDetails = (finding: Finding, trigger: HTMLElement) => {
     detailTrigger.current = trigger;
     setSelectedFindingId(finding.id);
+    setAssigneeId(finding.assigneeId??'');
   };
   const closeFindingDetails = () => setSelectedFindingId(null);
   const restoreDetailFocus = (open: boolean) => {
@@ -396,6 +426,20 @@ export const FindingsPage: React.FC = () => {
                 <Button loading={saving} disabled={!isDemoMode&&!canWrite} onClick={()=>{try{void handleUpdateStatus(selectedFinding.id,'ACCEPTED_RISK',acceptanceInput(acceptReason,acceptUntil))}catch(e){message.error(e instanceof Error?e.message:'接受风险输入无效')}}}>接受风险</Button>
               </Space>}
               {selectedFinding.status==='FIXED'&&<Text type="secondary">修复状态由完整扫描判定。</Text>}
+            </section>
+            <section style={{width:'100%'}}>
+              <Typography.Title level={5}>漏洞指派与备注</Typography.Title>
+              <Space direction="vertical" style={{width:'100%'}}>
+                <Text>当前处置人：{selectedFinding.assigneeName||selectedFinding.assigneeId||'未指派'}</Text>
+                {workError&&<Alert type="error" message={workError} />}
+                <label htmlFor="finding-assignee">处置人（可清除指派）</label>
+                <Select id="finding-assignee" aria-label="漏洞处置人" allowClear style={{width:'100%'}} value={assigneeId||undefined} onChange={value=>setAssigneeId(value??'')} options={assignees.map(item=>({value:item.id,label:item.name}))} disabled={workSaving||(!isDemoMode&&!canWrite)||Boolean(workError)} placeholder="未指派" />
+                <Button loading={workSaving} disabled={(!isDemoMode&&!canWrite)||Boolean(workError)||assigneeId===(selectedFinding.assigneeId??'')} onClick={()=>void saveAssignment(selectedFinding.id)}>保存指派</Button>
+                <label htmlFor="finding-note">追加备注（最多 2000 UTF-8 字节，单行纯文本）</label>
+                <Input id="finding-note" value={noteBody} onChange={event=>setNoteBody(event.target.value)} disabled={workSaving||(!isDemoMode&&!canWrite)} />
+                <Button loading={workSaving} disabled={(!isDemoMode&&!canWrite)||!noteBody.trim()} onClick={()=>void saveNote(selectedFinding.id)}>追加备注</Button>
+                {notes.length?<Timeline items={notes.map(note=>({key:note.id,children:<Space direction="vertical" size={2}><Text type="secondary">{note.createdAt} · {note.actorName||note.actor}</Text><Text style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{note.body}</Text></Space>}))}/>:<Text type="secondary">{isDemoMode?'演示模式没有服务端备注':'暂无备注'}</Text>}
+              </Space>
             </section>
             <section style={{width:'100%'}}>
               <Typography.Title level={5}>状态变更记录</Typography.Title>

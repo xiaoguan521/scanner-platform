@@ -547,6 +547,7 @@ func (s *RuntimeStore) completeEngineTask(ctx context.Context, report taskflow.R
 				}
 				f.FirstSeen, f.Status = old.FirstSeen, old.Status
 				f.AcceptedReason, f.AcceptedUntil = old.AcceptedReason, old.AcceptedUntil
+				f.AssigneeID, f.AssigneeName = old.AssigneeID, old.AssigneeName
 				f.ConsecutiveMisses = 0
 				f.ResolvedAt = nil
 				if f.Status == "FIXED" {

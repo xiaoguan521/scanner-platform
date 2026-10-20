@@ -25,3 +25,5 @@ UI 使用 HttpOnly 的 `scanner_session` Cookie，所有写请求携带 `X-Reque
 `/nodes/heartbeat` 保存 Worker 报告的本地规则版本到节点的 `boundRuleVersion`，并显示 `WAITING_FOR_RULES` 或 `RULES_ERROR`。缺少 CURRENT 会按 Worker 轮询间隔等待，不会伪装成扫描失败；CURRENT 格式或本地规则根无效时 Worker 明确停止领取任务。`/worker/report` 支持真实任务 COMPLETED/FAILED、最多 2000 条归一化发现项，32 MiB 请求上限；拒绝其他 Worker、其他引擎或范围外目标的结果。重复提交不重复入库，稳定指纹跨任务去重，镜像使用不可变 ImageID。原始响应不在 UI API 中传递。租约失效时 Worker 不发送过期的 FAILED/COMPLETED 回报，等待 Server 回收并重新分配。
 
 完整字段与请求响应见 OpenAPI。`readyz=200` 只表示本地控制面可用，不代表扫描引擎、网络围栏、规则签名或兼容性已验证。
+
+- 漏洞指派与备注：`GET /findings/assignees` 仅向已登录的 admin/security_engineer 提供 active admin/security_engineer 的最小 `{id,name}` 候选。`PUT /findings/{id}/assignee` 使用 `{assigneeId}` 指派，空串清除（null 和缺省字段拒绝）；同一事务校验执行者及目标当前状态，保留指派历史和审计，不改变资产 owner/漏洞状态。`GET/POST /findings/{id}/notes` 读取/追加备注；POST 使用 `{body}`，校验 trim 前 1–2000 UTF-8 字节、非空白且无控制字符及 Unicode 行/段落分隔符（U+2028/U+2029）。备注只追加，作者名快照保留，审计仅记录 noteId/字节数。写入沿用 admin/security_engineer 和 CSRF 约束，无账户认证配置时这些新端点拒绝服务。

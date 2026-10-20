@@ -1196,6 +1196,142 @@ paths:
           type: string
           enum:
           - XMLHttpRequest
+  "/api/v1/findings/assignees":
+    get:
+      summary: Read minimal active finding assignee candidates
+      description: Admin/security_engineer only. Returns id and name of active admin/security_engineer accounts; no account credentials or administrative fields.
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          description: Eligible assignees
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, total]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      "$ref": "#/components/schemas/FindingAssignee"
+                  total:
+                    type: integer
+        '401':
+          description: Authentication required
+        '403':
+          description: Only admin/security_engineer may read candidate accounts
+        '503':
+          description: Account authentication not configured
+  "/api/v1/findings/{id}/assignee":
+    put:
+      summary: Set or clear a single finding assignee
+      description: Admin/security_engineer only. Assignee must be an active admin/security_engineer; empty assigneeId clears assignment; null and omitted fields are rejected. Actor and target eligibility are checked within the write transaction. Rejects no-op updates. Assignment history and audit are committed atomically; asset owner and lifecycle status are unaffected.
+      security:
+      - sessionCookie: []
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema:
+          type: string
+          enum: [XMLHttpRequest]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [assigneeId]
+              properties:
+                assigneeId:
+                  type: string
+                  maxLength: 128
+      responses:
+        '200':
+          description: Updated finding
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Finding"
+        '400':
+          description: Invalid actor, assignee, missing field or no-op
+        '403':
+          description: Forbidden or mutation guard missing
+        '404':
+          description: Finding missing
+        '409':
+          description: Concurrent update conflict
+  "/api/v1/findings/{id}/notes":
+    parameters:
+    - in: path
+      name: id
+      required: true
+      schema:
+        type: string
+    get:
+      summary: Read append-only finding notes
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          description: Chronological plain-text notes with author snapshots
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, total]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      "$ref": "#/components/schemas/FindingNote"
+                  total:
+                    type: integer
+        '404':
+          description: Finding missing
+    post:
+      summary: Append a single finding note
+      description: Admin/security_engineer only. Body must be valid UTF-8, 1–2000 bytes before trimming, nonblank and contain no control characters or Unicode line/paragraph separators (U+2028/U+2029). Notes are immutable plain text. Note and audit are one transaction; audit links note ID and byte count without copying body text.
+      security:
+      - sessionCookie: []
+      parameters:
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema:
+          type: string
+          enum: [XMLHttpRequest]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body:
+                  type: string
+                  maxLength: 2000
+                  description: Limit is UTF-8 bytes, not character count.
+      responses:
+        '201':
+          description: Appended note
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/FindingNote"
+        '400':
+          description: Invalid note or inactive writer
+        '403':
+          description: Forbidden or mutation guard missing
+        '404':
+          description: Finding missing
   "/api/v1/findings/{id}/events":
     get:
       summary: Read finding state change history
@@ -2780,6 +2916,32 @@ components:
         total:
           type: integer
           minimum: 0
+    FindingAssignee:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+    FindingNote:
+      type: object
+      required: [id, findingId, actor, actorName, body, createdAt]
+      properties:
+        id:
+          type: string
+        findingId:
+          type: string
+        actor:
+          type: string
+        actorName:
+          type: string
+        body:
+          type: string
+          description: Immutable plain text, never interpreted as HTML.
+        createdAt:
+          type: string
+          format: date-time
     FindingEvent:
       type: object
       required: [id, findingId, fromStatus, toStatus, actor, createdAt]
@@ -2817,6 +2979,12 @@ components:
       - owner
       - verifiedInRun
       properties:
+        assigneeId:
+          type: string
+          description: Finding disposition assignee; independent from asset owner.
+        assigneeName:
+          type: string
+          description: Assignee name snapshot when assigned.
         acceptedReason:
           type: string
           description: Present while risk acceptance is active.
