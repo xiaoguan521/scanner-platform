@@ -18,7 +18,7 @@ var runtimeWorkerID = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$`)
 
 // NewRuntimeHandler serves the early local task flow and existing API routes.
 // Synthetic tasks never start a scan or connect to their displayed targets.
-func NewRuntimeHandler(store *repo.RuntimeStore, fallback http.Handler, uiDir string, accounts ...account.Repository) http.Handler {
+func NewRuntimeHandler(store repo.RuntimeBackend, fallback http.Handler, uiDir string, accounts ...account.Repository) http.Handler {
 	mux := http.NewServeMux()
 	if fallback == nil {
 		fallback = NewScaffoldHandler("sec-server")

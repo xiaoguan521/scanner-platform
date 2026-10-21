@@ -71,7 +71,7 @@ type DashboardSummary struct {
 	CurrentRule          *rules.Bundle             `json:"currentRule,omitempty"`
 }
 
-func registerDashboardHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui func(bool, http.HandlerFunc) http.HandlerFunc) {
+func registerDashboardHandlers(mux *http.ServeMux, store repo.RuntimeBackend, ui func(bool, http.HandlerFunc) http.HandlerFunc) {
 	mux.HandleFunc("GET /api/v1/dashboard/summary", ui(false, func(w http.ResponseWriter, r *http.Request) {
 		days, ok := dashboardTrendDays(r)
 		if !ok {
@@ -105,7 +105,7 @@ func dashboardTrendDays(r *http.Request) (int, bool) {
 	}
 }
 
-func buildDashboardSummary(ctx context.Context, store *repo.RuntimeStore, days int, now time.Time) (DashboardSummary, error) {
+func buildDashboardSummary(ctx context.Context, store repo.RuntimeBackend, days int, now time.Time) (DashboardSummary, error) {
 	items, err := store.ListRuntimeFindings(ctx)
 	if err != nil {
 		return DashboardSummary{}, err

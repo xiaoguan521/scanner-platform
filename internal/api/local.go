@@ -8,7 +8,7 @@ import (
 	"scanner-platform/internal/taskflow"
 )
 
-func registerLocalHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui func(bool, http.HandlerFunc) http.HandlerFunc, admin func(http.HandlerFunc) http.HandlerFunc, actor func(*http.Request) string) {
+func registerLocalHandlers(mux *http.ServeMux, store repo.RuntimeBackend, ui func(bool, http.HandlerFunc) http.HandlerFunc, admin func(http.HandlerFunc) http.HandlerFunc, actor func(*http.Request) string) {
 	mux.HandleFunc("POST /api/v1/nodes/heartbeat", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			ID               string                   `json:"id"`

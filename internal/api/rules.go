@@ -8,7 +8,7 @@ import (
 	"scanner-platform/internal/rules"
 )
 
-func registerRuleHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui func(bool, http.HandlerFunc) http.HandlerFunc, actor func(*http.Request) string) {
+func registerRuleHandlers(mux *http.ServeMux, store repo.RuntimeBackend, ui func(bool, http.HandlerFunc) http.HandlerFunc, actor func(*http.Request) string) {
 	mux.HandleFunc("GET /api/v1/custom-rules", ui(false, func(w http.ResponseWriter, r *http.Request) {
 		if query, paged, ok := parseCustomRuleListQuery(r); paged {
 			if !ok {

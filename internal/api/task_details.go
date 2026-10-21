@@ -39,7 +39,7 @@ type TaskResultExport struct {
 	Findings      []TaskResultFinding `json:"findings"`
 }
 
-func registerTaskDetailHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui func(bool, http.HandlerFunc) http.HandlerFunc) {
+func registerTaskDetailHandlers(mux *http.ServeMux, store repo.RuntimeBackend, ui func(bool, http.HandlerFunc) http.HandlerFunc) {
 	mux.HandleFunc("GET /api/v1/tasks/{id}", ui(false, func(w http.ResponseWriter, r *http.Request) {
 		task, err := store.GetRuntimeTask(r.Context(), r.PathValue("id"))
 		if !runtimeStoreError(w, err) {

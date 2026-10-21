@@ -6,7 +6,7 @@ import (
 	"scanner-platform/internal/repo"
 )
 
-func registerFindingRetestHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui func(bool, http.HandlerFunc) http.HandlerFunc, actor func(*http.Request) string) {
+func registerFindingRetestHandlers(mux *http.ServeMux, store repo.RuntimeBackend, ui func(bool, http.HandlerFunc) http.HandlerFunc, actor func(*http.Request) string) {
 	mux.HandleFunc("POST /api/v1/findings/{id}/retest", ui(true, func(w http.ResponseWriter, r *http.Request) {
 		var body struct{}
 		if !runtimeDecode(w, r, &body) {

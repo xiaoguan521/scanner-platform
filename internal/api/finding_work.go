@@ -6,7 +6,7 @@ import (
 	"scanner-platform/internal/repo"
 )
 
-func registerFindingWorkHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui func(bool, http.HandlerFunc) http.HandlerFunc, actor func(*http.Request) string, accounts ...account.Repository) {
+func registerFindingWorkHandlers(mux *http.ServeMux, store repo.RuntimeBackend, ui func(bool, http.HandlerFunc) http.HandlerFunc, actor func(*http.Request) string, accounts ...account.Repository) {
 	guarded := func(write bool, handler http.HandlerFunc) http.HandlerFunc {
 		return ui(write, func(w http.ResponseWriter, r *http.Request) {
 			if len(accounts) == 0 {

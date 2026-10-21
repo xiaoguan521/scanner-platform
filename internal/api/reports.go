@@ -26,7 +26,7 @@ func reportStoreError(w http.ResponseWriter, err error) bool {
 	}
 	return true
 }
-func registerReportHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui func(bool, http.HandlerFunc) http.HandlerFunc, actor func(*http.Request) string) {
+func registerReportHandlers(mux *http.ServeMux, store repo.RuntimeBackend, ui func(bool, http.HandlerFunc) http.HandlerFunc, actor func(*http.Request) string) {
 	mux.HandleFunc("GET /api/v1/report-templates", ui(false, func(w http.ResponseWriter, r *http.Request) {
 		items, err := store.ListReportTemplates(r.Context())
 		if !reportStoreError(w, err) {
