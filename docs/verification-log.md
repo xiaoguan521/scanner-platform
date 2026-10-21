@@ -1,9 +1,15 @@
 # Verification log
 
+## 2026-10-21：fenced Worker 一次性生命周期监督器
+
+- 新增 `internal/supervisor` 重启策略和 Linux `cmd/worker-supervisor`。监督器只调用已固定的 `sec-fence-launcher`，不经过 shell；launcher 与 Worker 路径均要求绝对规范、普通文件、不可由 group/other 写入且父目录不可写。Worker 参数必须位于显式 `--` 后，并拒绝覆盖 fenced 模式边界。
+- 正常的一次性任务退出使用固定延迟，连续失败使用有界指数退避；可用 `--max-restarts` 限制部署验收中的重启次数，SIGTERM/SIGINT 取消当前周期且不发起新周期。监督器没有数据库、规则库或扫描目标访问权。
+- 新增策略、取消、失败退避、重启上限、路径权限和参数覆盖测试；`make build` 纳入 `sec-worker-supervisor`。该代码验证了进程生命周期边界，不替代生产 service manager 的 secret/证书/令牌编排、远程部署或范围外发包告警验收。
+
 ## 2026-10-21：Linux fenced Worker 可信启动器
 
 - 新增 `cmd/fence-launcher`：仅 Linux 可用，要求 root 和绝对、非 group/other 可写的 Worker 可执行文件；启动前打开 `/proc/self/ns/net` 并校验 nsfs，使用 `CLONE_NEWNET` 创建专属 network namespace，以 fd 3 传递父 namespace，强制追加 `--fence --once --fence-parent-netns-fd=3`，拒绝调用方覆盖这些边界；父启动器退出时由 `Pdeathsig` 终止 Worker。
-- `make build` 已纳入 `sec-fence-launcher`；非 Linux 构建保留明确不可用入口。启动器不读取数据库、令牌或扫描结果，只负责 namespace 和进程边界，外部 supervisor 负责在一次任务结束后重新拉起。
+- `make build` 已纳入 `sec-fence-launcher` 和 `sec-worker-supervisor`；非 Linux 构建保留明确不可用入口。启动器和监督器不读取数据库、令牌或扫描结果，只负责 namespace 与进程生命周期边界。
 - Linux arm64 特权容器验证通过：启动器运行独立 helper，子进程 network namespace 与容器父 namespace 不同，fd 3 保持 nsfs；Linux 启动器单元测试覆盖受保护参数覆盖、可执行文件权限和父 namespace 类型。该证据仍不等同于生产 Compose `hostNetwork`、真实 Worker 任务和部署 supervisor 验收。
 
 ## 2026-10-21：fenced Worker DROP 计数回报

@@ -91,6 +91,34 @@ private runtime and input directories are writable by uid 10001. `nft` and
 `setpriv` paths are pinned, and the dropped engine process has no capabilities
 and `no_new_privs`. Each namespace handles one task and is then destroyed.
 
+### One-shot Worker supervisor
+
+`sec-worker-supervisor` is the external restart loop for the one-shot launcher.
+It validates both executable paths as pinned, non-writable regular files,
+passes Worker arguments only after `--`, and never invokes a shell. A clean
+one-task exit uses the base delay; consecutive failures use bounded exponential
+backoff. `--max-restarts` can be set for a finite deployment test, while the
+default `0` keeps the node available for subsequent tasks. SIGTERM/SIGINT
+cancels the current launcher and does not start another cycle.
+
+```text
+sec-worker-supervisor \
+  --launcher /opt/sec/bin/sec-fence-launcher \
+  --worker /opt/sec/bin/sec-worker \
+  --restart-delay 2s --max-backoff 60s \
+  -- \
+  --server https://192.0.2.10:8443 \
+  --node-token-file /run/secrets/worker-token \
+  --fence-cgroup-root /sys/fs/cgroup/sec-worker \
+  --fence-infra tcp://192.0.2.53:53 \
+  --bin-dir /opt/sec/bin --rules-dir /vuln-data \
+  --runtime-dir /runtime/worker --inputs-dir /runtime/inputs
+```
+
+The supervisor only manages process lifetime; the launcher remains responsible
+for the network namespace, parent-namespace fd and forced `--fence --once`
+arguments. It does not read database credentials, node tokens or scan results.
+
 Only the Server address and explicitly listed numeric `IP:port` infrastructure
 permits may be reachable. The Server still fixes every scan target and port;
 the Worker does not resolve names or expand networks.
@@ -100,8 +128,7 @@ the Worker does not resolve names or expand networks.
 The following items are intentionally not represented by a fake Compose file:
 
 - pinned Server/Updater/Worker images and reproducible image builds;
-- secret, certificate, token, and supervisor restart orchestration around the
-    launcher;
+- secret, certificate, and token orchestration around the launcher;
 - isolated-Linux evidence for out-of-scope packet drops, uid/capabilities,
     `no_new_privs`, cgroup-v2 descendant cleanup, and forbidden `hostNetwork`;
 - production PostgreSQL backup/restore, monitoring, and migration rollout;

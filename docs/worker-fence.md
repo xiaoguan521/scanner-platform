@@ -42,6 +42,12 @@ Server 的 HTTPS 地址会自动加入基础设施白名单；额外的 DNS、Ha
 
 `internal/bootstrap` 的 fenced adapter 接收现有 `taskflow.Task`，只把 Server 已解析的目标和端口转换成 `workerfence.Plan`。Linux 子进程先读取受限 JSON，校验硬截止时间和操作类型；root 阶段安装一次 nftables 事务，成功后用 `setpriv` 重新执行 `--fence-child`。降权阶段再构造现有 `executor.Runner`，因此引擎参数白名单、规则完整性校验、SSH/Trivy/Nuclei 的结果归一化仍由原执行器负责。
 
+## 一次性生命周期监督器
+
+`sec-worker-supervisor` 负责在一次性 Worker 退出后重新启动可信 launcher。它接受绝对、规范且不可由 group/other 写入的 launcher 与 Worker 可执行文件，Worker 参数必须位于显式 `--` 分隔符之后；监督器不调用 shell，并拒绝覆盖 `--fence`、`--once` 和父 namespace fd 等边界参数。正常完成使用固定重启延迟，连续非零退出使用有界指数退避；`--max-restarts` 可为部署验收设置重启上限，默认 `0` 表示持续服务。收到 SIGTERM/SIGINT 时取消当前周期，不再启动下一周期。
+
+监督器没有数据库、规则库、节点令牌或扫描结果访问权，也不替代 launcher 的 network namespace、cgroup、降权和强制参数检查。secret、证书、令牌下发、远程部署和自动证书签发仍由受信服务管理器或部署系统负责。
+
 端口探测进度通过独立的继承 fd 逐行回传给父 Worker，仍使用现有 heartbeat `ProgressUpdate`，不会把扫描输出、响应正文或目标清单写进进度通道。任务摘要也通过 root 阶段建立的短期 fd capability 绑定到降权子进程；手工伪造环境变量或修改任务 JSON 会在子进程启动前失败。
 
 端口探测/自动综合扫描最多生成 65535 个目标 TCP 许可；离线 Trivy 只保留基础设施白名单，不生成网络目标许可。围栏失败、输入不完整、硬截止时间到期或降权失败都会在引擎启动前拒绝任务。

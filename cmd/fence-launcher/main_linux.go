@@ -13,9 +13,10 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"syscall"
+
+	"scanner-platform/internal/execguard"
 )
 
 const nsfsMagic = 0x6e736673
@@ -82,28 +83,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 }
 
 func validateWorkerPath(path string) error {
-	if path == "" || !filepath.IsAbs(path) || filepath.Clean(path) != path {
-		return errors.New("worker path must be absolute and canonical")
-	}
-	resolved, err := filepath.EvalSymlinks(path)
-	if err != nil || resolved != path {
-		return errors.New("worker path must not traverse symlinks")
-	}
-	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0022 != 0 || info.Mode()&0111 == 0 {
-		return errors.New("worker must be a pinned non-writable executable")
-	}
-	for directory := filepath.Dir(path); ; directory = filepath.Dir(directory) {
-		directoryInfo, directoryErr := os.Lstat(directory)
-		if directoryErr != nil || !directoryInfo.IsDir() || directoryInfo.Mode()&os.ModeSymlink != 0 || directoryInfo.Mode().Perm()&0022 != 0 {
-			return errors.New("worker parent directories must be non-writable")
-		}
-		parent := filepath.Dir(directory)
-		if parent == directory {
-			break
-		}
-	}
-	return nil
+	return execguard.ValidatePinnedExecutable(path)
 }
 
 func validateChildArgs(args []string) error {
