@@ -623,3 +623,10 @@
 
 - 新增迁移 `0011_rule_jobs.sql` 和 PostgreSQL 规则作业适配，覆盖 IMPORT/FETCH/ACTIVATE 校验、队列上限、`FOR UPDATE SKIP LOCKED` 领取、节点绑定、完成/失败回报、规则目录原子同步和分页清册。
 - PostgreSQL lab 测试实际创建、领取、完成并清理一条 ACTIVATE 作业；Updater 可继续使用常规运行模式。规则 ZIP 的签名和文件完整性仍由 Updater 本地规则 Manager 验证，Server 只保存受限作业数据与目录元数据。
+
+## 2026-10-21：PostgreSQL 定时任务回归
+
+- 新增迁移 `0012_schedules.sql`，保存定时计划和独立运行历史；历史不依赖计划或生成任务的外键，删除计划或任务后仍可安全显示记录状态。
+- PostgreSQL RuntimeStore 已接入计划增改删、启停、时间窗/资产/端口授权校验、到期触发和单次计划停用；到期触发持有计划行锁，避免同一 `NextRun` 被并发 Tick 重复消费，生成任务仍复用既有授权校验与规则冻结。
+- 隔离 PostgreSQL lab 测试实际创建一条文档保留地址段的单次计划，执行两次 Tick，确认只生成一个 `PENDING` 任务、只写入一条运行历史，并在测试结束清理夹具数据；规则、目标、任务和运行结果未写入仓库。
+- `POSTGRES_DSN_FILE=... go test -tags=lab ./internal/repo`、`POSTGRES_DSN_FILE=... make migrate-postgres` 均通过；通知、mTLS/证书轮换、非核心系统管理和 PostgreSQL 浏览器旅程仍未完成。

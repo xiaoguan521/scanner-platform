@@ -75,10 +75,10 @@ func NewPostgresRuntime(db *sql.DB) (*PostgresRuntimeStore, error) {
 func (s *PostgresRuntimeStore) RuntimeMode() string { return "postgres" }
 
 // UnavailableRuntimeCapabilities is intentionally explicit. The API must not
-// advertise SQLite-only scheduling, notifications or rule administration when
-// the Server is connected to PostgreSQL.
+// advertise PostgreSQL runtime features until their tables and adapters are
+// wired to the selected database.
 func (s *PostgresRuntimeStore) UnavailableRuntimeCapabilities() []string {
-	return []string{"synthetic-worker", "schedules", "notifications"}
+	return []string{"synthetic-worker", "notifications"}
 }
 
 // Close is intentionally a no-op. The bootstrap owns the shared pool used by
@@ -1187,6 +1187,9 @@ func (s *PostgresRuntimeStore) UpdateFinding(ctx context.Context, id, status, ac
 
 func (s *PostgresRuntimeStore) Tick(ctx context.Context, now time.Time) error {
 	if err := s.ExpireAcceptedRisks(ctx, now); err != nil {
+		return err
+	}
+	if err := s.tickPostgresSchedules(ctx, now); err != nil {
 		return err
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT t.id,p.data FROM scan_tasks t
