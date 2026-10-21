@@ -645,3 +645,11 @@
 - 隔离 PostgreSQL lab 测试实际覆盖默认/保存/非法系统设置、策略归一化、规则编译与分页筛选、方案增改删与缺失规则拒绝、知识库保存/导入/删除和审计投影，并在结束后清理夹具记录。测试未访问外部互联网，未写入真实资产、密钥或扫描结果。
 - 已通过 `POSTGRES_DSN_FILE=... go test -count=1 -tags=lab ./internal/repo`、`POSTGRES_DSN_FILE=... make migrate-postgres`、PostgreSQL 41 张表/14 条迁移只读清点、`POSTGRES_DSN_FILE=... SCANNER_SKIP_BUILD=1 SCANNER_PORT=18083 make dev-postgres` 的 `/readyz` 检查，以及 `make test`、`make lint`、`make build` 和 `git diff --check`。
 - PostgreSQL 发现项处置扩展、mTLS/证书轮换、跨后端浏览器旅程、真实服务器/国产系统覆盖和性能/无障碍/国际化仍按路线图保留，不能据此宣称整体产品已经完成。
+
+## 2026-10-21：PostgreSQL 发现项处置、复测与生命周期安全回归
+
+- 新增迁移 `0015_finding_work.sql` 和 `0016_freeze_threshold_marker.sql`。PostgreSQL 现在覆盖发现项备注、指派/清除及历史、批量指派、批量状态处置、单项复测关系与历史；`task_finding_observations` 保持不可变，处置更新只修改当前发现项投影、生命周期和审计/事件。
+- 任务投影冻结 `fixed_threshold`。新任务保存阈值和冻结标记；迁移前的旧投影不参与自动 `FIXED` 收敛，避免阈值未知时误判。完成回报区分任务终态与 `completed_fully`，端口/HTTP 结果可以入库，未完成的全量扫描不会触发错误的生命周期收敛。
+- PostgreSQL 复测在同一事务中重新校验已登记资产、当前授权范围、端口排除/隔离、时间窗、规则目录和父任务冻结端口集合；活动复测重复提交返回冲突。批量处置和指派使用固定 ID 顺序及当前快照校验，任一冲突或写入失败整批回滚；审计不复制备注正文。
+- 隔离夹具回归通过：`POSTGRES_DSN_FILE="$PWD/runtime/postgres/dsn" go test -tags=lab -count=1 ./internal/repo`，并单独复核 `TestPostgresFindingWorkLab`、`TestPostgresFindingRetestLab`；`make migrate-postgres` 已应用 0015/0016，公共 schema 只读清点为 43 张业务表加 `schema_migrations`，共 44 张表、16 条迁移。
+- 本批仍未完成真实浏览器跨后端旅程、mTLS/证书轮换、真实服务器/国产系统覆盖以及性能、无障碍和国际化验收；这些是路线图后续工作，不能据此宣称整体产品已经完成。

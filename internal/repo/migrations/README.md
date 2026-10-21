@@ -20,8 +20,10 @@ These files implement the schema in [architecture-v3.2.md §7](../../../docs/arc
 | `postgres/0012_schedules.sql` | scheduled scan definitions and run history | 2 |
 | `postgres/0013_notifications.sql` | in-product notifications and safe webhook outbox | 2 |
 | `postgres/0014_product_catalog.sql` | custom rules and scan plan catalog | 2 |
+| `postgres/0015_finding_work.sql` | frozen task lifecycle threshold, finding notes, assignment history and retest relations | 3 |
+| `postgres/0016_freeze_threshold_marker.sql` | marks newly created task thresholds as frozen; legacy projections fail closed | 0 new tables |
 
-There are **40 business tables** plus the internal `schema_migrations` journal. All SQL scripts use a transaction, include constraints/indexes and record their version. No users, tokens, rules, targets or example data are seeded.
+There are **43 business tables** plus the internal `schema_migrations` journal. All SQL scripts use a transaction, include constraints/indexes and record their version. No users, tokens, rules, targets or example data are seeded.
 
 ## How to initialize a NEW dedicated database (after review)
 
@@ -50,7 +52,7 @@ unknown or gapped journal entries, and prints only the applied version names.
 It does not create a database, seed users/assets/rules, or switch the running
 SQLite Server to PostgreSQL.
 
-The runner refuses a non-empty public schema with no migration journal, applies versions in order, skips already-recorded versions and aborts on the first SQL error. It does **not** create the PostgreSQL database itself. To run manually, apply migrations `0001_core.sql` through `0014_product_catalog.sql` in order. Run one migrator at a time. Never edit an applied migration: add a higher-numbered file. After applying, use the read-only inventory script `bash scripts/check-postgres-schema.sh` to check all 41 tables including the journal, the fourteen recorded migrations, and the task archive/projection columns. The fourteen migrations were executed and journal-checked against the isolated PostgreSQL fixture on 2026-10-21. The Server-side runtime now wires the account, asset, approval, task queue/projection, finding, report, rule-catalog, rule-job, schedule, notification and product-catalog adapters when explicitly selected; only remaining non-core system administration endpoints are capability-gated.
+The runner refuses a non-empty public schema with no migration journal, applies versions in order, skips already-recorded versions and aborts on the first SQL error. It does **not** create the PostgreSQL database itself. To run manually, apply migrations `0001_core.sql` through `0016_freeze_threshold_marker.sql` in order. Run one migrator at a time. Never edit an applied migration: add a higher-numbered file. After applying, use the read-only inventory script `bash scripts/check-postgres-schema.sh` to check all 44 tables including the journal, the sixteen recorded migrations, and the task archive/projection columns. The sixteen migrations were executed and journal-checked against the isolated PostgreSQL fixture on 2026-10-21. The Server-side runtime now wires the account, asset, approval, task queue/projection, finding work, report, rule-catalog, rule-job, schedule, notification and product-catalog adapters when explicitly selected; only remaining non-core system administration endpoints are capability-gated.
 
 ## Important schema differences and boundaries
 
@@ -68,11 +70,11 @@ The runner refuses a non-empty public schema with no migration journal, applies 
 - The runtime accepts explicitly selected **numeric host IPs**, not CIDRs or domain expansion. The selected port strategy authorizes bounded read-only discovery/checks on that target; per-port approval is no longer a gate. Legacy scope/port approvals remain administrative records, not Worker leases or firewall exceptions.
 - `authorized_scopes.isActive` is calculated from `status` and `expires_at`; it is not stored. `approved_by` uses an empty string while PENDING to match the current application.
 - The local SQLite runtime now shares the account/asset schema; an earlier synthetic assets table is preserved as `assets_legacy_runtime` during upgrade. Its synthetic task/finding tables and local schedules/rule queues are still different from this PostgreSQL baseline. PostgreSQL intentionally returns a capability-unavailable response for runtime features that do not yet have a PostgreSQL table/adapter instead of reading SQLite.
-- Inventory, service, login, policy, knowledge and report records in 0004 use TEXT JSON. Report snapshots are versioned; task observations are separate from current finding lifecycle rows. Migration 0009 stores the complete finding UI/lifecycle projection while `security_findings` remains authoritative for stable identity and status; `task_finding_observations` remains the immutable per-task view. The SQLite RuntimeStore stores archive state in task details JSON; the PostgreSQL schema uses `scan_tasks.archived_at`. Migration 0008 stores the remaining task UI fields as a bounded JSON projection and progress as a separate advisory row; queue state and leases remain authoritative in normalized tables.
+- Inventory, service, login, policy, knowledge and report records in 0004 use TEXT JSON. Report snapshots are versioned; task observations are separate from current finding lifecycle rows. Migration 0009 stores the complete finding UI/lifecycle projection while `security_findings` remains authoritative for stable identity and status; `task_finding_observations` remains the immutable per-task view. Migration 0015 stores notes, assignment history and retest relations separately; human disposition/assignment writes update only the current projection and never rewrite task observations. The SQLite RuntimeStore stores archive state in task details JSON; the PostgreSQL schema uses `scan_tasks.archived_at`. Migration 0008 stores the remaining task UI fields as a bounded JSON projection and progress as a separate advisory row; migration 0015 stores the Server-only frozen `fixed_threshold` beside that JSON, while migration 0016 marks legacy projections unfrozen so lifecycle convergence fails closed; queue state and leases remain authoritative in normalized tables.
 - Rule pinning and SBOM historical version fields have no cascading rule-version foreign key because GC and retention are explicit Server/Updater decisions.
 
 The embedded runner and protected-file checks have unit coverage, and all
-fourteen migrations were executed against an isolated PostgreSQL instance on
+sixteen migrations were executed against an isolated PostgreSQL instance on
 2026-10-21. The queue, task projection, finding, report, schedule, notification
 and product-catalog adapters' `lab` regressions cover their transaction,
 lifecycle, snapshot and worker behavior there. Account/asset/approval

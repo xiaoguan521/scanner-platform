@@ -996,12 +996,22 @@ func (s *PostgresRuntimeStore) CompleteRuntimeTask(ctx context.Context, report t
 		return fmt.Errorf("validate postgres report target: %w", ErrInvalidTask)
 	}
 	var raw string
-	if err := tx.QueryRowContext(ctx, `SELECT data FROM scan_task_projections WHERE task_id=$1 FOR UPDATE`, report.TaskID).Scan(&raw); err != nil {
+	var fixedThreshold int
+	var fixedThresholdFrozen bool
+	if err := tx.QueryRowContext(ctx, `SELECT data,fixed_threshold,fixed_threshold_frozen FROM scan_task_projections WHERE task_id=$1 FOR UPDATE`, report.TaskID).Scan(&raw, &fixedThreshold, &fixedThresholdFrozen); err != nil {
 		return fmt.Errorf("read postgres task projection for completion: %w", err)
 	}
 	var task taskflow.Task
 	if err := json.Unmarshal([]byte(raw), &task); err != nil {
 		return fmt.Errorf("decode postgres task projection for completion: %w", err)
+	}
+	if fixedThresholdFrozen {
+		task.FixedThreshold = fixedThreshold
+		if task.FixedThreshold < 1 {
+			task.FixedThreshold = 1
+		}
+	} else {
+		task.FixedThreshold = 0
 	}
 	if len(task.Chunks) != 1 || len(task.Engines) != 1 {
 		return ErrTaskConflict
@@ -1015,6 +1025,9 @@ func (s *PostgresRuntimeStore) CompleteRuntimeTask(ctx context.Context, report t
 		}
 		if err := validatePostgresReportOutputs(task, report); err != nil {
 			return fmt.Errorf("validate postgres report outputs: %w", err)
+		}
+		if !validExecutionSummary(report, task) {
+			return fmt.Errorf("validate postgres execution summary: %w", ErrInvalidTask)
 		}
 		for _, detection := range report.Findings {
 			finding, err := postgresFindingFromDetection(ctx, tx, task, detection, report.TaskID)
@@ -1039,7 +1052,10 @@ func (s *PostgresRuntimeStore) CompleteRuntimeTask(ctx context.Context, report t
 		if err := s.projection.SaveTx(ctx, tx, task); err != nil {
 			return err
 		}
-		if err := s.queue.CompleteChunkTx(ctx, tx, report.TaskID+"-chunk", true); err != nil {
+		if err := postgresUpdateMissingFindingLifecycle(ctx, tx, task, report, time.Now().UTC()); err != nil {
+			return fmt.Errorf("update postgres missing finding lifecycle: %w", err)
+		}
+		if err := s.queue.CompleteChunkTxStatus(ctx, tx, report.TaskID+"-chunk", "COMPLETED", report.CompletedFully); err != nil {
 			return err
 		}
 	} else if report.Status == "PAUSED_WINDOW" {
@@ -1195,6 +1211,10 @@ func (s *PostgresRuntimeStore) UpdateFindingDisposition(ctx context.Context, id 
 
 func (s *PostgresRuntimeStore) UpdateFinding(ctx context.Context, id, status, actor string) (taskflow.Finding, error) {
 	return s.finding.UpdateFindingDisposition(ctx, id, FindingDisposition{Status: status}, actor)
+}
+
+func (s *PostgresRuntimeStore) ListFindingEvents(ctx context.Context, id string) ([]FindingEvent, error) {
+	return s.finding.ListEvents(ctx, id)
 }
 
 func (s *PostgresRuntimeStore) Tick(ctx context.Context, now time.Time) error {

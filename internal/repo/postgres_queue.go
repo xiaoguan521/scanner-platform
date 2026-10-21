@@ -94,6 +94,27 @@ func (s *PostgresTaskStore) CreateTaskWithProjection(ctx context.Context, task S
 	if s == nil || s.db == nil || projection == nil || !validPostgresTask(task) || value.ID != task.ID {
 		return ErrPostgresTaskInvalid
 	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin postgres projected task: %w", err)
+	}
+	defer tx.Rollback()
+	if err := s.createTaskWithProjectionTx(ctx, tx, task, projection, value); err != nil {
+		return fmt.Errorf("save postgres projected task: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit postgres projected task: %w", err)
+	}
+	return nil
+}
+
+// createTaskWithProjectionTx is used by normal task creation and finding
+// retests so the queue row, frozen projection and relation/audit records can
+// commit atomically in one Server transaction.
+func (s *PostgresTaskStore) createTaskWithProjectionTx(ctx context.Context, tx *sql.Tx, task ScanTask, projection *PostgresTaskProjection, value taskflow.Task) error {
+	if s == nil || tx == nil || projection == nil || !validPostgresTask(task) || value.ID != task.ID {
+		return ErrPostgresTaskInvalid
+	}
 	engines, err := json.Marshal(task.Engines)
 	if err != nil {
 		return fmt.Errorf("encode postgres task engines: %w", err)
@@ -102,11 +123,6 @@ func (s *PostgresTaskStore) CreateTaskWithProjection(ctx context.Context, task S
 	if err != nil {
 		return fmt.Errorf("encode postgres task targets: %w", err)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin postgres projected task: %w", err)
-	}
-	defer tx.Rollback()
 	var deadline any
 	if !task.HardDeadline.IsZero() {
 		deadline = task.HardDeadline.UTC()
@@ -124,9 +140,6 @@ func (s *PostgresTaskStore) CreateTaskWithProjection(ctx context.Context, task S
 	}
 	if err := projection.SaveTx(ctx, tx, value); err != nil {
 		return fmt.Errorf("save postgres projected task: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit postgres projected task: %w", err)
 	}
 	return nil
 }
@@ -321,22 +334,52 @@ func (s *PostgresTaskStore) CompleteChunkTx(ctx context.Context, tx *sql.Tx, chu
 	if s == nil || tx == nil || strings.TrimSpace(chunkID) == "" || len(chunkID) > 160 {
 		return ErrPostgresTaskInvalid
 	}
-	_, err := s.completeChunkTx(ctx, tx, chunkID, completedFully)
+	status := "FAILED"
+	if completedFully {
+		status = "COMPLETED"
+	}
+	_, err := s.completeChunkTxStatus(ctx, tx, chunkID, status, completedFully)
 	return err
 }
 
 func (s *PostgresTaskStore) completeChunkTx(ctx context.Context, tx *sql.Tx, chunkID string, completedFully bool) (string, error) {
+	status := "FAILED"
+	if completedFully {
+		status = "COMPLETED"
+	}
+	return s.completeChunkTxStatus(ctx, tx, chunkID, status, completedFully)
+}
+
+// CompleteChunkTxStatus separates the worker's terminal execution status from
+// the completed_fully coverage bit. A report can finish the task successfully
+// while explicitly saying that some checks were incomplete; that must never be
+// converted into a failed task or a false FIXED transition.
+func (s *PostgresTaskStore) CompleteChunkTxStatus(ctx context.Context, tx *sql.Tx, chunkID, taskStatus string, completedFully bool) error {
+	if s == nil || tx == nil || strings.TrimSpace(chunkID) == "" || len(chunkID) > 160 {
+		return ErrPostgresTaskInvalid
+	}
+	if taskStatus != "COMPLETED" && taskStatus != "FAILED" && taskStatus != "CANCELED" {
+		return ErrPostgresTaskInvalid
+	}
+	_, err := s.completeChunkTxStatus(ctx, tx, chunkID, taskStatus, completedFully)
+	return err
+}
+
+func (s *PostgresTaskStore) completeChunkTxStatus(ctx context.Context, tx *sql.Tx, chunkID, taskStatus string, completedFully bool) (string, error) {
+	if taskStatus != "COMPLETED" && taskStatus != "FAILED" && taskStatus != "CANCELED" {
+		return "", ErrPostgresTaskInvalid
+	}
 	var taskID string
 	if err := tx.QueryRowContext(ctx, `UPDATE scan_task_chunks
 		SET status=$1,completed_fully=$2,lease_expires_at=NULL,finished_at=CURRENT_TIMESTAMP
 		WHERE id=$3 AND status='RUNNING'
-		RETURNING task_id`, map[bool]string{true: "COMPLETED", false: "FAILED"}[completedFully], completedFully, chunkID).Scan(&taskID); err != nil {
+		RETURNING task_id`, taskStatus, completedFully, chunkID).Scan(&taskID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", ErrPostgresTaskUnavailable
 		}
 		return "", fmt.Errorf("complete postgres task chunk: %w", err)
 	}
-	if completedFully {
+	if taskStatus == "COMPLETED" {
 		if _, err := tx.ExecContext(ctx, `UPDATE scan_tasks t SET status='COMPLETED'
 			WHERE t.id=$1 AND NOT EXISTS (
 				SELECT 1 FROM scan_task_chunks c
@@ -344,7 +387,7 @@ func (s *PostgresTaskStore) completeChunkTx(ctx context.Context, tx *sql.Tx, chu
 			)`, taskID); err != nil {
 			return "", fmt.Errorf("complete postgres task: %w", err)
 		}
-	} else if _, err := tx.ExecContext(ctx, `UPDATE scan_tasks SET status='FAILED' WHERE id=$1`, taskID); err != nil {
+	} else if _, err := tx.ExecContext(ctx, `UPDATE scan_tasks SET status=$1 WHERE id=$2`, taskStatus, taskID); err != nil {
 		return "", fmt.Errorf("fail postgres task: %w", err)
 	}
 	return taskID, nil

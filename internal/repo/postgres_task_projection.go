@@ -49,9 +49,12 @@ func (s *PostgresTaskProjection) Save(ctx context.Context, task taskflow.Task) e
 	}
 	now := s.currentTime()
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO scan_task_projections
-		(task_id,data,updated_at) VALUES ($1,$2,$3)
-		ON CONFLICT(task_id) DO UPDATE SET data=EXCLUDED.data,updated_at=EXCLUDED.updated_at`,
-		task.ID, string(data), now); err != nil {
+		(task_id,data,fixed_threshold,fixed_threshold_frozen,updated_at) VALUES ($1,$2,$3,TRUE,$4)
+		ON CONFLICT(task_id) DO UPDATE SET data=EXCLUDED.data,
+		fixed_threshold=CASE WHEN scan_task_projections.fixed_threshold_frozen
+			THEN scan_task_projections.fixed_threshold ELSE EXCLUDED.fixed_threshold END,
+		updated_at=EXCLUDED.updated_at`,
+		task.ID, string(data), projectionFixedThreshold(task), now); err != nil {
 		return fmt.Errorf("save postgres task projection: %w", err)
 	}
 	return nil
@@ -70,12 +73,25 @@ func (s *PostgresTaskProjection) SaveTx(ctx context.Context, tx *sql.Tx, task ta
 		return ErrPostgresProjectionInvalid
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO scan_task_projections
-		(task_id,data,updated_at) VALUES ($1,$2,$3)
-		ON CONFLICT(task_id) DO UPDATE SET data=EXCLUDED.data,updated_at=EXCLUDED.updated_at`,
-		task.ID, string(data), s.currentTime()); err != nil {
+		(task_id,data,fixed_threshold,fixed_threshold_frozen,updated_at) VALUES ($1,$2,$3,TRUE,$4)
+		ON CONFLICT(task_id) DO UPDATE SET data=EXCLUDED.data,
+		fixed_threshold=CASE WHEN scan_task_projections.fixed_threshold_frozen
+			THEN scan_task_projections.fixed_threshold ELSE EXCLUDED.fixed_threshold END,
+		updated_at=EXCLUDED.updated_at`,
+		task.ID, string(data), projectionFixedThreshold(task), s.currentTime()); err != nil {
 		return fmt.Errorf("save postgres task projection: %w", err)
 	}
 	return nil
+}
+
+func projectionFixedThreshold(task taskflow.Task) int {
+	if task.FixedThreshold < 1 {
+		return 1
+	}
+	if task.FixedThreshold > 3 {
+		return 3
+	}
+	return task.FixedThreshold
 }
 
 func validPostgresProjectionTask(task taskflow.Task) bool {
@@ -110,12 +126,14 @@ func (s *PostgresTaskProjection) Get(ctx context.Context, id string) (taskflow.T
 		return taskflow.Task{}, ErrPostgresProjectionInvalid
 	}
 	var raw, scopeID, status, enginesRaw string
+	var fixedThreshold int
+	var fixedThresholdFrozen bool
 	var createdAt time.Time
 	var deadline, archivedAt sql.NullTime
-	err := s.db.QueryRowContext(ctx, `SELECT p.data,t.scope_id,t.status,t.engines,
+	err := s.db.QueryRowContext(ctx, `SELECT p.data,p.fixed_threshold,p.fixed_threshold_frozen,t.scope_id,t.status,t.engines,
 		t.created_at,t.hard_deadline,t.archived_at
 		FROM scan_task_projections p JOIN scan_tasks t ON t.id=p.task_id
-		WHERE p.task_id=$1`, id).Scan(&raw, &scopeID, &status, &enginesRaw,
+		WHERE p.task_id=$1`, id).Scan(&raw, &fixedThreshold, &fixedThresholdFrozen, &scopeID, &status, &enginesRaw,
 		&createdAt, &deadline, &archivedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return taskflow.Task{}, ErrPostgresProjectionMissing
@@ -132,6 +150,14 @@ func (s *PostgresTaskProjection) Get(ctx context.Context, id string) (taskflow.T
 		return taskflow.Task{}, fmt.Errorf("decode postgres task engines: %w", err)
 	}
 	task.ID, task.ScopeID, task.Status, task.Engines = id, scopeID, status, engines
+	if fixedThresholdFrozen {
+		task.FixedThreshold = fixedThreshold
+		if task.FixedThreshold < 1 {
+			task.FixedThreshold = 1
+		}
+	} else {
+		task.FixedThreshold = 0
+	}
 	task.CreatedAt = createdAt.UTC()
 	task.Archived = archivedAt.Valid
 	task.HardDeadline = ""

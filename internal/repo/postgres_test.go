@@ -13,7 +13,7 @@ func TestPostgresMigrationCatalogIsEmbeddedAndOrdered(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"0001_core", "0002_scanning", "0003_rules_sbom", "0004_report_inventory", "0005_task_archive", "0006_task_pause", "0007_asset_catalog", "0008_task_projection", "0009_finding_projection", "0010_rule_catalog_projection", "0011_rule_jobs", "0012_schedules", "0013_notifications", "0014_product_catalog"}
+	want := []string{"0001_core", "0002_scanning", "0003_rules_sbom", "0004_report_inventory", "0005_task_archive", "0006_task_pause", "0007_asset_catalog", "0008_task_projection", "0009_finding_projection", "0010_rule_catalog_projection", "0011_rule_jobs", "0012_schedules", "0013_notifications", "0014_product_catalog", "0015_finding_work", "0016_freeze_threshold_marker"}
 	if len(migrations) != len(want) {
 		t.Fatalf("migration count=%d, want %d", len(migrations), len(want))
 	}

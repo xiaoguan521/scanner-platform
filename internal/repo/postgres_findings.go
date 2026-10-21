@@ -241,6 +241,27 @@ func (s *PostgresFindingStore) updateFindingTx(ctx context.Context, tx *sql.Tx, 
 	return s.saveObservationTx(ctx, tx, finding)
 }
 
+// updateFindingLifecycleTx changes only the current normalized lifecycle and
+// API projection. It deliberately does not write task_finding_observations:
+// manual disposition and missing-finding convergence are not observations in
+// a scan task.
+func (s *PostgresFindingStore) updateFindingLifecycleTx(ctx context.Context, tx *sql.Tx, finding taskflow.Finding, now time.Time) error {
+	projection, err := findingProjectionJSON(finding)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE security_findings SET lifecycle_status=$1,
+		accepted_until=$2,resolved_at=$3 WHERE id=$4`, finding.Status,
+		finding.AcceptedUntil, finding.ResolvedAt, finding.ID); err != nil {
+		return fmt.Errorf("update postgres finding lifecycle: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE finding_projections
+		SET data=$1,updated_at=$2 WHERE finding_id=$3`, projection, now, finding.ID); err != nil {
+		return fmt.Errorf("update postgres finding lifecycle projection: %w", err)
+	}
+	return nil
+}
+
 func (s *PostgresFindingStore) saveObservationTx(ctx context.Context, tx *sql.Tx, finding taskflow.Finding) error {
 	projection, err := findingProjectionJSON(finding)
 	if err != nil {
@@ -530,7 +551,7 @@ func (s *PostgresFindingStore) UpdateFindingDisposition(ctx context.Context, id 
 	if input.Status != "FIXED" {
 		finding.ResolvedAt = nil
 	}
-	if err := s.updateFindingTx(ctx, tx, finding, now); err != nil {
+	if err := s.updateFindingLifecycleTx(ctx, tx, finding, now); err != nil {
 		return taskflow.Finding{}, err
 	}
 	if err := recordPostgresFindingEventTx(ctx, tx, id, from, input.Status, actor, reason, now); err != nil {
