@@ -22,7 +22,12 @@
 
 - 新增 `web/src/components/DataState.tsx`，集中提供 `LoadingState`、`ErrorState`、`EmptyState` 和 `DataTable`。`CollectionNotice` 统一使用加载/错误状态，资产、扫描、漏洞、报告、节点、授权、用户、审计、知识库和总览列表统一使用 `DataTable`。
 - `DataTable` 默认提供可访问的空状态和稳定的空结果语义；页面仍可通过 `locale.emptyText` 提供领域化说明，不改变现有筛选、分页或权限行为。
-- 新增 `DataState.test.mjs` 契约测试；共享组件批次通过 21 项前端测试和生产构建。真实浏览器的键盘导航、窄屏表格和 5 次点击核心旅程仍列入下一批验收。
+- 新增 `DataState.test.mjs` 契约测试；共享组件批次通过 22 项前端测试和生产构建。真实浏览器的键盘导航、窄屏表格和 5 次点击核心旅程仍列入下一批验收。
+
+## 2026-10-21：真实靶机浏览器验收脚本
+
+- 新增 `docs/browser-acceptance.md` 和 `web/e2e/core-journey.spec.mjs`。脚本要求 `LAB_ENV=isolated`、人为确认值、已有账号、单个数字 IP 和明确端口范围；不会创建演示账号、默认目标或扩大扫描范围。
+- 验收步骤覆盖页面登录、资产登记、自动综合扫描向导、授权确认、任务完成轮询和任务详情结果检查。任务/资产默认保留，便于人工复核；真实执行需在隔离靶机上运行 `make test-browser`，本次提交只完成脚本和门槛，未代替用户授权运行。
 
 ## 2026-10-20：单项接受风险、到期与状态事件
 

@@ -49,6 +49,8 @@ __pycache__/
 web/node_modules/
 web/dist/
 web/.vite/
+web/e2e-report/
+web/test-results/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

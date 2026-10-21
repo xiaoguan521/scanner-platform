@@ -6,7 +6,7 @@ ifeq ($(GOOS),windows)
 EXE_EXT := .exe
 endif
 
-.PHONY: build test lint verify-flags test-lab web-install web-dev web-build dev test-local engines engines-java test-engines-local
+.PHONY: build test lint verify-flags test-lab web-install web-dev web-build dev test-local test-browser engines engines-java test-engines-local
 
 dev:
 	bash scripts/dev.sh
@@ -66,6 +66,18 @@ test-lab:
 
 test-local: build web-build
 	python3 scripts/test_local.py
+
+test-browser: build web-build
+	@if [ "$${LAB_ENV:-}" != "isolated" ]; then \
+		printf '%s\n' 'Blocked: set LAB_ENV=isolated only after confirming this is a restricted lab environment.' >&2; \
+		exit 2; \
+	fi
+	@test -n "$${SCANNER_E2E_BASE_URL:-}" || { printf '%s\n' 'SCANNER_E2E_BASE_URL is required (for example, the already running local Server URL).' >&2; exit 2; }
+	@test -n "$${SCANNER_E2E_USERNAME:-}" || { printf '%s\n' 'SCANNER_E2E_USERNAME is required; no test account is created.' >&2; exit 2; }
+	@test -n "$${SCANNER_E2E_PASSWORD:-}" || { printf '%s\n' 'SCANNER_E2E_PASSWORD is required; no password is stored.' >&2; exit 2; }
+	@test -n "$${SCANNER_E2E_TARGET_IP:-}" || { printf '%s\n' 'SCANNER_E2E_TARGET_IP is required; use one explicitly authorized numeric IP.' >&2; exit 2; }
+	test "$${SCANNER_E2E_CONFIRM:-}" = authorized || { printf '%s\n' 'Set SCANNER_E2E_CONFIRM=authorized after confirming the isolated target and port scope.' >&2; exit 2; }
+	npm --prefix web run test:e2e
 
 test-engines-local: build web-build
 	LAB_ENV=isolated python3 scripts/test_engines_local.py
