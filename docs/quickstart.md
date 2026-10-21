@@ -10,7 +10,7 @@
 
 需要使用 PostgreSQL 时，先执行 `POSTGRES_DSN_FILE=/path/to/owner-only.dsn make migrate-postgres`，再执行 `sec-server --storage postgres --postgres-dsn-file /path/to/owner-only.dsn --init-admin <用户名> --password-file /path/to/owner-only-password`，最后使用 `POSTGRES_DSN_FILE=/path/to/owner-only.dsn make dev-postgres`。这是独立数据源，SQLite 资产和账号不会自动迁移；`/readyz` 可确认当前模式。
 
-资产/端口、跳过标记、任务、定时、规则包和验证命令详见 [本地功能](local-functions.md)。运行 `make engines` 安装固定的 Nuclei/Trivy/ZAP 与默认规则后，可在任务页选择真实引擎。详见 [引擎操作指南](engines.md)；真实服务器探测另行验证。
+资产/端口、跳过标记、任务、定时、规则包和验证命令详见 [本地功能](local-functions.md)。运行 `make engines` 安装固定的 Nuclei/Trivy 与默认规则；需要 ZAP 被动检查时再运行 `make engines-zap`。详见 [引擎操作指南](engines.md)；真实服务器探测另行验证。
 
 ## 资产画像与报告
 

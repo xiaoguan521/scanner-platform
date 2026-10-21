@@ -6,7 +6,7 @@ ifeq ($(GOOS),windows)
 EXE_EXT := .exe
 endif
 
-.PHONY: build test lint verify-flags test-lab web-install web-dev web-build dev dev-postgres test-local test-browser engines engines-java test-engines-local migrate-postgres
+.PHONY: build test lint verify-flags test-lab web-install web-dev web-build dev dev-postgres test-local test-browser engines engines-zap engines-java test-engines-local migrate-postgres
 
 dev:
 	bash scripts/dev.sh
@@ -47,13 +47,17 @@ lint:
 
 engines:
 	mkdir -p dist
-	python3 scripts/install_engines.py
+	python3 scripts/install_engines.py --engine core
 	$(GO) build -o dist/sec-updater$(EXE_EXT) ./cmd/updater
 	./dist/sec-updater$(EXE_EXT) --prepare-engines
 	$(MAKE) verify-flags
 
+engines-zap:
+	python3 scripts/install_engines.py --engine zap
+	$(MAKE) verify-flags REQUIRE_ZAP=1
+
 verify-flags:
-	python3 scripts/verify_engine_flags.py
+	REQUIRE_ZAP=$(REQUIRE_ZAP) python3 scripts/verify_engine_flags.py
 
 engines-java:
 	mkdir -p dist

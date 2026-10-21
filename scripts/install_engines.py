@@ -100,14 +100,20 @@ def install(name, item, system, arch, destination):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--engine', choices=['nuclei', 'trivy', 'zap', 'all'], default='all')
+    parser.add_argument(
+        '--engine',
+        choices=['nuclei', 'trivy', 'zap', 'core', 'all'],
+        default='all',
+        help='engine to install; core installs Nuclei and Trivy, while ZAP is optional',
+    )
     parser.add_argument('--platform', choices=['darwin', 'linux', 'windows'], default=platform.system().lower())
     parser.add_argument('--arch', choices=['arm64', 'amd64'], default={'aarch64': 'arm64', 'arm64': 'arm64', 'x86_64': 'amd64', 'AMD64': 'amd64'}.get(platform.machine()))
     parser.add_argument('--destination', type=Path, default=ROOT / 'bin')
     args = parser.parse_args()
     lock = json.loads((ROOT / 'config/engines.lock.json').read_text())
+    selected = {'nuclei', 'trivy'} if args.engine == 'core' else set(lock) if args.engine == 'all' else {args.engine}
     for name, item in lock.items():
-        if args.engine in [name, 'all']:
+        if name in selected:
             install(name, item, args.platform, args.arch, args.destination.resolve())
 
 

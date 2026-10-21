@@ -669,3 +669,10 @@
 - 五个 Playwright 用例全部通过：资产登记与自动综合扫描结果详情、总览下钻到漏洞清册、指定发现项只读详情、定时/报告页面、指定已完成任务的报告范围选择。核心任务实际完成了 TCP 探测、SSH/HTTP 服务识别、SSH 临时系统包采集、Trivy 本地分析和 Nuclei 只读 HTTP 基线。
 - 修正验收脚本对 Ant Design 可访问名称、Select 容器和重复页面文本的脆弱选择器；选择器修正只影响测试，不放宽扫描范围、授权、引擎参数或 Server 校验。
 - 本次实跑同时通过 `make build` 与前端生产构建；跨后端浏览器旅程至此有实际证据。完整节点生命周期自动签发/吊销、真实服务器/国产系统覆盖，以及性能、无障碍和国际化仍未完成。
+
+## 2026-10-21：ZAP 可选安装边界
+
+本地 SSH/Trivy/Nuclei 主链路不再要求安装 ZAP。`make engines` 现在只准备 Nuclei 与 Trivy；需要 ZAP 被动 HTTP 检查时显式运行 `make engines-zap`。`make verify-flags` 在缺少固定版本 ZAP JAR 时输出 `SKIP` 并继续核对 Nuclei/Trivy，`REQUIRE_ZAP=1 make verify-flags` 会在缺少 JAR 时失败。发布工作流仍保留三引擎制品检查，避免改变已发布包的兼容性。
+
+证据：`python3 -m unittest scripts/test_verify_engine_flags.py`（2 项通过）、`python3 -m py_compile scripts/install_engines.py scripts/verify_engine_flags.py scripts/test_verify_engine_flags.py`、本机 `python3 scripts/verify_engine_flags.py`（Nuclei 23 项、Trivy 20 项通过，ZAP 明确跳过）；未执行任何扫描。
+

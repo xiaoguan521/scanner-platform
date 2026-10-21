@@ -15,21 +15,22 @@
 首次安装或在另一台机器准备环境：
 
 ```bash
-make engines   # 下载三种官方引擎；Updater 下载 Trivy DB、安装并激活默认规则；核对参数
+make engines   # 下载核心引擎 Nuclei/Trivy；Updater 下载 Trivy DB、安装并激活默认规则；核对参数
+make engines-zap # 只有需要 ZAP 被动检查时才下载 ZAP（需要 Java 17+）
 make engines-java # 检查 JAR/WAR/EAR 时额外准备 Java 索引；大库流式安装
 make dev       # 启动网页、Server、Worker、Updater
 ```
 
-不想在目标机安装 Go/Node.js 时，可在 GitHub Actions 手动运行 `Build & Release Artifacts`，下载对应平台的整机包。压缩包包含平台程序、`web/dist`、锁定版本的 Nuclei/Trivy/ZAP 及其版本/许可证元数据；Linux arm64、amd64，macOS arm64、amd64 和 Windows amd64 均有包。当前锁定的引擎未提供 Windows arm64 资产，因此该架构不打包。漏洞库可通过独立的 `Build Offline Vulnerability Data` 工作流手动生成并下载，详见[离线漏洞库下载包](offline-vulnerability-data.md)。ZAP 需要目标机预装 Java 17 或更高版本。
+不想在目标机安装 Go/Node.js 时，可在 GitHub Actions 手动运行 `Build & Release Artifacts`，下载对应平台的整机包。发布包仍可包含锁定版本的 Nuclei/Trivy/ZAP 及其版本/许可证元数据；本地 `make engines` 不会下载 ZAP，只有运行 `make engines-zap` 才准备 ZAP。Linux arm64、amd64，macOS arm64、amd64 和 Windows amd64 均有包。当前锁定的引擎未提供 Windows arm64 资产，因此该架构不打包。漏洞库可通过独立的 `Build Offline Vulnerability Data` 工作流手动生成并下载，详见[离线漏洞库下载包](offline-vulnerability-data.md)。ZAP 需要目标机预装 Java 17 或更高版本。
 
 打开 `http://127.0.0.1:8080`，首次设置管理员。已完成安装时直接 `make dev`。默认规则目录 `vuln-data/`，输入目录 `runtime/inputs/`。漏洞库解压后较大，连同 Updater 下载缓存、Worker 私有缓存建议预留至少 6 GiB。`make engines` 需要互联网；已有程序和完整规则库时扫描不进行规则更新。
 
-`make engines` 的规则准备也可以单独运行：`dist/sec-updater --prepare-engines`。它只安装数据、切换 CURRENT，不创建扫描任务；运行中的任务仍使用创建时固定的规则版本。随后启动的 Updater 会把实际目录状态同步到网页。`make verify-flags` 检查已安装程序版本和实际帮助输出，不扫描任何目标。
+`make engines` 的规则准备也可以单独运行：`dist/sec-updater --prepare-engines`。它只安装数据、切换 CURRENT，不创建扫描任务；运行中的任务仍使用创建时固定的规则版本。随后启动的 Updater 会把实际目录状态同步到网页。`make verify-flags` 检查已安装程序版本和实际帮助输出，不扫描任何目标。Nuclei/Trivy 始终检查；未安装可选 ZAP 时打印 `SKIP` 并通过。需要强制检查 ZAP 时使用 `REQUIRE_ZAP=1 make verify-flags`。
 
 ## 验证 Web 服务
 
 1. 资产页登记你有权验证的服务器数字 IP 和明确端口；Nginx 四层转发端口填写“跳过端口”。不输入域名或 CIDR。
-2. 节点页查看引擎版本与就绪状态。Nuclei 还需要当前规则版本含 `nuclei/`；ZAP 使用随程序固定的被动规则。
+2. 节点页查看引擎版本与就绪状态。Nuclei 还需要当前规则版本含 `nuclei/`；只有安装 ZAP 后才会显示并使用其固定的被动规则。
 3. 任务页点击“创建任务”，选 Nuclei 或 ZAP、HTTP / HTTPS、已登记的 IP:端口。HTTPS 允许自签名证书；不发送登录凭据。
 4. 观察任务从待领取到执行中、已完成；发现项页查看引擎、目标、匹配路径和说明。失败任务可展开查看提示，细节在 `runtime/worker/scan-*/engine.log`；ZAP 另有私有启动日志。
 5. 可设置时间窗、定时运行或取消任务。Worker 轮询取消状态并终止子进程；到期中止，不把部分结果当完整成功。扫描无匹配时可完成且不制造发现项；连接失败、解析失败和引擎失败会显示失败。
