@@ -728,7 +728,7 @@
 
 ## 2026-10-21：ZAP 可选安装边界
 
-本地 SSH/Trivy/Nuclei 主链路不再要求安装 ZAP。`make engines` 现在只准备 Nuclei 与 Trivy；需要 ZAP 被动 HTTP 检查时显式运行 `make engines-zap`。`make verify-flags` 在缺少固定版本 ZAP JAR 时输出 `SKIP` 并继续核对 Nuclei/Trivy，`REQUIRE_ZAP=1 make verify-flags` 会在缺少 JAR 时失败。发布工作流仍保留三引擎制品检查，避免改变已发布包的兼容性。
+本地 SSH/Trivy/Nuclei 主链路不再要求安装 ZAP。`make engines` 现在只准备 Nuclei 与 Trivy；需要 ZAP 被动 HTTP 检查时显式运行 `make engines-zap`。`make verify-flags` 在缺少固定版本 ZAP JAR 时输出 `SKIP` 并继续核对 Nuclei/Trivy，`REQUIRE_ZAP=1 make verify-flags` 会在缺少 JAR 时失败。发布工作流默认只打包 Nuclei 与 Trivy，手动选择 `include_zap=true` 才会下载并打包 ZAP。
 
 证据：`python3 -m unittest scripts/test_verify_engine_flags.py`（2 项通过）、`python3 -m py_compile scripts/install_engines.py scripts/verify_engine_flags.py scripts/test_verify_engine_flags.py`、本机 `python3 scripts/verify_engine_flags.py`（Nuclei 23 项、Trivy 20 项通过，ZAP 明确跳过）；未执行任何扫描。
 
