@@ -28,3 +28,5 @@ make test-local
 默认运行数据在 `runtime/`，规则在 `vuln-data/`，构建在 `dist/` / `web/dist/`，均被 Git 忽略。不要提交真实内部 IP、资产、扫描结果和密钥。
 
 PostgreSQL 已提供显式 Server 运行时、迁移和核心任务/发现项/报告适配；默认 `make dev` 仍使用 SQLite，当前差距见 [运行说明](docs/runtime.md) 和 [产品现状](docs/product/current-state.md)。Linux 围栏的启动约定见 [Worker 围栏说明](docs/worker-fence.md)；跨平台打包和生产部署仍不属于本地验证。
+
+多节点部署材料可用 `make build` 后运行 `dist/sec-node-provision` 离线生成；它只生成 owner-only 私钥/令牌文件和非敏感路径清单，不自动传输、登记或启动节点。详细参数见 [运行说明](docs/runtime.md)。

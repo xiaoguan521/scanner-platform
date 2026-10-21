@@ -737,6 +737,12 @@
 - `Build & Release Artifacts` 工作流现在默认只安装并打包 SHA-256 固定的 Nuclei 与 Trivy；手动触发时显式设置 `include_zap=true` 才运行 ZAP 下载和制品校验，避免 SSH/Trivy/Nuclei 主链路无条件下载 ZAP。
 - 同步离线包说明；新增无网络工作流契约测试，确认核心引擎、ZAP opt-in、未启用时目录不存在和包路径唯一。
 
+## 2026-10-21：节点 TLS 与令牌离线 provisioning
+
+- 新增 `sec-node-provision`，仅使用本地 Go 标准库生成专用 ECDSA CA、数字 Server IP 的 TLS Server 证书、Worker/Updater 客户端证书、Server 节点令牌注册表和各节点 owner-only 单令牌文件；不连接网络、不打印私钥或令牌，输出目录已存在时拒绝覆盖，CA 私钥不会复制到节点材料目录。
+- 单元测试验证证书链、Server IP SAN、Server/Client EKU、令牌注册表一致性、私钥权限、CA 复用、路径嵌套和覆盖拒绝；CLI 仅输出非敏感路径与节点元数据。
+- 证据：`go test ./internal/provision ./cmd/node-provision`、`go run ./cmd/node-provision ...` 临时目录实跑通过。远程传输、节点自动登记、证书轮换和 Linux Compose 运行时验收仍未完成。
+
 ## 2026-10-21：节点生命周期首阶段与 PostgreSQL 迁移回归
 
 - 新增 PostgreSQL 迁移 `0017_node_lifecycle.sql`，SQLite 同步创建节点生命周期和事件表。管理员可登记/吊销明确的 Worker 或 Updater 节点；心跳将已登记节点置为 `ONLINE`，十秒无心跳后由 Server Tick 置为 `OFFLINE`，恢复时记录 `RECOVERED`，重复刷新不会重复生成事件；登记/吊销写入审计。
