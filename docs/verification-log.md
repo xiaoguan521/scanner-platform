@@ -1,5 +1,11 @@
 # Verification log
 
+## 2026-10-21：PostgreSQL 任务安全投影与 Worker 进度
+
+- 新增 PostgreSQL 迁移 `0008_task_projection.sql`，建立任务安全投影和 Worker advisory progress 表；新增 `PostgresTaskProjection`，从规范化队列读取状态、租约、目标块和归档时间，从投影读取其余页面字段，并在写入进度前校验当前运行 Worker。
+- 默认单测覆盖空连接、状态/ID/进度边界和进度回退；在隔离 PostgreSQL 夹具上运行 `POSTGRES_DSN_FILE="$PWD/runtime/postgres/dsn" go test -tags lab ./internal/repo -run 'TestPostgresTaskProjectionLab$' -count=1`，实际验证投影读取、领取后进度保存、回退拒绝和完成状态。
+- 该适配器仍不切换现有 SQLite Web 运行时；发现项、报告和 Server 启动选择仍待后续工作。
+
 ## 2026-10-21：PostgreSQL 核心任务队列适配器
 
 - 新增 `internal/repo/postgres_queue.go`，实现 Server 侧 `TaskStore`/`LeaseRegistry` 的 PostgreSQL 版本：任务和精确数字 IP:端口目标写入、`FOR UPDATE SKIP LOCKED` 单块领取、租约续期、完整/失败完成和按规则版本统计。

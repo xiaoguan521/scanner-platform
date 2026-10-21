@@ -30,7 +30,8 @@ BEGIN
         ('asset_profiles'), ('asset_services'), ('asset_login_entries'), ('asset_reachability'),
         ('product_settings'), ('vulnerability_knowledge'), ('task_finding_observations'),
         ('report_templates'), ('report_snapshots'), ('report_jobs'),
-        ('asset_business_groups'), ('asset_import_previews'), ('asset_import_history')
+        ('asset_business_groups'), ('asset_import_previews'), ('asset_import_history'),
+        ('scan_task_projections'), ('scan_task_progress')
       ) AS expected(name)
      WHERE to_regclass(format('public.%I', name)) IS NULL;
 
@@ -44,8 +45,8 @@ BEGIN
         RAISE EXCEPTION 'Missing scan_tasks.archived_at';
     END IF;
     IF (SELECT count(*) FROM public.schema_migrations
-         WHERE version IN ('0001_core','0002_scanning','0003_rules_sbom','0004_report_inventory','0005_task_archive','0006_task_pause','0007_asset_catalog')) <> 7 THEN
-        RAISE EXCEPTION 'Not all seven migrations have been recorded';
+         WHERE version IN ('0001_core','0002_scanning','0003_rules_sbom','0004_report_inventory','0005_task_archive','0006_task_pause','0007_asset_catalog','0008_task_projection')) <> 8 THEN
+        RAISE EXCEPTION 'Not all eight migrations have been recorded';
     END IF;
 END
 $$;
@@ -63,7 +64,8 @@ SELECT 'Verified table count' AS item, count(*)::text AS value
      'asset_profiles','asset_services','asset_login_entries','asset_reachability',
      'product_settings','vulnerability_knowledge','task_finding_observations',
      'report_templates','report_snapshots','report_jobs',
-     'asset_business_groups','asset_import_previews','asset_import_history'
+     'asset_business_groups','asset_import_previews','asset_import_history',
+     'scan_task_projections','scan_task_progress'
    );
 
 SELECT version, applied_at FROM public.schema_migrations ORDER BY version;
