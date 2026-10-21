@@ -100,6 +100,32 @@ func (s *RuntimeStore) SaveSystemSettings(ctx context.Context, settings SystemSe
 func defaultPolicy() ScanPolicy {
 	return ScanPolicy{CommonPorts: portprobe.CommonPorts(), Exclusions: []portprobe.Range{}, QuarantineThreshold: 2, DiscoveryAttempts: 3, FixedThreshold: 1}
 }
+
+func normalizeScanPolicy(p ScanPolicy) (ScanPolicy, error) {
+	if p.FixedThreshold == 0 {
+		// Keep older UI clients wire-compatible while never allowing a zero
+		// threshold to make every missing finding immediately fixed.
+		p.FixedThreshold = defaultPolicy().FixedThreshold
+	}
+	if len(p.CommonPorts) < 1 || len(p.CommonPorts) > 65535 || len(p.Exclusions) > 128 || p.DiscoveryAttempts < 1 || p.DiscoveryAttempts > 3 || p.QuarantineThreshold < 1 || p.QuarantineThreshold > 3 || p.FixedThreshold < 1 || p.FixedThreshold > 3 {
+		return p, fmt.Errorf("%w: 无效端口策略", ErrInvalidTask)
+	}
+	seen := map[int]bool{}
+	for _, v := range p.CommonPorts {
+		if v < 1 || v > 65535 || seen[v] {
+			return p, fmt.Errorf("%w: 常见端口必须为不重复的1–65535整数", ErrInvalidTask)
+		}
+		seen[v] = true
+	}
+	sort.Ints(p.CommonPorts)
+	for _, r := range p.Exclusions {
+		if r.Start < 1 || r.End > 65535 || r.Start > r.End {
+			return p, fmt.Errorf("%w: 无效排除端口范围", ErrInvalidTask)
+		}
+	}
+	return p, nil
+}
+
 func (s *RuntimeStore) initProduct(ctx context.Context) error {
 	for _, q := range []string{
 		`CREATE TABLE IF NOT EXISTS product_settings(id TEXT PRIMARY KEY,data TEXT NOT NULL)`,
@@ -156,26 +182,10 @@ func (s *RuntimeStore) GetScanPolicy(ctx context.Context) (ScanPolicy, error) {
 	return policyIn(ctx, s.db)
 }
 func (s *RuntimeStore) SaveScanPolicy(ctx context.Context, p ScanPolicy, actor string) (ScanPolicy, error) {
-	if p.FixedThreshold == 0 {
-		// Keep older UI clients wire-compatible while never allowing a zero
-		// threshold to make every missing finding immediately fixed.
-		p.FixedThreshold = defaultPolicy().FixedThreshold
-	}
-	if len(p.CommonPorts) < 1 || len(p.CommonPorts) > 65535 || len(p.Exclusions) > 128 || p.DiscoveryAttempts < 1 || p.DiscoveryAttempts > 3 || p.QuarantineThreshold < 1 || p.QuarantineThreshold > 3 || p.FixedThreshold < 1 || p.FixedThreshold > 3 {
-		return p, fmt.Errorf("%w: 无效端口策略", ErrInvalidTask)
-	}
-	seen := map[int]bool{}
-	for _, v := range p.CommonPorts {
-		if v < 1 || v > 65535 || seen[v] {
-			return p, fmt.Errorf("%w: 常见端口必须为不重复的1–65535整数", ErrInvalidTask)
-		}
-		seen[v] = true
-	}
-	sort.Ints(p.CommonPorts)
-	for _, r := range p.Exclusions {
-		if r.Start < 1 || r.End > 65535 || r.Start > r.End {
-			return p, fmt.Errorf("%w: 无效排除端口范围", ErrInvalidTask)
-		}
+	var err error
+	p, err = normalizeScanPolicy(p)
+	if err != nil {
+		return p, err
 	}
 	data, _ := json.Marshal(p)
 	tx, err := s.db.BeginTx(ctx, nil)

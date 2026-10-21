@@ -637,3 +637,11 @@
 - PostgreSQL RuntimeStore 已接入通知刷新、未读筛选、分页、已读标记、管理员设置、投递状态查询和有界异步投递；Webhook 继续默认关闭，仅允许既有安全校验接受的 HTTPS/回环地址，失败按次数和退避重试，服务重启会回收陈旧投递声明。
 - 隔离 PostgreSQL lab 测试使用文档保留地址段和本地 `httptest.Server`，实际验证授权到期摘要、失败任务摘要、已读状态、设置审计和 Webhook 投递均可用；未访问外部互联网。
 - 已执行 `POSTGRES_DSN_FILE=... make migrate-postgres` 应用 0013，并执行 `POSTGRES_DSN_FILE=... go test -tags=lab ./internal/repo`；完整 `make test`、`make lint`、`make build` 和 PostgreSQL 启动回归将在本提交收口后再次运行。
+
+## 2026-10-21：PostgreSQL 产品目录与管理面回归
+
+- 新增迁移 `0014_product_catalog.sql`，建立自定义规则和自定义扫描方案表；系统设置、扫描策略和漏洞知识库复用已有产品表，Server 不再为这些页面回退读取 SQLite。
+- PostgreSQL RuntimeStore 已接入系统设置、扫描策略、扫描方案、只读自定义规则、知识库、审计日志和端口隔离清册；创建任务时会冻结当前策略与启用的自定义只读模板，端口范围、排除项、强度和规则选择仍由 Server 重新校验。
+- 隔离 PostgreSQL lab 测试实际覆盖默认/保存/非法系统设置、策略归一化、规则编译与分页筛选、方案增改删与缺失规则拒绝、知识库保存/导入/删除和审计投影，并在结束后清理夹具记录。测试未访问外部互联网，未写入真实资产、密钥或扫描结果。
+- 已通过 `POSTGRES_DSN_FILE=... go test -count=1 -tags=lab ./internal/repo`、`POSTGRES_DSN_FILE=... make migrate-postgres`、PostgreSQL 41 张表/14 条迁移只读清点、`POSTGRES_DSN_FILE=... SCANNER_SKIP_BUILD=1 SCANNER_PORT=18083 make dev-postgres` 的 `/readyz` 检查，以及 `make test`、`make lint`、`make build` 和 `git diff --check`。
+- PostgreSQL 发现项处置扩展、mTLS/证书轮换、跨后端浏览器旅程、真实服务器/国产系统覆盖和性能/无障碍/国际化仍按路线图保留，不能据此宣称整体产品已经完成。

@@ -695,12 +695,19 @@ func (s *PostgresRuntimeStore) CreateLocalTask(ctx context.Context, in taskflow.
 	}
 
 	config := in.PortProbe
+	policy, err := s.GetScanPolicy(ctx)
+	if err != nil {
+		return taskflow.Task{}, fmt.Errorf("read postgres scan policy: %w", err)
+	}
 	if config.Preset == "" {
 		config.Preset = portprobe.PresetCommon
 	}
 	if len(config.CommonPorts) == 0 {
-		config.CommonPorts = portprobe.CommonPorts()
+		config.CommonPorts = append([]int(nil), policy.CommonPorts...)
 	}
+	config.Exclusions = append(append([]portprobe.Range(nil), policy.Exclusions...), config.Exclusions...)
+	config.IdentificationMaxAttempts = policy.DiscoveryAttempts
+	config.QuarantineThreshold = policy.QuarantineThreshold
 	config.RegisteredPorts, err = s.postgresRegisteredPorts(ctx, in.AssetID)
 	if err != nil {
 		return taskflow.Task{}, err
@@ -752,6 +759,10 @@ func (s *PostgresRuntimeStore) CreateLocalTask(ctx context.Context, in taskflow.
 			return taskflow.Task{}, err
 		}
 	}
+	customTemplates, err := s.postgresCustomTaskTemplates(ctx, in)
+	if err != nil {
+		return taskflow.Task{}, fmt.Errorf("load postgres custom scan rules: %w", err)
+	}
 	id := "task-" + randomLocalID()
 	chunkID := id + "-chunk"
 	input := in
@@ -760,11 +771,12 @@ func (s *PostgresRuntimeStore) CreateLocalTask(ctx context.Context, in taskflow.
 	input.PortProbe.RegisteredPorts = nil
 	task := taskflow.Task{
 		ID: id, ScopeID: scopeID, ScopeName: "单台资产自动端口与 HTTP 漏洞检查", Engines: []string{in.Engine},
-		Status: status, AssetID: in.AssetID, CreatedAt: now, FixedThreshold: defaultPolicy().FixedThreshold,
+		Status: status, AssetID: in.AssetID, CreatedAt: now, FixedThreshold: policy.FixedThreshold,
 		TargetCount: 1, TotalChunks: 1, RuleVersion: ruleVersion, TimeWindows: in.TimeWindows,
 		Chunks:              []taskflow.Chunk{{ID: chunkID, TaskID: id, Targets: []string{address}, Status: status, PinnedRuleVersion: ruleVersion}},
 		EffectiveExclusions: compactPostgresPortRanges(appendRanges(config.Exclusions, excluded)),
 		SkippedTargets:      skipped, PortProbeConfig: config, PortProbePorts: effective, AssetProfile: taskflow.Task{}.AssetProfile,
+		CustomTemplates: customTemplates, CustomRuleCount: len(customTemplates),
 	}
 	if in.Engine == "port-probe" {
 		task.ScopeName = "单台资产 TCP 端口探测"

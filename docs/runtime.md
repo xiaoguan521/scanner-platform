@@ -16,7 +16,7 @@ POSTGRES_DSN_FILE="$PWD/runtime/postgres/dsn" ./dist/sec-server \
 POSTGRES_DSN_FILE="$PWD/runtime/postgres/dsn" make dev-postgres
 ```
 
-`make dev-postgres` 让 Web、Worker、Updater 共用 PostgreSQL Server；页面的 `/readyz` 会返回 `mode: postgres`。当前 PostgreSQL 运行时已覆盖账号、资产、授权、任务队列/投影、Worker 租约与进度、发现项、报告、规则目录同步、规则作业队列、定时任务和平台内通知/安全摘要 Webhook 核心闭环。Worker 领取自动任务时仍按任务冻结版本和规则就绪状态检查；部分非核心系统管理端点仍会明确返回后端能力不可用，不能当作已实现。
+`make dev-postgres` 让 Web、Worker、Updater 共用 PostgreSQL Server；页面的 `/readyz` 会返回 `mode: postgres`。当前 PostgreSQL 运行时已覆盖账号、资产、授权、任务队列/投影、Worker 租约与进度、发现项、报告、规则目录同步、规则作业队列、定时任务、通知/安全摘要 Webhook、系统设置、扫描策略、扫描方案、自定义规则、知识库和审计/隔离清册核心闭环。Worker 领取自动任务时仍按任务冻结版本和规则就绪状态检查；发现项处置扩展、mTLS/证书轮换和部分非核心系统管理端点仍会明确返回后端能力不可用，不能当作已实现。
 
 ## 独立节点 HTTPS 通道
 
