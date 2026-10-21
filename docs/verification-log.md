@@ -1,10 +1,17 @@
 # Verification log
 
+## 2026-10-21：隔离靶机与 PostgreSQL 夹具实际启动
+
+- OrbStack 隔离靶机已重新构建并运行，SSH 与 HTTP 监听端口均完成本机连通性检查；靶机仅作为明确授权的扫描目标使用。
+- PostgreSQL 16.4 夹具已启动并通过 `pg_isready` 健康检查，DSN 保存在被 Git 忽略且 owner-only 的 `runtime/postgres/dsn` 中，密码未写入仓库或日志。
+- 在该隔离数据库上运行 `POSTGRES_DSN_FILE="$PWD/runtime/postgres/dsn" make migrate-postgres`，`0001_core` 至 `0006_task_pause` 六个迁移全部应用，并通过只读查询核对 `schema_migrations`。
+- 这次验证只证明靶机连通性和 PostgreSQL 迁移执行；平台业务运行时仍使用 SQLite，完整 PostgreSQL Repository、Server 启动选择和生产节点部署仍未完成。
+
 ## 2026-10-21：隔离 PostgreSQL 验证夹具
 
 - `lab/orbstack-target/compose-postgres.yaml` 新增独立 PostgreSQL 16.4 Bookworm 服务；端口仅绑定 `127.0.0.1:15432`，数据使用命名卷，健康检查使用 `pg_isready`，密码必须由环境变量提供，不提交凭据或卷数据。
 - `lab/orbstack-target/README.md` 补充启动、owner-only DSN 文件、`make migrate-postgres` 和清理命令。该夹具用于迁移/Repository 回归，不会自动创建业务用户、资产、规则或扫描结果。
-- 当前只完成 Compose 配置和启动说明；完整 PostgreSQL Repository 运行时仍未接入，因此不能把迁移成功等同于平台已切换 PostgreSQL。
+- 当前夹具已完成实际启动和健康检查；完整 PostgreSQL Repository 运行时仍未接入，因此不能把迁移成功等同于平台已切换 PostgreSQL。
 
 ## 2026-10-21：节点协议令牌认证基础
 
@@ -16,7 +23,7 @@
 
 - 新增 `internal/repo/postgres.go`，使用锁定版本 `pgx/v5`（MIT）注册 `database/sql` 驱动；迁移 SQL 嵌入 Server 二进制，按文件名验证顺序后执行。
 - `POSTGRES_DSN_FILE=/path/to/owner-only-dsn make migrate-postgres` 只读取 0600 普通文件，Ping 数据库后获取 advisory lock；公共 schema 非空但没有迁移 journal、journal 含未知版本或存在断档时 fail closed。命令只输出已执行/已存在的版本名，不创建数据库、不写入用户/资产/规则示例数据。
-- 新增迁移目录、DSN 保护和连接池配置单测；未连接任何 PostgreSQL 实例，未声称迁移 SQL、索引/外键或完整 Repository 适配已通过。当前产品运行时仍使用 SQLite，隔离 PostgreSQL 实例回归列为下一阶段验收。
+- 新增迁移目录、DSN 保护和连接池配置单测；随后在隔离 PostgreSQL 夹具上实际执行并核对六个迁移版本。当前产品运行时仍使用 SQLite，完整 PostgreSQL Repository、索引/外键业务回归和生产启动选择仍列为下一阶段验收。
 
 ## 2026-10-21：授权范围与端口审批清册服务端分页
 

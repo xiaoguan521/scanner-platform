@@ -42,7 +42,7 @@ unknown or gapped journal entries, and prints only the applied version names.
 It does not create a database, seed users/assets/rules, or switch the running
 SQLite Server to PostgreSQL.
 
-The runner refuses a non-empty public schema with no migration journal, applies versions in order, skips already-recorded versions and aborts on the first SQL error. It does **not** create the PostgreSQL database itself. To run manually, apply migrations `0001_core.sql` through `0006_task_pause.sql` in order. Run one migrator at a time. Never edit an applied migration: add a higher-numbered file. After applying, use the read-only inventory script `bash scripts/check-postgres-schema.sh` to check all 28 tables, the six recorded migrations, and the task archive column. PostgreSQL execution has not been performed in this change.
+The runner refuses a non-empty public schema with no migration journal, applies versions in order, skips already-recorded versions and aborts on the first SQL error. It does **not** create the PostgreSQL database itself. To run manually, apply migrations `0001_core.sql` through `0006_task_pause.sql` in order. Run one migrator at a time. Never edit an applied migration: add a higher-numbered file. After applying, use the read-only inventory script `bash scripts/check-postgres-schema.sh` to check all 28 tables, the six recorded migrations, and the task archive column. The six migrations were executed and journal-checked against the isolated PostgreSQL fixture on 2026-10-21; this does not mean that the product runtime has switched from SQLite or that the full PostgreSQL Repository is complete.
 
 ## Important schema differences and boundaries
 
