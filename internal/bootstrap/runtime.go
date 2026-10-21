@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -47,7 +48,9 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 	dbPath := flags.String("db", filepath.Join("runtime", "platform.db"), "SQLite database path")
 	uiDir := flags.String("ui-dir", filepath.Join("web", "dist"), "Built web UI directory")
 	reportDir := flags.String("report-dir", "", "Private generated report directory (defaults beside the SQLite database)")
-	flags.Bool("dev-ui", false, "Compatibility alias for the unified local Server")
+	postgresDSNFile := flags.String("postgres-dsn-file", "", "Owner-only file containing the PostgreSQL connection string (migration check only)")
+	migratePostgres := flags.Bool("migrate-postgres", false, "Apply embedded PostgreSQL migrations and exit")
+	devUI := flags.Bool("dev-ui", false, "Compatibility alias for the unified local Server")
 	status := flags.Bool("status", false, "Show local runtime capabilities")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -56,8 +59,45 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if *status {
+		if *migratePostgres || *postgresDSNFile != "" {
+			fmt.Fprintln(stderr, "--status cannot be combined with PostgreSQL migration flags")
+			return 2
+		}
 		fmt.Fprintln(stdout, `{"role":"sec-server","mode":"local","engines":["synthetic","nuclei","trivy","zap"]}`)
 		return 0
+	}
+	if *migratePostgres {
+		if *postgresDSNFile == "" || *devUI || *reportDir != "" || flags.NArg() != 0 {
+			fmt.Fprintln(stderr, "--migrate-postgres requires only --postgres-dsn-file")
+			return 2
+		}
+		dsn, err := repo.ReadPostgresDSNFile(*postgresDSNFile)
+		if err != nil {
+			fmt.Fprintln(stderr, "read PostgreSQL DSN file: invalid protected file")
+			return 2
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		db, err := repo.OpenPostgres(ctx, repo.PostgresConfig{DSN: dsn})
+		if err != nil {
+			fmt.Fprintf(stderr, "open PostgreSQL: %v\n", err)
+			return 1
+		}
+		defer db.Close()
+		report, err := repo.MigratePostgres(ctx, db)
+		if err != nil {
+			fmt.Fprintf(stderr, "migrate PostgreSQL: %v\n", err)
+			return 1
+		}
+		if err := json.NewEncoder(stdout).Encode(report); err != nil {
+			fmt.Fprintln(stderr, "write migration result:", err)
+			return 1
+		}
+		return 0
+	}
+	if *postgresDSNFile != "" {
+		fmt.Fprintln(stderr, "--postgres-dsn-file is only valid with --migrate-postgres")
+		return 2
 	}
 	if flags.NArg() != 0 || !isNumericLoopback(*addr) {
 		fmt.Fprintln(stderr, "provide flags only and use a numeric loopback listen address")

@@ -1,6 +1,6 @@
 # PostgreSQL database migrations
 
-These files implement the schema in [architecture-v3.2.md §7](../../../docs/architecture-v3.2.md), expanded to cover the already-written SQLite account, asset and approval modules. They target the **central Server**, not the portable SQLite build.
+These files implement the schema in [architecture-v3.2.md §7](../../../docs/architecture-v3.2.md), expanded to cover the already-written SQLite account, asset and approval modules. They target the **central Server**, not the portable SQLite build. The Go Server now embeds and can run these migrations from a protected DSN file; the product runtime still uses SQLite until the PostgreSQL Repository adapter is completed.
 
 ## Migration inventory
 
@@ -28,11 +28,29 @@ export PGUSER=scanner_migrator
 bash scripts/init-postgres.sh
 ```
 
+The same migration set can be applied through the built Server without relying
+on the checkout directory:
+
+```bash
+chmod 600 /path/to/scanner-platform-postgres.dsn
+POSTGRES_DSN_FILE=/path/to/scanner-platform-postgres.dsn make migrate-postgres
+```
+
+The command opens the DSN only from an owner-only regular file, acquires a
+PostgreSQL advisory lock, refuses a non-empty untracked public schema, rejects
+unknown or gapped journal entries, and prints only the applied version names.
+It does not create a database, seed users/assets/rules, or switch the running
+SQLite Server to PostgreSQL.
+
 The runner refuses a non-empty public schema with no migration journal, applies versions in order, skips already-recorded versions and aborts on the first SQL error. It does **not** create the PostgreSQL database itself. To run manually, apply migrations `0001_core.sql` through `0006_task_pause.sql` in order. Run one migrator at a time. Never edit an applied migration: add a higher-numbered file. After applying, use the read-only inventory script `bash scripts/check-postgres-schema.sh` to check all 28 tables, the six recorded migrations, and the task archive column. PostgreSQL execution has not been performed in this change.
 
 ## Important schema differences and boundaries
 
-- These are **PostgreSQL-only** DDL scripts; the Go application **still connects to SQLite**. PostgreSQL `pgx` adapters, migrations-on-startup and production connection settings are not implemented here.
+- These are **PostgreSQL-only** DDL scripts. The Go application now has the
+  protected connection and migration foundation (`internal/repo/postgres.go`),
+  but the product runtime still connects to SQLite; PostgreSQL Repository
+  adapters, dual-backend startup selection and production node deployment are
+  not implemented here.
 - IDs and serialized JSON remain `TEXT` for compatibility with the architecture's SQLite model. PostgreSQL event timestamps use `TIMESTAMPTZ`, while SQLite currently writes RFC3339 text. **Session expiry is an exception**: `user_sessions.expires_at` uses Unix seconds (`BIGINT`), matching the Go account store.
 - The runtime accepts explicitly selected **numeric host IPs**, not CIDRs or domain expansion. The selected port strategy authorizes bounded read-only discovery/checks on that target; per-port approval is no longer a gate. Legacy scope/port approvals remain administrative records, not Worker leases or firewall exceptions.
 - `authorized_scopes.isActive` is calculated from `status` and `expires_at`; it is not stored. `approved_by` uses an empty string while PENDING to match the current application.
@@ -40,4 +58,9 @@ The runner refuses a non-empty public schema with no migration journal, applies 
 - Inventory, service, login, policy, knowledge and report records in 0004 use TEXT JSON. Report snapshots are versioned; task observations are separate from current finding lifecycle rows. Existing PostgreSQL finding JSON is `evidence_json`, while RuntimeStore uses a `data` column: the baseline is not a drop-in runtime adapter. The SQLite RuntimeStore stores archive state in task details JSON; the PostgreSQL schema uses `scan_tasks.archived_at`.
 - Rule pinning and SBOM historical version fields have no cascading rule-version foreign key because GC and retention are explicit Server/Updater decisions.
 
-**Verification is deferred:** These drafts have not been executed against PostgreSQL, and their indexes, foreign keys, migration re-runs and PostgreSQL Repository compatibility have not been tested. Review on a disposable database before enabling in any environment; never apply them blindly to an existing populated database.
+**Verification is deferred:** The embedded runner and protected-file checks have
+  unit coverage, but these migrations have not yet been executed against a
+  disposable PostgreSQL instance. Indexes, foreign keys, migration re-runs and
+  PostgreSQL Repository compatibility still require isolated database
+  verification. Review on a disposable database before enabling in any
+  environment; never apply them blindly to an existing populated database.

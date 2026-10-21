@@ -6,7 +6,7 @@ ifeq ($(GOOS),windows)
 EXE_EXT := .exe
 endif
 
-.PHONY: build test lint verify-flags test-lab web-install web-dev web-build dev test-local test-browser engines engines-java test-engines-local
+.PHONY: build test lint verify-flags test-lab web-install web-dev web-build dev test-local test-browser engines engines-java test-engines-local migrate-postgres
 
 dev:
 	bash scripts/dev.sh
@@ -81,3 +81,7 @@ test-browser: build web-build
 
 test-engines-local: build web-build
 	LAB_ENV=isolated python3 scripts/test_engines_local.py
+
+migrate-postgres: build
+	@test -n "$${POSTGRES_DSN_FILE:-}" || { printf '%s\n' 'Set POSTGRES_DSN_FILE to an owner-only file containing the PostgreSQL DSN.' >&2; exit 2; }
+	./dist/sec-server --migrate-postgres --postgres-dsn-file "$${POSTGRES_DSN_FILE}"

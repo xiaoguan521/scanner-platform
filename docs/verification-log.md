@@ -1,5 +1,11 @@
 # Verification log
 
+## 2026-10-21：PostgreSQL 连接与迁移执行基础
+
+- 新增 `internal/repo/postgres.go`，使用锁定版本 `pgx/v5`（MIT）注册 `database/sql` 驱动；迁移 SQL 嵌入 Server 二进制，按文件名验证顺序后执行。
+- `POSTGRES_DSN_FILE=/path/to/owner-only-dsn make migrate-postgres` 只读取 0600 普通文件，Ping 数据库后获取 advisory lock；公共 schema 非空但没有迁移 journal、journal 含未知版本或存在断档时 fail closed。命令只输出已执行/已存在的版本名，不创建数据库、不写入用户/资产/规则示例数据。
+- 新增迁移目录、DSN 保护和连接池配置单测；未连接任何 PostgreSQL 实例，未声称迁移 SQL、索引/外键或完整 Repository 适配已通过。当前产品运行时仍使用 SQLite，隔离 PostgreSQL 实例回归列为下一阶段验收。
+
 ## 2026-10-21：授权范围与端口审批清册服务端分页
 
 - `/api/v1/scopes` 和 `/api/v1/port-requests` 无查询参数时保留兼容清单；带分页参数时分别支持期限筛选、状态筛选和资产地址/ID 搜索。范围页额外返回全量七天内到期与已过期计数，页面不再用当前页数据推断全局提醒。
