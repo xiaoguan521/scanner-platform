@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
-import { Alert, Button, Card, Form, Input, message, Modal, Select, Space, Table, Tag, Typography } from 'antd';
+import { DataTable } from '../../components/DataState';
+import { Alert, Button, Card, Form, Input, message, Modal, Select, Space, Tag, Typography } from 'antd';
 import { PlusOutlined } from '@ant-design/icons';
 import { apiClient } from '../../api/client';
 import { useCollection } from '../../api/hooks';
@@ -159,7 +160,7 @@ export const ScopesPage: React.FC = () => {
           onClick={() => setRequestOpen(true)}>申请范围授权</Button>
       </Space>
     }>
-      <Table<AuthorizedScope> dataSource={visibleScopes} rowKey="id" loading={loading}
+      <DataTable<AuthorizedScope> dataSource={visibleScopes} rowKey="id" loading={loading}
         scroll={{ x: 1200 }} pagination={{ pageSize: 10 }}
         columns={[
           { title: '目标 IP', dataIndex: 'cidrOrHost', render: (v: string) => <Tag>{v}</Tag> },
@@ -193,7 +194,7 @@ export const ScopesPage: React.FC = () => {
         ]} />
     </Card>
     <Card title="资产端口申请审批" extra={<Text type="secondary">已标记跳过的端口不会派发</Text>}>
-      <Table<PortRequest> dataSource={ports} loading={portsLoading} pagination={{pageSize:10}}
+      <DataTable<PortRequest> dataSource={ports} loading={portsLoading} pagination={{pageSize:10}}
         rowKey={p => p.assetId + ':' + p.port} scroll={{x:1050}}
         columns={[
           {title:'资产地址',dataIndex:'address'},

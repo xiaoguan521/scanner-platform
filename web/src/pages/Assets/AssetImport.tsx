@@ -1,5 +1,6 @@
 import React, {useState} from 'react';
-import {Alert, Button, Checkbox, message, Modal, Space, Table, Typography} from 'antd';
+import { DataTable } from '../../components/DataState';
+import {Alert, Button, Checkbox, message, Modal, Space, Typography} from 'antd';
 import {apiClient} from '../../api/client';
 import {assertImportFile,canConfirmImport} from './import';
 import type {AssetImportPreview,AssetImportRow} from './import';
@@ -40,7 +41,7 @@ export const AssetImport:React.FC<{disabled:boolean;onImported:()=>Promise<void>
         {error&&<Alert type="error" showIcon message={error}/>}
         {preview&&<>
           <Typography.Text>共 {preview.total} 行，可导入 {preview.valid} 行，错误 {preview.invalid} 行。{preview.expiresAt?`预览有效至 ${new Date(preview.expiresAt).toLocaleTimeString()}，新预览会替换旧预览。`:''}</Typography.Text>
-          <Table<AssetImportRow> size="small" rowKey="row" dataSource={preview.rows} pagination={{pageSize:10}} scroll={{x:850}} columns={[
+          <DataTable<AssetImportRow> size="small" rowKey="row" dataSource={preview.rows} pagination={{pageSize:10}} scroll={{x:850}} columns={[
             {title:'行',dataIndex:'row',width:55},{title:'类型',dataIndex:'kind',width:100},{title:'地址',dataIndex:'address',ellipsis:true},{title:'业务组',dataIndex:'businessGroup',ellipsis:true},{title:'负责人',dataIndex:'owner',ellipsis:true},{title:'名称',dataIndex:'name',ellipsis:true},{title:'校验结果',dataIndex:'reason',render:(reason:string)=>reason||'可导入'},
           ]}/>
           <Checkbox checked={accepted} disabled={preview.invalid>0||busy} onChange={e=>setAccepted(e.target.checked)}>我已核对以上资产，确认整批导入台账</Checkbox>

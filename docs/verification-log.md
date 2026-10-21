@@ -18,6 +18,12 @@
 
 - 本节早期记录的演示种子已由上方“移除演示种子与浏览器 mock 通道”批次替代；仓库当前不再提供 `make seed-demo`、`cmd/seed-demo` 或 `VITE_DATA_MODE`。
 
+## 2026-10-21：共享状态与表格组件
+
+- 新增 `web/src/components/DataState.tsx`，集中提供 `LoadingState`、`ErrorState`、`EmptyState` 和 `DataTable`。`CollectionNotice` 统一使用加载/错误状态，资产、扫描、漏洞、报告、节点、授权、用户、审计、知识库和总览列表统一使用 `DataTable`。
+- `DataTable` 默认提供可访问的空状态和稳定的空结果语义；页面仍可通过 `locale.emptyText` 提供领域化说明，不改变现有筛选、分页或权限行为。
+- 新增 `DataState.test.mjs` 契约测试；共享组件批次通过 21 项前端测试和生产构建。真实浏览器的键盘导航、窄屏表格和 5 次点击核心旅程仍列入下一批验收。
+
 ## 2026-10-20：单项接受风险、到期与状态事件
 
 - 新增 finding_events SQLite 表及按发现项/时间索引；PATCH 接收状态、原因、到期，GET `/api/v1/findings/{id}/events` 返回时间线。Server 角色/CSRF 沿用现有写权限，非写角色只能查看。

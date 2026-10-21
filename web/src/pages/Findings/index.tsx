@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { DataTable } from '../../components/DataState';
 import { useSearchParams } from 'react-router-dom';
 import {
   Card,
@@ -275,7 +276,7 @@ export const FindingsPage: React.FC = () => {
           <Button disabled={!batchSelection.length||batchSaving} onClick={()=>setBatchSelection([])}>清空选择</Button>
           {batchSelection.length>0&&!batchAllowed&&<Text type="warning">{selectionChanged?'已选记录状态已变化，请清空后重新选择':'选中记录包含不允许的状态流转，请调整选择或目标状态'}</Text>}
         </Space>
-        <Table
+        <DataTable
           dataSource={filteredFindings}
           rowKey="id"
           rowSelection={{

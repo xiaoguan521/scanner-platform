@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Card, Checkbox, Descriptions, Drawer, Form, Input, InputNumber, message, Modal, Progress, Select, Space, Spin, Steps, Table, Tag, Typography } from 'antd';
+import { DataTable } from '../../components/DataState';
+import { Alert, Button, Card, Checkbox, Descriptions, Drawer, Form, Input, InputNumber, message, Modal, Progress, Select, Space, Spin, Steps, Tag, Typography } from 'antd';
 import { DownloadOutlined, PlusOutlined } from '@ant-design/icons';
 import { useCollection } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
@@ -196,7 +197,7 @@ export const TasksPage:React.FC=()=>{
         <Button onClick={()=>setShowArchived(value=>!value)}>{showArchived?'返回任务清册':'查看归档'}</Button>
         <Tag>{showArchived?'归档任务':'未归档任务'} {tasks.length}</Tag><Tag color="processing">执行中 {tasks.filter(task=>task.status==='RUNNING').length}</Tag><Tag color="gold">待执行 {tasks.filter(task=>['PENDING','WAITING_WINDOW','PAUSED_WINDOW'].includes(task.status)).length}</Tag><Tag color="default">已暂停 {tasks.filter(task=>task.status==='PAUSED').length}</Tag><Tag color="success">已完成 {tasks.filter(task=>task.status==='COMPLETED').length}</Tag>
       </Space>
-      <Table<ScanTask> dataSource={filteredTasks} rowKey="id" loading={loading} tableLayout="fixed" scroll={{x:1420}} locale={{emptyText:taskFilter||statusFilter!=='all'||engineFilter!=='all'?'没有符合筛选条件的任务':showArchived?'暂无归档任务':'暂无任务，请从右上角创建扫描任务或定时任务'}} pagination={{pageSize:10,showSizeChanger:true,pageSizeOptions:[10,20,50],showTotal:total=>`共 ${total} 个任务`}}
+      <DataTable<ScanTask> dataSource={filteredTasks} rowKey="id" loading={loading} tableLayout="fixed" scroll={{x:1420}} locale={{emptyText:taskFilter||statusFilter!=='all'||engineFilter!=='all'?'没有符合筛选条件的任务':showArchived?'暂无归档任务':'暂无任务，请从右上角创建扫描任务或定时任务'}} pagination={{pageSize:10,showSizeChanger:true,pageSizeOptions:[10,20,50],showTotal:total=>`共 ${total} 个任务`}}
         expandable={{expandedRowRender:t=><Space direction="vertical"><Typography.Text>下发目标：{(()=>{const all=t.chunks?.flatMap(c=>c.targets)??[];return all.length>20?`${all.slice(0,20).join('、')} ……（共 ${all.length} 个）`:all.join('、')||'无';})()}</Typography.Text>{(t.engines?.[0]==='port-probe'||t.engines?.[0]==='auto')&&<><Typography.Text>探测配置：{presetLabels[t.portProbeConfig?.preset??'common']}；范围 {showRanges(t.portProbeConfig?.ranges)}；任务排除 {showRanges(t.portProbeConfig?.exclusions)}；合并排除 {showRanges(t.effectiveExclusions??t.portProbeConfig?.exclusions)}；隔离端口 {summarizePorts(t.quarantinedPorts)}；强度 {({gentle:'温和',standard:'标准',aggressive:'积极'})[t.portProbeConfig?.intensity??'gentle']}</Typography.Text><Typography.Text>实际探测：{t.portProbePorts?.length??0} 个 TCP 端口；发现开放候选：{t.portProbeResults?.length??0} 个{t.portProbeResults?.length?`（${t.portProbeResults.slice(0,20).map(p=>p.port).join(', ')}${t.portProbeResults.length>20?' …':''}）`:''}</Typography.Text>{t.engines[0]==='auto'&&<><Typography.Text>HTTP(S) 服务：{t.serviceResults?.filter(item=>item.kind==='HTTP').length??0} 个；自定义规则：{t.customRuleCount??0} 条</Typography.Text><Typography.Text>Linux 系统包：{t.systemScanStatus??'等待 Worker 回报'}</Typography.Text><ApplicationCoverage task={t}/><Typography.Text type="secondary">开放端口候选仅用于这次明确授权的范围，不会自动登记成长期授权端口。</Typography.Text></>}</>}{t.inputKind&&<Typography.Text>离线输入：{t.inputKind==='rootfs'?'Linux 系统包':t.inputKind==='image-archive'?'Docker / OCI 镜像':t.inputKind==='artifact'?'已部署 JAR / Go 文件':'应用依赖清单'} · {t.inputPath}</Typography.Text>}<Typography.Text>跳过目标：{t.skippedTargets?.join('、')||'无'}</Typography.Text><Typography.Text>规则版本：{t.ruleVersion||'无需外部规则包'}</Typography.Text>{t.error&&<Alert type="error" message={t.error}/>}</Space>}}
         columns={[
           {title:'任务 ID',dataIndex:'id',width:230,ellipsis:true},
@@ -222,7 +223,7 @@ export const TasksPage:React.FC=()=>{
         </Descriptions>
         <Card size="small" title="执行进度">{renderProgress(detailTask)}</Card>
         <Card size="small" title="目标级状态">
-          <Table<ScanTask['chunks'][number]> size="small" rowKey="id" pagination={false} dataSource={detailTask.chunks??[]} columns={[
+          <DataTable<ScanTask['chunks'][number]> size="small" rowKey="id" pagination={false} dataSource={detailTask.chunks??[]} columns={[
             {title:'目标',dataIndex:'targets',render:(targets:string[])=>targets?.join('、')||'—'},
             {title:'状态',dataIndex:'status',width:120,render:(value:string)=>names[value]??value},
             {title:'Worker',dataIndex:'workerNodeId',render:(value:string)=>value||'尚未领取'},
@@ -238,7 +239,7 @@ export const TasksPage:React.FC=()=>{
           {detailTask.error&&<Alert type="error" showIcon message={detailTask.error} style={{marginTop:12}}/>}
         </Card>
         <Card size="small" title="只读任务日志" extra={<Typography.Text type="secondary">不显示原始引擎输出、凭据或请求响应</Typography.Text>}>
-          <Table<TaskLog> size="small" rowKey="id" loading={detailLoading} dataSource={detailLogs} pagination={{pageSize:8,hideOnSinglePage:true}} locale={{emptyText:'暂无任务日志'}} columns={[
+          <DataTable<TaskLog> size="small" rowKey="id" loading={detailLoading} dataSource={detailLogs} pagination={{pageSize:8,hideOnSinglePage:true}} locale={{emptyText:'暂无任务日志'}} columns={[
             {title:'时间',dataIndex:'createdAt',width:190,render:(value:string)=>new Date(value).toLocaleString()},
             {title:'事件',dataIndex:'message'},
             {title:'操作者',dataIndex:'actor',width:150},
@@ -255,7 +256,7 @@ export const TasksPage:React.FC=()=>{
       </Space>}
     </Drawer>
     <Card title="定时任务" extra={<Typography.Text type="secondary">间隔 0 表示仅运行一次；错过的重复任务不会集中补跑</Typography.Text>}>
-      <Table<Schedule> dataSource={schedules} rowKey="id" loading={scheduleLoading} tableLayout="fixed" scroll={{x:1050}} locale={{emptyText:'暂无定时任务。创建时填写首次运行时间；间隔 0 表示只运行一次。'}} columns={[
+      <DataTable<Schedule> dataSource={schedules} rowKey="id" loading={scheduleLoading} tableLayout="fixed" scroll={{x:1050}} locale={{emptyText:'暂无定时任务。创建时填写首次运行时间；间隔 0 表示只运行一次。'}} columns={[
         {title:'名称',dataIndex:'name'},
         {title:'下一次运行',dataIndex:'nextRun',render:(v:string)=>new Date(v).toLocaleString()},
         {title:'重复间隔',dataIndex:'intervalMinutes',render:(v:number)=>v?`${v} 分钟`:'仅一次'},
@@ -336,7 +337,7 @@ export const TasksPage:React.FC=()=>{
     </Modal>
     <Modal title={`定时任务历史运行${historySchedule?`：${historySchedule.name}`:''}`} open={Boolean(historySchedule)} onCancel={()=>setHistorySchedule(null)} footer={<Button onClick={()=>setHistorySchedule(null)}>关闭</Button>} width={780}>
       {scheduleRunError&&<Alert type="error" showIcon message="历史运行记录加载失败" description={scheduleRunError}/>}
-      <Table<ScheduleRun> rowKey="id" loading={scheduleRunLoading} dataSource={scheduleRuns} locale={{emptyText:'暂无运行记录'}} pagination={{current:scheduleRunPage,pageSize:50,total:scheduleRunTotal,hideOnSinglePage:true,showSizeChanger:false,onChange:page=>setScheduleRunPage(page)}} columns={[
+      <DataTable<ScheduleRun> rowKey="id" loading={scheduleRunLoading} dataSource={scheduleRuns} locale={{emptyText:'暂无运行记录'}} pagination={{current:scheduleRunPage,pageSize:50,total:scheduleRunTotal,hideOnSinglePage:true,showSizeChanger:false,onChange:page=>setScheduleRunPage(page)}} columns={[
         {title:'触发时间',dataIndex:'triggeredAt',width:190,render:(value:string)=>new Date(value).toLocaleString()},
         {title:'状态',dataIndex:'status',width:150,render:(value:string)=><Tag color={value==='COMPLETED'?'success':value==='FAILED'?'error':value==='RUNNING'?'processing':'default'}>{scheduleRunNames[value]??value}</Tag>},
         {title:'任务 ID',dataIndex:'taskId',width:240,ellipsis:true,render:(value:string)=>value||'—'},

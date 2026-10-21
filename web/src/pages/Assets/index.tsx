@@ -1,6 +1,7 @@
 import { AssetImport } from './AssetImport';
 import React, { useMemo, useState } from 'react';
-import { Alert, Button, Card, Form, Input, message, Modal, Select, Space, Table, Tag, Typography, Drawer, Descriptions, Checkbox, Row, Col } from 'antd';
+import { DataTable } from '../../components/DataState';
+import { Alert, Button, Card, Form, Input, message, Modal, Select, Space, Tag, Typography, Drawer, Descriptions, Checkbox, Row, Col } from 'antd';
 import type { FormInstance } from 'antd';
 import { DownloadOutlined, PlusOutlined } from '@ant-design/icons';
 import type { Asset, AssetProfile, ScanTask } from '../../types';
@@ -188,7 +189,7 @@ export const AssetsPage: React.FC = () => {
     <Alert type="info" showIcon message="资产可达性" description="新增或编辑表单可测试当前填写的数字 IP，不保存测试结果。Server 启动后立即探测清册中的主机，此后每轮完成后间隔 60 秒继续；清册每 10 秒自动刷新。无响应不等于主机离线，也不会跳过 TCP 探测。" />
 
     {quarantines.some(q=>q.status==='ACTIVE') && <Card title="疑似四层转发隔离区">
-      <Table rowKey={q=>q.assetId+'-'+q.port} dataSource={quarantines.filter(q=>q.status==='ACTIVE')} size="small" pagination={false}
+      <DataTable rowKey={q=>q.assetId+'-'+q.port} dataSource={quarantines.filter(q=>q.status==='ACTIVE')} size="small" pagination={false}
         columns={[
           {title:'地址',dataIndex:'address'},{title:'端口',dataIndex:'port'},{title:'原因',dataIndex:'reason'},
           {title:'操作',render:(_:unknown,q:typeof quarantines[number])=><Button type="link" disabled={user?.role!=='admin'}
@@ -201,7 +202,7 @@ export const AssetsPage: React.FC = () => {
       <AssetImport disabled={!canEdit} onImported={async()=>{const result=await apiClient.collection('assets');setAssets(result.items);}}/>
       <Button type="primary" icon={<PlusOutlined/>} disabled={!canEdit} onClick={()=>setCreateOpen(true)}>登记资产</Button>
     </Space>}>
-      <Table<Asset> rowKey="id" dataSource={rows} loading={loading||taskLoading} tableLayout="fixed" scroll={{x:1600}} pagination={{pageSize:10}}
+      <DataTable<Asset> rowKey="id" dataSource={rows} loading={loading||taskLoading} tableLayout="fixed" scroll={{x:1600}} pagination={{pageSize:10}}
         columns={[
           {title:'资产地址',dataIndex:'address',width:150,ellipsis:true,render:(value:string,asset:Asset)=><Space direction="vertical" size={0}><Button type="link" style={{padding:0}} onClick={()=>setDetailId(asset.id)}>{value}</Button><Text type="secondary">{asset.name||'未命名'}{asset.isCore?' · 核心':''}</Text></Space>},
           {title:'类型',dataIndex:'kind',width:86,render:(v:string)=><Tag>{v==='host'?'主机':'镜像仓库'}</Tag>},
@@ -241,14 +242,14 @@ export const AssetsPage: React.FC = () => {
       {detailAsset&&<Space direction="vertical" size={20} style={{width:'100%'}}>
         <Descriptions bordered size="small" column={2} items={[{key:'address',label:'地址',children:detailAsset.address},{key:'core',label:'核心资产',children:boolLabel(detailAsset.isCore)},...profileFields.map(f=>({key:f.key,label:f.label,children:String(detailAsset[f.key]||'未提供')})),{key:'business',label:'业务组',children:detailAsset.businessGroup},{key:'owner',label:'责任人',children:detailAsset.owner},{key:'reachability',label:'可达性',children:detailAsset.reachabilityStatus==='REACHABLE'?'Ping 可达':detailAsset.reachabilityStatus==='NO_RESPONSE'?'未收到 Ping 响应（可能被屏蔽，不代表离线）':detailAsset.reachabilityStatus==='CHECK_FAILED'?'检测不可用':'尚未检测'}]}/>
         <Card title="资产排除与隔离" size="small"><Space wrap><Tag color="orange">排除：{summarizePorts(detailAsset.skippedPorts)}</Tag><Tag color="red">隔离：{summarizePorts(detailAsset.quarantinedPorts)}</Tag><Button size="small" disabled={!canEdit} onClick={()=>{editForm.setFieldsValue({...profileInput(detailAsset),...detailAsset,requestedPorts:detailAsset.requestedPorts?.join(', ')??'',skippedPorts:compressPorts(detailAsset.skippedPorts)});setEditing(detailAsset);}}>编辑排除端口</Button></Space><Typography.Paragraph type="secondary" style={{marginTop:10,marginBottom:0}}>系统、资产与任务排除取并集；解除隔离不会撤销排除或授予漏洞扫描权限。</Typography.Paragraph></Card>
-        <Card title="服务与技术栈" size="small"><Table dataSource={detailAsset.services??[]} rowKey={r=>`${r.port}-${r.protocol??'tcp'}`} size="small" scroll={{x:1100}} columns={[
+        <Card title="服务与技术栈" size="small"><DataTable dataSource={detailAsset.services??[]} rowKey={r=>`${r.port}-${r.protocol??'tcp'}`} size="small" scroll={{x:1100}} columns={[
           {title:'端口 / 协议',width:110,render:(_,r)=>`${r.port} / ${r.protocol||'TCP'}`},{title:'服务 / 状态',width:160,render:(_,r)=><Space direction="vertical" size={0}><Text>{r.serviceName||r.kind||'未知'} · {r.state||'未知'}</Text>{r.excluded&&<Tag color="orange">已排除</Tag>}{r.quarantined&&<Tag color="red">已隔离</Tag>}</Space>},
           {title:'软件 / 版本',width:150,render:(_,r)=>[r.software,r.version].filter(Boolean).join(' ')||'未识别'},
           {title:'技术栈',width:220,render:(_,r)=>[r.middleware,r.language,r.framework,r.database,r.application].filter(Boolean).join(' / ')||'未识别'},
           {title:'网站',width:230,render:(_,r)=><Space direction="vertical" size={0}><Text style={{wordBreak:'break-all'}}>{r.url||'—'}</Text><Text type="secondary">{r.title||'无标题'} · TLS {boolLabel(r.tls)}</Text></Space>},
           {title:'最近发现',width:160,dataIndex:'lastSeen',render:(v:string)=>v?new Date(v).toLocaleString():'未知'},
         ]}/></Card>
-        <Card title="登录入口（单独统计）" size="small"><Table dataSource={detailAsset.loginEntries??[]} rowKey={r=>`${r.type}-${r.port}-${r.url??r.name}`} size="small" scroll={{x:750}} columns={[
+        <Card title="登录入口（单独统计）" size="small"><DataTable dataSource={detailAsset.loginEntries??[]} rowKey={r=>`${r.type}-${r.port}-${r.url??r.name}`} size="small" scroll={{x:750}} columns={[
           {title:'名称 / 类型',render:(_,r)=>`${r.name} · ${r.type==='web'?'Web':'系统'}`},{title:'端口',dataIndex:'port'}, {title:'URL',dataIndex:'url',render:(v:string)=>v||'—'},
           {title:'安全属性',render:(_,r)=><Space direction="vertical" size={0}><Text>HTTPS：{boolLabel(r.https)}</Text><Text>验证码：{boolLabel(r.captcha)}</Text><Text>防爆破：{boolLabel(r.antiBruteForce)}</Text></Space>}, {title:'举证',dataIndex:'evidence'},
         ]}/><Alert style={{marginTop:12}} showIcon type="info" message="弱口令：本次未启用该检测项。发现登录入口不代表存在弱口令。"/></Card>
@@ -291,7 +292,7 @@ export const AssetsPage: React.FC = () => {
       footer={<Space style={{width:'100%',justifyContent:'space-between'}}><Text type="secondary">已选 {selectedCandidatePorts.length} 个 · 每次最多申请 1024 个</Text><Space><Button onClick={()=>{setCandidateAsset(null);setSelectedCandidatePorts([]);setCandidateFilter('');}}>关闭</Button><Button type="primary" disabled={!canEdit||selectedCandidatePorts.length===0} loading={requestingCandidates} onClick={()=>void requestSelectedCandidates()}>申请选中端口</Button></Space></Space>}>
       <Alert type="info" showIcon style={{marginBottom:12}} message={`本次探测发现 ${candidateRows.length} 个开放候选。开放结果只是候选；所选端口会逐个提交给运维审批。`} />
       <Input.Search allowClear placeholder="按端口号筛选" value={candidateFilter} onChange={event=>setCandidateFilter(event.target.value)} style={{marginBottom:12,maxWidth:280}}/>
-      <Table<CandidateRow> rowKey="port" size="small" dataSource={filteredCandidateRows} pagination={{pageSize:25,showSizeChanger:true,pageSizeOptions:[25,50,100],showTotal:(total)=>`共 ${total} 个候选`}} scroll={{y:420}}
+      <DataTable<CandidateRow> rowKey="port" size="small" dataSource={filteredCandidateRows} pagination={{pageSize:25,showSizeChanger:true,pageSizeOptions:[25,50,100],showTotal:(total)=>`共 ${total} 个候选`}} scroll={{y:420}}
         rowSelection={{selectedRowKeys:selectedCandidatePorts,preserveSelectedRowKeys:true,getCheckboxProps:row=>({disabled:!row.requestable||!canEdit}),onChange:keys=>{
           if(keys.length>1024){message.warning('一次最多选择 1024 个端口申请');setSelectedCandidatePorts(keys.slice(0,1024));return;}
           setSelectedCandidatePorts(keys);

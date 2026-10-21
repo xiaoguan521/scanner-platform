@@ -1,5 +1,6 @@
 import React, { useRef, useState } from 'react';
-import { Alert, Button, Card, Col, Descriptions, Drawer, Form, Input, InputNumber, message, Modal, Row, Select, Space, Table, Tag, Typography } from 'antd';
+import { DataTable } from '../../components/DataState';
+import { Alert, Button, Card, Col, Descriptions, Drawer, Form, Input, InputNumber, message, Modal, Row, Select, Space, Tag, Typography } from 'antd';
 import { PlusOutlined, UploadOutlined } from '@ant-design/icons';
 import { useCollection } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
@@ -42,7 +43,7 @@ export const KnowledgePage:React.FC=()=>{
     <Alert showIcon type="info" message="漏洞知识库与中文修复建议" description="支持本地 JSON 导入和自建中文内容。条目用于组件版本匹配与发现项内容补全；版本匹配结果标注为版本推断。CNNVD、CNVD 等数据源尚未接入，可人工填写外部编号。"/>
     <Card title="漏洞知识库" extra={<Space wrap><input ref={fileRef} type="file" accept=".json,application/json" style={{display:'none'}} onChange={e=>void importFile(e.target.files?.[0])}/><Button icon={<UploadOutlined/>} disabled={!canWrite} loading={busy} onClick={()=>fileRef.current?.click()}>导入本地 JSON</Button><Button type="primary" icon={<PlusOutlined/>} disabled={!canWrite} onClick={()=>edit()}>新增条目</Button></Space>}>
       <Input.Search aria-label="搜索知识条目" value={query} onChange={e=>setQuery(e.target.value)} allowClear placeholder="搜索平台编号、标题、组件或外部编号" style={{maxWidth:480,marginBottom:16}}/>
-      <Table<KnowledgeEntry> rowKey="id" dataSource={filtered} loading={loading} scroll={{x:1100}} pagination={{pageSize:15,showSizeChanger:true,showTotal:n=>`共 ${n} 条`}} columns={[
+      <DataTable<KnowledgeEntry> rowKey="id" dataSource={filtered} loading={loading} scroll={{x:1100}} pagination={{pageSize:15,showSizeChanger:true,showTotal:n=>`共 ${n} 条`}} columns={[
         {title:'平台编号',dataIndex:'id',width:170},{title:'中文标题',dataIndex:'title',render:(v:string,r)=><Button type="link" style={{padding:0,whiteSpace:'normal',textAlign:'left'}} onClick={()=>setDetail(r)}>{v}</Button>},
         {title:'组件',dataIndex:'component',width:150},{title:'CVSS',dataIndex:'cvssScore',width:85,render:(v:number|undefined)=>v??'未提供'}, {title:'分类',dataIndex:'category',width:140},
         {title:'内容',dataIndex:'language',width:125,render:(v:string)=><Tag color={v==='zh-CN'?'green':'orange'}>{v==='zh-CN'?'中文':'原文待中文化'}</Tag>},

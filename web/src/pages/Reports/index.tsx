@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Card, Checkbox, DatePicker, Drawer, Dropdown, Empty, Form, Input, message, Progress, Select, Space, Table, Tag, Typography, Upload } from 'antd';
+import { DataTable } from '../../components/DataState';
+import { Alert, Button, Card, Checkbox, DatePicker, Drawer, Dropdown, Empty, Form, Input, message, Progress, Select, Space, Tag, Typography, Upload } from 'antd';
 import type { Dayjs } from 'dayjs';
 import { DownloadOutlined, FileTextOutlined, SettingOutlined, UploadOutlined } from '@ant-design/icons';
 import { useCollection } from '../../api/hooks';
@@ -101,7 +102,7 @@ export const ReportsPage: React.FC = () => {
       <Typography.Paragraph type="secondary" style={{ marginTop: 14, marginBottom: 0 }}>任务范围使用该任务的历史观察记录；失败、取消或尚未完成的任务会保留状态说明。未知字段显示“未采集”或“未知”。</Typography.Paragraph>
     </Card>
     <Card title="报告历史" extra={<Button onClick={() => void reload()}>刷新</Button>}>
-      <Table<ReportJob> rowKey="id" dataSource={jobs} scroll={{ x: 1300 }} pagination={{ pageSize: 10 }} locale={{ emptyText: <Empty description="暂无报告，选择范围后生成" /> }} columns={[
+      <DataTable<ReportJob> rowKey="id" dataSource={jobs} scroll={{ x: 1300 }} pagination={{ pageSize: 10 }} locale={{ emptyText: <Empty description="暂无报告，选择范围后生成" /> }} columns={[
         { title: '报告名称', dataIndex: 'name', width: 330, ellipsis: true, render: (value: string, job) => <span title={`${value}\n快照 ${job.snapshotId}`}>{value}</span> },
         { title: '格式', dataIndex: 'format', width: 85, render: (value: ReportJob['format']) => formatNames[value] },
         { title: '状态', dataIndex: 'status', width: 190, render: (value: ReportJob['status'], job) => <div><Tag color={value === 'READY' ? 'success' : value === 'FAILED' ? 'error' : 'processing'}>{stateNames[value]}</Tag>{value === 'GENERATING' && <Progress size="small" percent={job.progress} />}{job.error && <Text type="danger">{job.error}</Text>}</div> },

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Alert, Button, Card, Form, Input, message, Modal, Select, Space, Table, Tag, Typography } from 'antd';
+import { DataTable } from '../../components/DataState';
+import { Alert, Button, Card, Form, Input, message, Modal, Select, Space, Tag, Typography } from 'antd';
 import { useCollection } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
 import { useAuth } from '../../auth/AuthProvider';
@@ -26,17 +27,17 @@ export const NodesPage:React.FC=()=>{
     <CollectionNotice loading={loading||customRulesLoading} error={error||bundleError||jobError||customRulesError}/>
     <Alert type="info" showIcon message="本地节点与规则包" description="Worker 和 Updater 通过本机 API 工作，只有 Updater 写入规则目录。外部规则包导入和激活需要受信任公钥验证签名，并检查文件 SHA-256；未验签的历史版本可查看，不能通过此页面激活。真实任务在执行前校验固定规则版本。"/>
     <ScanPolicySettings/>
-    <Card title="节点心跳"><Table<NodeInfo> dataSource={nodes} rowKey="id" pagination={false} scroll={{x:850}} columns={[
+    <Card title="节点心跳"><DataTable<NodeInfo> dataSource={nodes} rowKey="id" pagination={false} scroll={{x:850}} columns={[
       {title:'节点',dataIndex:'id'},{title:'类型',dataIndex:'kind'},
       {title:'状态',dataIndex:'status',render:(v:string)=><Tag color={v==='OFFLINE'?'default':'green'}>{v==='BUSY'?'处理中':v==='ONLINE'?'在线':'离线'}</Tag>},
       {title:'当前任务',dataIndex:'currentTask',ellipsis:true},
       {title:'最近心跳',dataIndex:'lastHeartbeat',render:(v:string)=>new Date(v).toLocaleString()},
       {title:'运行模式',render:()=> <Tag>本机开发 · 未启用网络围栏</Tag>},
     ]}/></Card>
-    <Card title="扫描引擎"><Table dataSource={nodes.flatMap(n=>(n.engines??[]).map(e=>({...e,nodeId:n.id,online:n.status!=='OFFLINE'})))} rowKey={e=>e.nodeId+'-'+e.name} pagination={false} columns={[{title:'引擎',dataIndex:'name',render:(v:string)=>v.toUpperCase()},{title:'固定版本',dataIndex:'version'},{title:'节点',dataIndex:'nodeId'},{title:'状态',render:(_,e)=><Tag color={e.online&&e.ready?'green':'default'}>{!e.online?'节点离线':e.ready?'本地就绪':e.installed?'缺少数据 / 运行环境':'未安装'}</Tag>},{title:'说明',dataIndex:'message'}]}/></Card>
+    <Card title="扫描引擎"><DataTable dataSource={nodes.flatMap(n=>(n.engines??[]).map(e=>({...e,nodeId:n.id,online:n.status!=='OFFLINE'})))} rowKey={e=>e.nodeId+'-'+e.name} pagination={false} columns={[{title:'引擎',dataIndex:'name',render:(v:string)=>v.toUpperCase()},{title:'固定版本',dataIndex:'version'},{title:'节点',dataIndex:'nodeId'},{title:'状态',render:(_,e)=><Tag color={e.online&&e.ready?'green':'default'}>{!e.online?'节点离线':e.ready?'本地就绪':e.installed?'缺少数据 / 运行环境':'未安装'}</Tag>},{title:'说明',dataIndex:'message'}]}/></Card>
     <Card title="规则包版本" extra={<Space wrap><input aria-label="选择离线规则包" type="file" accept=".zip" disabled={!canWrite} onChange={e=>setFile(e.target.files?.[0]??null)}/><Button disabled={!canWrite||!file} loading={busy} onClick={()=>void run(()=>importRules(file!))}>离线导入 ZIP</Button><Button disabled={!canWrite} onClick={()=>setFetchOpen(true)}>从规则源下载</Button></Space>}>
       <Typography.Paragraph type="secondary">网页上传 ZIP 上限为 256 MiB，须包含 manifest.json、manifest.json.sig 和 nuclei/、trivy/ 下声明的规则文件。1.1 GiB 级 GitHub Actions 漏洞库制品请在 Updater 所在机器运行 `sec-updater --import-bundle-file /路径/vulnerability-data.zip`，再重启 Updater；大包导入并验证后，可在此处点击“激活”或“显式回滚”切换当前版本。</Typography.Paragraph>
-      <Table<RuleBundle> dataSource={bundles} rowKey="version" scroll={{x:1000}} columns={[
+      <DataTable<RuleBundle> dataSource={bundles} rowKey="version" scroll={{x:1000}} columns={[
         {title:'版本',dataIndex:'version',render:(v:string,b)=><Space><Typography.Text strong>{v}</Typography.Text>{b.isCurrent&&<Tag color="success">CURRENT</Tag>}</Space>},
         {title:'引擎数据',render:(_,b)=>b.engines?.join('、')||'—'},
         {title:'完整性 / 签名 / 兼容性',render:(_,b)=><Space direction="vertical"><Tag>{b.integrityVerified?'文件哈希已验证':'文件哈希未验证'}</Tag><Tag color={b.signatureVerified?'success':'default'}>{b.signatureVerified?'签名已验证':'签名未验证'}</Tag><Typography.Text type="secondary">{b.engineValidated?'引擎兼容性已验证':'引擎兼容性未验证'}</Typography.Text></Space>},
@@ -47,13 +48,13 @@ export const NodesPage:React.FC=()=>{
     </Card>
     <Card title="自定义漏洞规则" extra={<Button type="primary" disabled={!canWrite} onClick={()=>{setEditingRule(null);ruleForm.resetFields();ruleForm.setFieldsValue({severity:'medium',matchType:'word',part:'body',enabled:true});setRuleOpen(true);}}>新增规则</Button>}>
       <Alert type="info" showIcon message="安全规则格式受限" description="规则只允许对已授权 HTTP(S) 地址发送一次根路径 GET，并匹配响应状态、响应头或响应正文；不支持自定义路径、请求载荷、登录凭据、代码执行或其他协议。启用的规则会自动加入后续 Nuclei / 自动扫描任务。" style={{marginBottom:16}}/>
-      <Table<CustomRule> dataSource={customRules} rowKey="id" loading={customRulesLoading} locale={{emptyText:'还没有自定义规则。可先添加一个只读响应特征规则。'}} columns={[
+      <DataTable<CustomRule> dataSource={customRules} rowKey="id" loading={customRulesLoading} locale={{emptyText:'还没有自定义规则。可先添加一个只读响应特征规则。'}} columns={[
         {title:'规则 ID',dataIndex:'id',width:180,ellipsis:true},{title:'规则名称',dataIndex:'name'},{title:'等级',dataIndex:'severity',render:(v:string)=><Tag color={v==='critical'||v==='high'?'red':v==='medium'?'orange':'blue'}>{v.toUpperCase()}</Tag>},
         {title:'匹配方式',render:(_,r)=><Typography.Text>{r.matchType==='status'?`HTTP 状态 ${r.statusCodes?.join(', ')}`:`${r.part==='header'?'响应头':'响应正文'} · ${r.matchType==='regex'?'正则':'文本'} · ${r.values?.length??0} 条`}</Typography.Text>},
         {title:'状态',dataIndex:'enabled',render:(v:boolean)=><Tag color={v?'green':'default'}>{v?'启用':'停用'}</Tag>},{title:'操作',width:140,render:(_,r)=><Space><Button size="small" disabled={!canWrite} onClick={()=>editRule(r)}>修改</Button><Button size="small" danger disabled={!canWrite} onClick={()=>removeRule(r)}>删除</Button></Space>},
       ]}/>
     </Card>
-    <Card title="规则操作记录"><Table<RuleJob> dataSource={jobs} rowKey="id" scroll={{x:950}} columns={[
+    <Card title="规则操作记录"><DataTable<RuleJob> dataSource={jobs} rowKey="id" scroll={{x:950}} columns={[
       {title:'操作',dataIndex:'kind',render:(v:string)=>({IMPORT:'离线导入',FETCH:'下载导入',ACTIVATE:'版本切换'}[v]??v)},
       {title:'版本',dataIndex:'version'},{title:'状态',dataIndex:'status',render:(v:string)=><Tag color={v==='FAILED'?'error':v==='COMPLETED'?'success':'processing'}>{v}</Tag>},
       {title:'说明',dataIndex:'message'},{title:'提交时间',dataIndex:'createdAt',render:(v:string)=>new Date(v).toLocaleString()},

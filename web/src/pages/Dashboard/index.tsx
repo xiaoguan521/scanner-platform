@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
-import { Row, Col, Card, Statistic, Progress, Table, Tag, Space, Alert, Typography, Badge, Button } from 'antd';
+import { DataTable } from '../../components/DataState';
+import { Row, Col, Card, Statistic, Progress, Tag, Space, Alert, Typography, Badge, Button } from 'antd';
 import {
   SafetyOutlined,
   AlertOutlined,
@@ -165,7 +166,7 @@ export const DashboardPage: React.FC = () => {
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={14}>
           <Card title="风险最高业务组" bordered={false}>
-            <Table
+            <DataTable
               scroll={{x:600}}
               dataSource={riskGroups}
               pagination={false}
@@ -246,7 +247,7 @@ export const DashboardPage: React.FC = () => {
       </Row>
 
       <Card title={<Space>待处置严重/高危漏洞 <Badge count={pendingFindingCount} showZero color="#ff4d4f" /></Space>} bordered={false} extra={<Link to="/findings?severity=CRITICAL">查看漏洞列表</Link>}>
-        <Table
+        <DataTable
           dataSource={pendingFindings}
           rowKey="id"
           pagination={false}
@@ -262,7 +263,7 @@ export const DashboardPage: React.FC = () => {
       </Card>
 
       <Card title="风险最高资产" bordered={false}>
-        <Table dataSource={riskAssets} rowKey="id" pagination={false} size="small" columns={[
+        <DataTable dataSource={riskAssets} rowKey="id" pagination={false} size="small" columns={[
           { title: '资产', render: (_: unknown, item: { id: string; name: string; address: string }) => <Link to={`/findings?assetId=${encodeURIComponent(item.id)}`}>{item.name}</Link> },
           { title: '地址', dataIndex: 'address' },
           { title: '风险指数', dataIndex: 'score', render: (score: number) => <Progress percent={score} size="small" /> },
@@ -272,7 +273,7 @@ export const DashboardPage: React.FC = () => {
 
       {/* 近期扫描任务执行流 */}
       <Card title="正在执行与近期任务" bordered={false}>
-        <Table
+        <DataTable
           scroll={{x:1000}}
           dataSource={tasks}
           rowKey="id"

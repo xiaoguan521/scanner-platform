@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Card, DatePicker, Empty, Input, Space, Table, Typography } from 'antd';
+import { DataTable } from '../../components/DataState';
+import { Alert, Button, Card, DatePicker, Empty, Input, Space, Typography } from 'antd';
 import type { Dayjs } from 'dayjs';
 import { ReloadOutlined, SearchOutlined } from '@ant-design/icons';
 import { requestJSON } from '../../api/client';
@@ -69,7 +70,7 @@ export const AuditPage: React.FC = () => {
       </Space>
     </Card>
     <Card title={`审计记录（${total}）`}>
-      <Table<AuditLog> rowKey="id" loading={loading} dataSource={items} columns={columns} locale={{ emptyText: <Empty description="暂无符合条件的审计记录" /> }} pagination={{ current: filters.page, pageSize, total, showSizeChanger: false, onChange: page => setFilters(current => ({ ...current, page })) }} scroll={{ x: 900 }} />
+      <DataTable<AuditLog> rowKey="id" loading={loading} dataSource={items} columns={columns} locale={{ emptyText: <Empty description="暂无符合条件的审计记录" /> }} pagination={{ current: filters.page, pageSize, total, showSizeChanger: false, onChange: page => setFilters(current => ({ ...current, page })) }} scroll={{ x: 900 }} />
       <Typography.Paragraph type="secondary" style={{ marginBottom: 0, marginTop: 12 }}>审计记录由业务事务写入；本页面不提供删除、编辑或导出敏感详情的入口。</Typography.Paragraph>
     </Card>
   </div>;

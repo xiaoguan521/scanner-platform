@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
-import { Alert, Button, Card, Form, Input, message, Modal, Select, Space, Table, Tag, Typography } from 'antd';
+import { DataTable } from '../../components/DataState';
+import { Alert, Button, Card, Form, Input, message, Modal, Select, Space, Tag, Typography } from 'antd';
 import { PlusOutlined, UserOutlined } from '@ant-design/icons';
 import { apiClient } from '../../api/client';
 import { useCollection } from '../../api/hooks';
@@ -65,7 +66,7 @@ export const UsersPage: React.FC = () => {
       extra={<Space><Input.Search value={query} onChange={e=>setQuery(e.target.value)} allowClear placeholder="搜索用户名" style={{width:180}}/>
         <Button type="primary" icon={<PlusOutlined/>} disabled={!canManage} onClick={()=>setCreating(true)}>新建用户</Button>
       </Space>}>
-      <Table<User> dataSource={rows} rowKey="id" loading={loading} pagination={{pageSize:10}}
+      <DataTable<User> dataSource={rows} rowKey="id" loading={loading} pagination={{pageSize:10}}
         columns={[
           {title:'用户名',dataIndex:'username',render:(name:string)=><Typography.Text strong>{name}</Typography.Text>},
           {title:'角色',dataIndex:'role',render:(role:UserRole)=><Tag color={role==='admin'?'orange':'blue'}>{roleNames[role]}</Tag>},
