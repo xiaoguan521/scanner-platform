@@ -61,6 +61,30 @@ func TestNodeAuthMiddlewareBindsTokenToNodeIdentity(t *testing.T) {
 	}
 }
 
+func TestNodeProtocolHandlerRejectsHumanAndUnknownPaths(t *testing.T) {
+	called := false
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusNoContent)
+	})
+	handler := NodeProtocolHandler(next)
+
+	allowed := httptest.NewRecorder()
+	handler.ServeHTTP(allowed, httptest.NewRequest(http.MethodPost, "http://example.test/api/v1/worker/claim", nil))
+	if allowed.Code != http.StatusNoContent || !called {
+		t.Fatalf("allowed node path status=%d called=%v, want 204/true", allowed.Code, called)
+	}
+
+	called = false
+	for _, path := range []string{"/", "/api/v1/users", "/api/v1/workerish/claim"} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "http://example.test"+path, nil))
+		if response.Code != http.StatusNotFound || called {
+			t.Fatalf("path %q status=%d called=%v, want 404/false", path, response.Code, called)
+		}
+	}
+}
+
 func TestReadNodeTokenFilesRequiresOwnerOnlyFiles(t *testing.T) {
 	dir := t.TempDir()
 	single := filepath.Join(dir, "worker.token")

@@ -1,5 +1,12 @@
 # Verification log
 
+## 2026-10-21：独立节点 HTTPS 监听器
+
+- Server 新增独立的 `--node-listen`、`--node-tls-cert` 和 `--node-tls-key` 参数；监听地址必须是明确数字 IP:端口，拒绝主机名、未指定地址、组播地址和非法端口。网页仍使用单独的数字回环监听地址。
+- 节点监听器只路由 Worker、Updater 和 heartbeat 协议路径，所有其他网页/人工路径返回 404；节点请求仍要求 owner-only 令牌文件、`X-Node-ID` 和 Bearer 令牌。TLS 配置强制最低 TLS 1.3，证书/私钥要求普通非符号链接文件，私钥必须 owner-only。
+- 已新增 `internal/api` 路由隔离测试和 `internal/bootstrap` 地址、证书、权限、符号链接及 TLS 版本单测；已通过 `make test`（含 Go race 与 18 个 Python 测试）、`make build`、`make lint`、`npm --prefix web run build`、36 个前端源码测试、OpenAPI YAML 解析和 `git diff --check`。
+- 当前只实现单向 TLS；客户端证书信任、mTLS、证书轮换和完整 PostgreSQL Repository 运行时仍未完成。独立监听器不改变扫描目标范围，也不提供攻击类能力。
+
 ## 2026-10-21：隔离靶机与 PostgreSQL 夹具实际启动
 
 - OrbStack 隔离靶机已重新构建并运行，SSH 与 HTTP 监听端口均完成本机连通性检查；靶机仅作为明确授权的扫描目标使用。

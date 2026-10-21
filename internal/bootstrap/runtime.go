@@ -2,12 +2,14 @@ package bootstrap
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -51,6 +53,9 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 	postgresDSNFile := flags.String("postgres-dsn-file", "", "Owner-only file containing the PostgreSQL connection string (migration check only)")
 	migratePostgres := flags.Bool("migrate-postgres", false, "Apply embedded PostgreSQL migrations and exit")
 	nodeTokenFile := flags.String("node-token-file", "", "Owner-only Server registry with one node-id=token entry per line")
+	nodeListen := flags.String("node-listen", "", "Separate HTTPS node API address (numeric IP:port)")
+	nodeTLSCert := flags.String("node-tls-cert", "", "PEM certificate for the separate node API listener")
+	nodeTLSKey := flags.String("node-tls-key", "", "Owner-only PEM private key for the separate node API listener")
 	devUI := flags.Bool("dev-ui", false, "Compatibility alias for the unified local Server")
 	status := flags.Bool("status", false, "Show local runtime capabilities")
 	if err := flags.Parse(args); err != nil {
@@ -60,15 +65,15 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if *status {
-		if *migratePostgres || *postgresDSNFile != "" || *nodeTokenFile != "" {
-			fmt.Fprintln(stderr, "--status cannot be combined with PostgreSQL migration flags")
+		if *migratePostgres || *postgresDSNFile != "" || *nodeTokenFile != "" || *nodeListen != "" || *nodeTLSCert != "" || *nodeTLSKey != "" {
+			fmt.Fprintln(stderr, "--status cannot be combined with runtime configuration flags")
 			return 2
 		}
 		fmt.Fprintln(stdout, `{"role":"sec-server","mode":"local","engines":["synthetic","nuclei","trivy","zap"]}`)
 		return 0
 	}
 	if *migratePostgres {
-		if *postgresDSNFile == "" || *nodeTokenFile != "" || *devUI || *reportDir != "" || flags.NArg() != 0 {
+		if *postgresDSNFile == "" || *nodeTokenFile != "" || *nodeListen != "" || *nodeTLSCert != "" || *nodeTLSKey != "" || *devUI || *reportDir != "" || flags.NArg() != 0 {
 			fmt.Fprintln(stderr, "--migrate-postgres requires only --postgres-dsn-file")
 			return 2
 		}
@@ -100,6 +105,20 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "--postgres-dsn-file is only valid with --migrate-postgres")
 		return 2
 	}
+	if (*nodeListen == "") != (*nodeTLSCert == "" || *nodeTLSKey == "") {
+		fmt.Fprintln(stderr, "--node-listen requires --node-tls-cert and --node-tls-key, and those flags require --node-listen")
+		return 2
+	}
+	if *nodeListen != "" {
+		if *nodeTokenFile == "" {
+			fmt.Fprintln(stderr, "--node-listen requires --node-token-file")
+			return 2
+		}
+		if err := validateNodeListen(*nodeListen); err != nil {
+			fmt.Fprintln(stderr, "invalid --node-listen:", err)
+			return 2
+		}
+	}
 	if flags.NArg() != 0 || !isNumericLoopback(*addr) {
 		fmt.Fprintln(stderr, "provide flags only and use a numeric loopback listen address")
 		return 2
@@ -107,6 +126,15 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 	if _, err := os.Stat(filepath.Join(*uiDir, "index.html")); err != nil {
 		fmt.Fprintln(stderr, "Web UI is missing. Run make dev, or build web/ and pass --ui-dir.")
 		return 1
+	}
+	var nodeTLSConfig *tls.Config
+	if *nodeListen != "" {
+		var err error
+		nodeTLSConfig, err = loadNodeTLSConfig(*nodeTLSCert, *nodeTLSKey)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
 	}
 	absoluteDB, err := filepath.Abs(*dbPath)
 	if err != nil {
@@ -194,21 +222,46 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 			}
 		}
 	}()
-	handler := api.NewRuntimeHandler(store, api.NewDevelopmentHandler(accounts, assetStore, approvalsStore), *uiDir, accounts)
+	baseHandler := api.NewRuntimeHandler(store, api.NewDevelopmentHandler(accounts, assetStore, approvalsStore), *uiDir, accounts)
+	handler := http.Handler(baseHandler)
+	var nodeTokens api.NodeTokenSet
 	if *nodeTokenFile != "" {
 		tokens, err := api.ReadNodeTokenSetFile(*nodeTokenFile)
 		if err != nil {
 			fmt.Fprintln(stderr, "read node token registry:", err)
 			return 1
 		}
+		nodeTokens = tokens
 		handler = api.NodeAuthMiddleware(handler, tokens)
 	}
 	server := &http.Server{Addr: *addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
+	var nodeServer *http.Server
+	var nodeListener net.Listener
+	if *nodeListen != "" {
+		listener, err := net.Listen("tcp", *nodeListen)
+		if err != nil {
+			fmt.Fprintln(stderr, "listen node API:", err)
+			return 1
+		}
+		nodeListener = tls.NewListener(listener, nodeTLSConfig)
+		nodeHandler := api.NodeProtocolHandler(api.NodeAuthMiddleware(baseHandler, nodeTokens))
+		nodeServer = &http.Server{Addr: *nodeListen, Handler: nodeHandler, ReadHeaderTimeout: 5 * time.Second, TLSConfig: nodeTLSConfig}
+		go func() {
+			if err := nodeServer.Serve(nodeListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				slog.Error("node API stopped", "error", err)
+			}
+		}()
+		fmt.Fprintf(stdout, "Node API: https://%s\n", *nodeListen)
+		slog.Info("node API started", "address", *nodeListen, "tls", true)
+	}
 	go func() {
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = server.Shutdown(shutdown)
+		if nodeServer != nil {
+			_ = nodeServer.Shutdown(shutdown)
+		}
 	}()
 	fmt.Fprintf(stdout, "Web UI: http://%s/#/tasks\n", *addr)
 	slog.Info("local framework started", "address", *addr, "mode", "local")

@@ -146,6 +146,23 @@ func IsNodeAPIPath(path string) bool {
 		strings.HasPrefix(path, "/api/v1/updater/")
 }
 
+// NodeProtocolHandler limits an independently exposed node listener to the
+// Worker/Updater protocol. The web UI and human session APIs must never be
+// reachable through the internal node port, even when the same application
+// handler is used underneath.
+func NodeProtocolHandler(next http.Handler) http.Handler {
+	if next == nil {
+		next = http.NotFoundHandler()
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !IsNodeAPIPath(r.URL.Path) {
+			runtimeJSON(w, http.StatusNotFound, APIError{Error: "not_found", Message: "节点接口不存在"})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // NodeAuthMiddleware protects the node protocol with an identity-bound bearer
 // token. The caller must provide a non-empty set loaded from a protected file;
 // local development without this middleware remains intentionally compatible.

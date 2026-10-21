@@ -5,9 +5,14 @@ info:
   version: 0.7.0
   description: 'Same-origin local development API. UI mutations require X-Requested-With:
     XMLHttpRequest and admin/security_engineer unless stated otherwise. Accounts use
-    HttpOnly session cookies. Worker/Updater endpoints are loopback-compatible node
-    protocols; when node token authentication is enabled, clients send an opaque Bearer
-    token and X-Node-ID, and the Server binds that identity to the JSON body. Synthetic tasks never contact targets. Explicitly authorized numeric targets can run bounded read-only checks. Worker report JSON is limited to 32 MiB; report snapshot 32 MiB, artifact 64 MiB. Rule integrity
+    HttpOnly session cookies. Worker/Updater endpoints are node protocols; when node
+    token authentication is enabled, clients send an opaque Bearer token and X-Node-ID,
+    and the Server binds that identity to the JSON body. A separately configured HTTPS
+    node listener exposes only those node protocol paths and requires TLS 1.3 plus the
+    same token checks; the listener is configured by Server runtime flags rather than a
+    second business API contract. Synthetic tasks never contact targets. Explicitly
+    authorized numeric targets can run bounded read-only checks. Worker report JSON is
+    limited to 32 MiB; report snapshot 32 MiB, artifact 64 MiB. Rule integrity
     validation is not signature or engine compatibility validation.'
 servers:
 - url: "/"
@@ -3332,6 +3337,7 @@ components:
       type: http
       scheme: bearer
       bearerFormat: opaque
+      description: 'Opaque node token used with X-Node-ID. On the separate HTTPS node listener, TLS 1.3 is mandatory and web/human paths are not routed.'
   responses:
     NotImplemented:
       description: Phase 0 does not expose this operation
