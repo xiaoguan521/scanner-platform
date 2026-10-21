@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"scanner-platform/internal/scope"
@@ -39,7 +40,11 @@ type fencedRunnerConfig struct {
 	Timeout        int
 }
 
-type fencedTaskRunner struct{ config fencedRunnerConfig }
+type fencedTaskRunner struct {
+	config    fencedRunnerConfig
+	mu        sync.RWMutex
+	telemetry taskflow.FenceTelemetry
+}
 
 type fencedTaskInput struct {
 	Operation string             `json:"operation"`
@@ -55,6 +60,18 @@ type fencedTaskOutput struct {
 	Detections  []taskflow.Detection       `json:"detections,omitempty"`
 	Ports       []taskflow.PortProbeResult `json:"ports,omitempty"`
 	Auto        taskflow.AutoResult        `json:"auto,omitempty"`
+}
+
+func (r *fencedTaskRunner) Telemetry() taskflow.FenceTelemetry {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.telemetry
+}
+
+func (r *fencedTaskRunner) setTelemetry(value taskflow.FenceTelemetry) {
+	r.mu.Lock()
+	r.telemetry = value
+	r.mu.Unlock()
 }
 
 func (r *fencedTaskRunner) Execute(ctx context.Context, task taskflow.Task) ([]taskflow.Detection, error) {

@@ -224,6 +224,8 @@ func readRuntimeTask(row rowScanner) (taskflow.Task, error) {
 	task.SystemScanStatus = detail.SystemStatus
 	task.ApplicationScanStatus = detail.ApplicationStatus
 	task.ApplicationResults = detail.ApplicationResults
+	task.FenceStatus = detail.FenceStatus
+	task.DropCount = detail.DropCount
 	task.RetestFindingID = detail.RetestFindingID
 	task.AssetProfile = detail.AssetProfile
 	task.EffectiveExclusions = detail.EffectiveExclusions
@@ -638,6 +640,9 @@ func requiresRuleBundle(input taskflow.TaskInput) bool {
 }
 
 func (s *RuntimeStore) CompleteRuntimeTask(ctx context.Context, report taskflow.Report) error {
+	if err := validateFenceTelemetry(report); err != nil {
+		return err
+	}
 	if err := s.ExpireAcceptedRisks(ctx, time.Now().UTC()); err != nil {
 		return err
 	}
@@ -673,6 +678,9 @@ func (s *RuntimeStore) CompleteRuntimeTask(ctx context.Context, report taskflow.
 			}
 		} else if report.SystemScanStatus != "" {
 			return ErrInvalidTask
+		}
+		if err := persistFenceTelemetry(ctx, tx, task.ID, report); err != nil {
+			return err
 		}
 		if _, err := tx.ExecContext(ctx, "UPDATE scan_tasks SET status='PAUSED_WINDOW',worker_id='' WHERE id=?", task.ID); err != nil {
 			return err

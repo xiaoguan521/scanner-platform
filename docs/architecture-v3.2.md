@@ -632,3 +632,7 @@ secrets:
 ### 2026-10-21 一次性 Worker 生命周期监督
 
 Linux fenced Worker 由可信 `sec-fence-launcher` 创建一次性 network namespace，并在一个任务结束后退出。`sec-worker-supervisor` 作为外部进程监督器，启动前校验 launcher 与 Worker 为绝对、规范、不可被 group/other 写入的普通可执行文件；Worker 参数必须位于显式 `--` 之后，监督器拒绝覆盖 `--fence`、`--once` 和父 namespace fd 等边界参数。监督器不使用 shell、不读取数据库或凭据；成功任务按固定延迟重新拉起，连续失败按有界指数退避，收到终止信号后取消当前周期且不重启。secret、证书、令牌下发、远程部署和自动证书签发仍由受信服务管理器/部署系统负责。
+
+### 2026-10-21 围栏 DROP 计数回报
+
+fenced Worker 子进程在围栏成功且计数读取完成后，将 `fenceStatus=ENFORCED` 与非负 `dropCount` 作为任务回报元数据发送；Server 只接受这两个受限字段，计数超过 JSON 安全整数范围或状态不匹配时拒绝回报。SQLite 任务详情与 PostgreSQL 任务安全投影保存最后一次任务计数；计数大于零时写入不含目标地址、请求/响应或凭据的 `fence_drop_observed` 审计事件，任务日志和详情只显示静态脱敏告警。该链路不新增迁移，也不改变授权范围；真实范围外发包抓包、部署告警和 Compose 网络约束仍需隔离部署验收。

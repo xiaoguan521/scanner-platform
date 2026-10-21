@@ -61,6 +61,55 @@ func completeNucleiFixture(t *testing.T, store *RuntimeStore, task taskflow.Task
 	}
 }
 
+func TestFenceTelemetryIsPersistedAndAudited(t *testing.T) {
+	store, actor := localFixture(t)
+	ctx := context.Background()
+	approveFixturePort(t, store, actor, "192.0.2.20", 80)
+	installNucleiFixtureBundle(t, store, "20261020.07")
+	task := createClaimedNucleiTask(t, store, actor, "fenced-worker")
+	report := taskflow.Report{TaskID: task.ID, WorkerID: "fenced-worker", Status: "COMPLETED", CompletedFully: true,
+		RulesExecuted: true, ExecutedEngines: []string{"nuclei"}, RuleVersion: task.RuleVersion,
+		FenceStatus: "ENFORCED", DropCount: 2}
+	if err := store.CompleteRuntimeTask(ctx, report); err != nil {
+		t.Fatal(err)
+	}
+	tasks, err := store.ListRuntimeTasks(ctx)
+	if err != nil || len(tasks) != 1 || tasks[0].FenceStatus != "ENFORCED" || tasks[0].DropCount != 2 {
+		t.Fatalf("fence telemetry was not persisted: %+v %v", tasks, err)
+	}
+	logs, err := store.ListTaskLogs(ctx, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, log := range logs {
+		if log.Action == "fence_drop_observed" {
+			found = true
+			if log.Message == "" || log.Message == "drop_count=2" {
+				t.Fatalf("unsafe fence log message: %+v", log)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("fence audit event missing: %+v", logs)
+	}
+}
+
+func TestFenceTelemetryValidationIsFailClosed(t *testing.T) {
+	for _, report := range []taskflow.Report{
+		{FenceStatus: "", DropCount: 1},
+		{FenceStatus: "UNKNOWN"},
+		{FenceStatus: "ENFORCED", DropCount: maxFenceDropCount + 1},
+	} {
+		if err := validateFenceTelemetry(report); !errors.Is(err, ErrInvalidTask) {
+			t.Fatalf("invalid telemetry accepted: %+v err=%v", report, err)
+		}
+	}
+	if err := validateFenceTelemetry(taskflow.Report{FenceStatus: "ENFORCED"}); err != nil {
+		t.Fatalf("zero-drop enforced telemetry rejected: %v", err)
+	}
+}
+
 func fixtureNucleiFinding() taskflow.Detection {
 	return taskflow.Detection{Engine: "nuclei", Target: "192.0.2.20:80", TemplateID: "fixture-header", Title: "fixture header", Severity: "LOW", MatchedPath: "/"}
 }

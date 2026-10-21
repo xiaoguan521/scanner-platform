@@ -69,6 +69,7 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 }
 
 func (r *fencedTaskRunner) run(ctx context.Context, operation string, task taskflow.Task) (result fencedTaskOutput, runErr error) {
+	r.setTelemetry(taskflow.FenceTelemetry{})
 	cgroup, err := workerfence.NewTaskCgroup(r.config.CgroupRoot)
 	if err != nil {
 		return fencedTaskOutput{}, fmt.Errorf("create fenced task cgroup: %w", err)
@@ -139,6 +140,7 @@ func (r *fencedTaskRunner) run(ctx context.Context, operation string, task taskf
 	if err := decoder.Decode(&decoded); err != nil || decoder.Decode(new(any)) != io.EOF || decoded.Status == "" {
 		return fencedTaskOutput{}, errors.New("invalid fenced task result")
 	}
+	r.setTelemetry(taskflow.FenceTelemetry{Status: decoded.FenceStatus, DropCount: decoded.DropCount})
 	if decoded.Status != "ok" {
 		return fencedTaskOutput{}, errors.New("fenced task execution failed")
 	}

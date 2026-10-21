@@ -1,5 +1,11 @@
 # Verification log
 
+## 2026-10-21：围栏 DROP 计数进入任务回报与告警投影
+
+- Worker 的 fenced adapter 现在把受信的 `fenceStatus=ENFORCED` 与 `dropCount` 送入任务回报；Server 对状态、计数上限和缺失状态做失败关闭校验。SQLite 任务详情和 PostgreSQL 任务安全投影均保存这两个字段，不新增数据库迁移。
+- DROP 计数大于零时写入脱敏的 `fence_drop_observed` 审计事件，任务日志只显示静态提示，任务详情显示告警计数；不写入目标地址、规则、请求/响应或凭据。
+- 新增 Worker、fenced adapter、SQLite 持久化/审计和输入校验测试；本记录只证明代码链路和单元测试，生产范围外发包抓包、部署告警和 Compose 网络约束仍待隔离部署验收。
+
 ## 2026-10-21：fenced Worker 一次性生命周期监督器
 
 - 新增 `internal/supervisor` 重启策略和 Linux `cmd/worker-supervisor`。监督器只调用已固定的 `sec-fence-launcher`，不经过 shell；launcher 与 Worker 路径均要求绝对规范、普通文件、不可由 group/other 写入且父目录不可写。Worker 参数必须位于显式 `--` 后，并拒绝覆盖 fenced 模式边界。

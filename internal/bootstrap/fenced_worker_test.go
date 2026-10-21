@@ -88,3 +88,11 @@ func TestFencePlanUsesNumericScopeEndpointParser(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestFencedRunnerTelemetryIsSnapshot(t *testing.T) {
+	runner := &fencedTaskRunner{}
+	runner.setTelemetry(taskflow.FenceTelemetry{Status: "ENFORCED", DropCount: 7})
+	if got := runner.Telemetry(); got.Status != "ENFORCED" || got.DropCount != 7 {
+		t.Fatalf("telemetry = %+v", got)
+	}
+}

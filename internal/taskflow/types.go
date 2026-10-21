@@ -153,6 +153,10 @@ type Task struct {
 	Progress              *TaskProgress       `json:"progress,omitempty"`
 	AssetProfile          inventory.Profile   `json:"assetProfile,omitempty"`
 	Error                 string              `json:"error,omitempty"`
+	// FenceStatus and DropCount are optional execution telemetry reported by a
+	// kernel-enforced Worker fence. They never broaden the authorized scope.
+	FenceStatus string `json:"fenceStatus,omitempty"`
+	DropCount   uint64 `json:"dropCount,omitempty"`
 }
 
 // TaskProgress is advisory execution telemetry. It never changes scan scope,
@@ -162,6 +166,13 @@ type TaskProgress struct {
 	Completed int       `json:"completed"`
 	Total     int       `json:"total"`
 	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// FenceTelemetry is the small trusted projection returned by a fenced Worker.
+// Raw firewall rules, addresses and packet contents never cross this boundary.
+type FenceTelemetry struct {
+	Status    string
+	DropCount uint64
 }
 
 // ProgressUpdate is sent by a Worker in its existing heartbeat.
@@ -289,6 +300,8 @@ type Report struct {
 	ApplicationScanStatus string              `json:"applicationScanStatus,omitempty"`
 	ApplicationResults    []ApplicationResult `json:"applicationResults,omitempty"`
 	AssetProfile          inventory.Profile   `json:"assetProfile,omitempty"`
+	FenceStatus           string              `json:"fenceStatus,omitempty"`
+	DropCount             uint64              `json:"dropCount,omitempty"`
 	// Completion metadata is a fail-closed gate for automatic FIXED updates.
 	// Older Workers may omit it; such reports still ingest findings but cannot
 	// mark missing findings as fixed.

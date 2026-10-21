@@ -31,6 +31,9 @@ type Worker struct {
 	ProbePorts   func(context.Context, Task) ([]PortProbeResult, error)
 	AutoScan     func(context.Context, Task) (AutoResult, error)
 	EngineStatus func() []EngineStatus
+	// FenceTelemetry returns the latest trusted fence result for the current
+	// task. The real bootstrap supplies it only in fenced mode.
+	FenceTelemetry func() FenceTelemetry
 	// CurrentRuleVersion reads the local read-only CURRENT pointer. The real
 	// bootstrap supplies it; old fake/synthetic tests may leave it nil.
 	CurrentRuleVersion func(context.Context) (string, error)
@@ -309,6 +312,10 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 		return executeErr
 	}
 	err = w.runWithLease(workCtx, task, execute)
+	telemetry := FenceTelemetry{}
+	if w.FenceTelemetry != nil {
+		telemetry = w.FenceTelemetry()
+	}
 	if remoteStopped.Load() {
 		// The Server deliberately changed the task state (pause/cancel/reclaim).
 		// Do not send a stale failure or success report after that decision.
@@ -336,7 +343,7 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 		if ctx.Err() != nil {
 			if !task.Synthetic {
 				reportCtx, reportCancel := context.WithTimeout(context.Background(), 3*time.Second)
-				_, _ = w.post(reportCtx, "/api/v1/worker/report", Report{TaskID: task.ID, WorkerID: w.ID, Target: task.Chunks[0].Targets[0], Status: "FAILED", Error: "Worker 已停止，扫描未完成", SystemScanStatus: systemScanStatus, ApplicationScanStatus: applicationScanStatus, ApplicationResults: applicationResults}, nil)
+				_, _ = w.post(reportCtx, "/api/v1/worker/report", Report{TaskID: task.ID, WorkerID: w.ID, Target: task.Chunks[0].Targets[0], Status: "FAILED", Error: "Worker 已停止，扫描未完成", SystemScanStatus: systemScanStatus, ApplicationScanStatus: applicationScanStatus, ApplicationResults: applicationResults, FenceStatus: telemetry.Status, DropCount: telemetry.DropCount}, nil)
 				reportCancel()
 			}
 			return false, ctx.Err()
@@ -362,13 +369,15 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 	}
 	report.ApplicationScanStatus = applicationScanStatus
 	report.ApplicationResults = applicationResults
+	report.FenceStatus = telemetry.Status
+	report.DropCount = telemetry.DropCount
 
 	encoded, err := json.Marshal(report)
 	if err != nil {
 		return false, fmt.Errorf("encode result report: %w", err)
 	}
 	if len(encoded) > MaxReportBytes {
-		report = Report{TaskID: task.ID, WorkerID: w.ID, Status: "FAILED", Error: "结果超过单次回报大小限制，请拆分目标或输入后重试", SystemScanStatus: systemScanStatus, ApplicationScanStatus: applicationScanStatus, ApplicationResults: applicationResults}
+		report = Report{TaskID: task.ID, WorkerID: w.ID, Status: "FAILED", Error: "结果超过单次回报大小限制，请拆分目标或输入后重试", SystemScanStatus: systemScanStatus, ApplicationScanStatus: applicationScanStatus, ApplicationResults: applicationResults, FenceStatus: telemetry.Status, DropCount: telemetry.DropCount}
 	}
 	for {
 		if code, err := w.post(ctx, "/api/v1/worker/report", report, nil); err == nil {

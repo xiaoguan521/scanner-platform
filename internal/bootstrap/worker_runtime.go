@@ -173,6 +173,9 @@ func RunWorker(args []string, stdout, stderr io.Writer) int {
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		},
 	}
+	if fenced != nil {
+		worker.FenceTelemetry = fenced.Telemetry
+	}
 	if err := worker.Run(ctx, *once); err != nil && !errors.Is(err, context.Canceled) {
 		fmt.Fprintf(stderr, "worker stopped: %v\n", err)
 		return 1

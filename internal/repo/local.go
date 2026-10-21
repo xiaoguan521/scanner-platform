@@ -48,6 +48,8 @@ type taskDetails struct {
 	Deadline            string                       `json:"deadline"`
 	RuleVersion         string                       `json:"ruleVersion"`
 	Error               string                       `json:"error,omitempty"`
+	FenceStatus         string                       `json:"fenceStatus,omitempty"`
+	DropCount           uint64                       `json:"dropCount,omitempty"`
 }
 
 func (s *RuntimeStore) initLocal(ctx context.Context) error {

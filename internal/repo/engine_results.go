@@ -326,6 +326,45 @@ func validSystemScanStatus(value string) bool {
 	}
 }
 
+const maxFenceDropCount uint64 = 1 << 53
+
+func validateFenceTelemetry(report taskflow.Report) error {
+	if report.FenceStatus == "" && report.DropCount == 0 {
+		return nil
+	}
+	if report.FenceStatus != "ENFORCED" || report.DropCount > maxFenceDropCount {
+		return ErrInvalidTask
+	}
+	return nil
+}
+
+func persistFenceTelemetry(ctx context.Context, tx *sql.Tx, taskID string, report taskflow.Report) error {
+	if report.FenceStatus == "" && report.DropCount == 0 {
+		return nil
+	}
+	var raw string
+	if err := tx.QueryRowContext(ctx, `SELECT details FROM scan_tasks WHERE id=?`, taskID).Scan(&raw); err != nil {
+		return err
+	}
+	var detail taskDetails
+	if err := json.Unmarshal([]byte(raw), &detail); err != nil {
+		return err
+	}
+	detail.FenceStatus = report.FenceStatus
+	detail.DropCount = report.DropCount
+	encoded, err := json.Marshal(detail)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE scan_tasks SET details=? WHERE id=?`, string(encoded), taskID); err != nil {
+		return err
+	}
+	if report.DropCount > 0 {
+		return logLocal(ctx, tx, report.WorkerID, "fence_drop_observed", "task", taskID, fmt.Sprintf("drop_count=%d", report.DropCount))
+	}
+	return nil
+}
+
 func persistAutoScanStatus(ctx context.Context, tx *sql.Tx, taskID string, report taskflow.Report) error {
 	var raw string
 	if err := tx.QueryRowContext(ctx, `SELECT details FROM scan_tasks WHERE id=?`, taskID).Scan(&raw); err != nil {
@@ -351,6 +390,9 @@ func persistAutoScanStatus(ctx context.Context, tx *sql.Tx, taskID string, repor
 func (s *RuntimeStore) completeEngineTask(ctx context.Context, report taskflow.Report) error {
 	if len(report.Findings) > 100000 || len(report.Error) > 500 {
 		return ErrInvalidTask
+	}
+	if err := validateFenceTelemetry(report); err != nil {
+		return err
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -572,6 +614,9 @@ func (s *RuntimeStore) completeEngineTask(ctx context.Context, report taskflow.R
 		if err := updateMissingFindingLifecycle(ctx, tx, task, report, now); err != nil {
 			return err
 		}
+	}
+	if err := persistFenceTelemetry(ctx, tx, task.ID, report); err != nil {
+		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE scan_tasks SET status=?,finished_at=?,details=json_set(details,'$.error',?) WHERE id=?`, report.Status, now.Format(time.RFC3339Nano), report.Error, task.ID); err != nil {
 		return err

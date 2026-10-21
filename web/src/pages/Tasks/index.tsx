@@ -239,7 +239,10 @@ export const TasksPage:React.FC=()=>{
             <Tag color="purple">服务 {detailTask.serviceResults?.length??0}</Tag>
             <Tag color="red">发现项 {detailTask.findingCount}</Tag>
             {detailTask.systemScanStatus&&<Tag>系统包：{detailTask.systemScanStatus}</Tag>}
+            {detailTask.fenceStatus&&<Tag color={detailTask.dropCount?'warning':'green'}>网络围栏：{detailTask.fenceStatus}</Tag>}
+            {detailTask.dropCount?<Tag color="warning">拦截范围外连接 {detailTask.dropCount} 次</Tag>:null}
           </Space>
+          {detailTask.dropCount?<Alert type="warning" showIcon message="检测到范围外连接尝试，已被网络围栏拦截" description="请检查 Worker 日志和授权范围；平台不会展示原始地址或请求内容。" style={{marginTop:12}}/>:null}
           {detailTask.error&&<Alert type="error" showIcon message={detailTask.error} style={{marginTop:12}}/>}
         </Card>
         <Card size="small" title="只读任务日志" extra={<Typography.Text type="secondary">不显示原始引擎输出、凭据或请求响应</Typography.Text>}>

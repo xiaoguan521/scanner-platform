@@ -134,6 +134,8 @@ func taskLogMessage(action string) string {
 		return "任务已从归档恢复"
 	case "report_engine_task":
 		return "Worker 已回报执行结果"
+	case "fence_drop_observed":
+		return "围栏拦截了范围外连接尝试（详情已脱敏）"
 	case "retest_finding":
 		return "已创建漏洞复测任务"
 	default:

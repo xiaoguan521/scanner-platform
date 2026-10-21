@@ -4476,6 +4476,15 @@ components:
           maxItems: 8
           items:
             "$ref": "#/components/schemas/ApplicationResult"
+        fenceStatus:
+          type: string
+          enum: [ENFORCED, NOT_SUPPORTED, NOT_VERIFIED]
+          description: Optional trusted Worker fence state for the last execution.
+        dropCount:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Number of packets blocked by the Worker fence during the last execution.
         progress:
           "$ref": "#/components/schemas/TaskProgress"
         error:
@@ -5344,6 +5353,15 @@ components:
           maxItems: 8
           items:
             "$ref": "#/components/schemas/ApplicationResult"
+        fenceStatus:
+          type: string
+          enum: [ENFORCED]
+          description: Worker must report ENFORCED when fence telemetry is present.
+        dropCount:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Number of packets blocked by the Worker fence; raw addresses are never accepted.
         assetProfile: {"$ref": "#/components/schemas/AssetProfile"}
         completedFully:
           type: boolean

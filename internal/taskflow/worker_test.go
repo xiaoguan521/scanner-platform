@@ -112,6 +112,35 @@ func TestWorkerPropagatesCompleteEngineMetadata(t *testing.T) {
 	}
 }
 
+func TestWorkerPropagatesFenceTelemetryIntoReport(t *testing.T) {
+	var received Report
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/worker/claim":
+			_ = json.NewEncoder(w).Encode(Task{ID: "fence-telemetry", Engines: []string{"nuclei"}, Chunks: []Chunk{{Targets: []string{"192.0.2.20:80"}}}})
+		case "/api/v1/worker/report":
+			if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+				t.Error(err)
+			}
+			w.WriteHeader(http.StatusOK)
+		default:
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+	worker := Worker{
+		ServerURL: server.URL, ID: "fenced-worker", Client: server.Client(),
+		Execute:        func(context.Context, Task) ([]Detection, error) { return nil, nil },
+		FenceTelemetry: func() FenceTelemetry { return FenceTelemetry{Status: "ENFORCED", DropCount: 3} },
+	}
+	if worked, err := worker.ProcessOne(context.Background()); err != nil || !worked {
+		t.Fatalf("fenced task did not complete: worked=%v err=%v", worked, err)
+	}
+	if received.FenceStatus != "ENFORCED" || received.DropCount != 3 {
+		t.Fatalf("fence telemetry was not propagated: %+v", received)
+	}
+}
+
 func TestWorkerReportsOnlyDeliberatePublicExecutionErrors(t *testing.T) {
 	for _, test := range []struct {
 		name string

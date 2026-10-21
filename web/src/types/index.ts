@@ -241,6 +241,8 @@ export interface ScanTask {
   systemScanStatus?: string;
   applicationScanStatus?: string;
   applicationResults?: ApplicationResult[];
+  fenceStatus?: 'ENFORCED' | 'NOT_SUPPORTED' | 'NOT_VERIFIED';
+  dropCount?: number;
   progress?: TaskProgress;
   customRuleCount?: number;
   retestFindingId?: string;

@@ -977,6 +977,9 @@ func (s *PostgresRuntimeStore) CompleteRuntimeTask(ctx context.Context, report t
 	if len(report.Findings) > 100000 || len(report.Error) > 500 {
 		return ErrInvalidTask
 	}
+	if err := validateFenceTelemetry(report); err != nil {
+		return err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin postgres runtime completion: %w", err)
@@ -1047,6 +1050,8 @@ func (s *PostgresRuntimeStore) CompleteRuntimeTask(ctx context.Context, report t
 		task.ApplicationScanStatus = report.ApplicationScanStatus
 		task.ApplicationResults = append([]taskflow.ApplicationResult(nil), report.ApplicationResults...)
 		task.AssetProfile = report.AssetProfile
+		task.FenceStatus = report.FenceStatus
+		task.DropCount = report.DropCount
 		task.Error = ""
 		task.Status = "COMPLETED"
 		if err := s.projection.SaveTx(ctx, tx, task); err != nil {
@@ -1061,6 +1066,8 @@ func (s *PostgresRuntimeStore) CompleteRuntimeTask(ctx context.Context, report t
 	} else if report.Status == "PAUSED_WINDOW" {
 		task.Status = "PAUSED_WINDOW"
 		task.Error = ""
+		task.FenceStatus = report.FenceStatus
+		task.DropCount = report.DropCount
 		if err := s.projection.SaveTx(ctx, tx, task); err != nil {
 			return err
 		}
@@ -1075,6 +1082,8 @@ func (s *PostgresRuntimeStore) CompleteRuntimeTask(ctx context.Context, report t
 			return ErrInvalidTask
 		}
 		task.Status, task.Error = "FAILED", safePostgresRuntimeError(report.Error)
+		task.FenceStatus = report.FenceStatus
+		task.DropCount = report.DropCount
 		if err := s.projection.SaveTx(ctx, tx, task); err != nil {
 			return err
 		}
@@ -1083,6 +1092,11 @@ func (s *PostgresRuntimeStore) CompleteRuntimeTask(ctx context.Context, report t
 		}
 	} else {
 		return ErrInvalidTask
+	}
+	if report.DropCount > 0 {
+		if err := s.postgresAuditTx(ctx, tx, report.WorkerID, "fence_drop_observed", "task", report.TaskID, fmt.Sprintf("drop_count=%d", report.DropCount)); err != nil {
+			return err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit postgres runtime completion: %w", err)
