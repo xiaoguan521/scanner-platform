@@ -136,12 +136,6 @@ func (s *RuntimeStore) CreateSyntheticTask(ctx context.Context) (taskflow.Task, 
 	return s.createRuntimeTask(ctx, "task-"+rand.Text(), []string{"192.0.2.10:8080"})
 }
 
-// SeedSyntheticTask creates at most one startup task per database.
-func (s *RuntimeStore) SeedSyntheticTask(ctx context.Context) error {
-	_, err := s.createRuntimeTask(ctx, "framework-demo", []string{"192.0.2.10:8080"})
-	return err
-}
-
 func (s *RuntimeStore) createRuntimeTask(ctx context.Context, id string, targets []string) (taskflow.Task, error) {
 	encoded, err := json.Marshal(targets)
 	if err != nil {
@@ -749,25 +743,9 @@ func (s *RuntimeStore) CompleteRuntimeTask(ctx context.Context, report taskflow.
 }
 
 func (s *RuntimeStore) ListRuntimeFindings(ctx context.Context) ([]taskflow.Finding, error) {
-	if err := s.ExpireAcceptedRisks(ctx, time.Now().UTC()); err != nil {
+	page, err := s.ListRuntimeFindingsPage(ctx, FindingListQuery{Page: 1})
+	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT data FROM security_findings ORDER BY rowid DESC`)
-	if err != nil {
-		return nil, fmt.Errorf("list findings: %w", err)
-	}
-	defer rows.Close()
-	items := []taskflow.Finding{}
-	for rows.Next() {
-		var data string
-		var finding taskflow.Finding
-		if err := rows.Scan(&data); err != nil {
-			return nil, fmt.Errorf("read finding: %w", err)
-		}
-		if err := json.Unmarshal([]byte(data), &finding); err != nil {
-			return nil, fmt.Errorf("decode finding: %w", err)
-		}
-		items = append(items, findings.Upgrade(finding))
-	}
-	return items, rows.Err()
+	return page.Items, nil
 }

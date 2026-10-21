@@ -24,10 +24,10 @@ import { Finding, FindingAssignmentEvent, FindingEvent, FindingAssignee, Finding
 import { FindingStatusTag, SeverityTag } from '../../components/Semantic';
 import { useAuth } from '../../auth/AuthProvider';
 import { batchAssignFindings, batchFindingDisposition, updateFinding, fetchFindingEvents, fetchFindingAssignees, fetchFindingAssignments, assignFinding, fetchFindingNotes, addFindingNote, createFindingRetest, fetchFindingRetests } from '../../api/runtime';
-import { useCollection } from '../../api/hooks';
+import { apiClient } from '../../api/client';
 import { CollectionNotice } from '../../api/CollectionNotice';
 
-import { riskLabels, methodLabels, confidenceLabels, isVerifiedFinding, findingCounts } from './presentation';
+import { riskLabels, methodLabels, confidenceLabels, isVerifiedFinding } from './presentation';
 import { FindingFilters, readFindingFilters, writeFindingFilters } from './filters';
 import { detailText, detailList, detailIdentifiers, selectedFindingForDrawer } from './drawer';
 import { canAcceptRisk, acceptanceInput } from './disposition';
@@ -39,7 +39,7 @@ const { Text } = Typography;
 export const FindingsPage: React.FC = () => {
   const {user}=useAuth();
   const canWrite=user?.role==='admin'||user?.role==='security_engineer';
-  const { data: findings, setData: setFindings, loading, error } = useCollection('findings');
+  const [findings,setFindings]=useState<Finding[]>([]);const [findingLoading,setFindingLoading]=useState(true);const [findingError,setFindingError]=useState<string|null>(null);const [findingPage,setFindingPage]=useState(1);const [findingPageSize,setFindingPageSize]=useState(10);const [findingTotal,setFindingTotal]=useState(0);const [findingCountsSummary,setFindingCountsSummary]=useState({vulnerabilities:0,loginEntries:0,unknown:0,version:0,verified:0});const [findingRevision,setFindingRevision]=useState(0);
   const [searchParams, setSearchParams] = useSearchParams();
   const filters = readFindingFilters(searchParams);
   const { severity: severityFilter, status: statusFilter, method: methodFilter,
@@ -54,9 +54,16 @@ export const FindingsPage: React.FC = () => {
   const updateFilters = (patch: Partial<FindingFilters>) => {
     setSearchParams(current => writeFindingFilters(current, { ...readFindingFilters(current), ...patch }), { replace: true });
   };
-  const counts=findingCounts(findings);
   const [query, setQuery] = useState('');
-  const normalizedQuery = query.trim().toLowerCase();
+  useEffect(()=>{
+    const controller=new AbortController();
+    setFindingLoading(true);
+    apiClient.findingsPage(findingPage,findingPageSize,{search:query,severity:severityFilter,status:statusFilter,method:methodFilter,confidence:confidenceFilter,risk:riskFilter,onlyVerified,businessGroup,assetId},controller.signal).then(result=>{
+      if(!controller.signal.aborted){setFindings(result.items);setFindingTotal(result.total);setFindingCountsSummary(result.counts);setFindingError(null);}
+    }).catch(cause=>{if(!controller.signal.aborted){setFindings([]);setFindingTotal(0);setFindingCountsSummary({vulnerabilities:0,loginEntries:0,unknown:0,version:0,verified:0});setFindingError(cause instanceof Error?cause.message:'漏洞清册加载失败');}}).finally(()=>{if(!controller.signal.aborted)setFindingLoading(false)});
+    return()=>controller.abort();
+  },[findingPage,findingPageSize,query,severityFilter,statusFilter,methodFilter,confidenceFilter,riskFilter,onlyVerified,businessGroup,assetId,findingRevision]);
+  useEffect(()=>{if(findingPage!==1)setFindingPage(1)},[query,severityFilter,statusFilter,methodFilter,confidenceFilter,riskFilter,onlyVerified,businessGroup,assetId]);
   const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
   const detailTrigger = useRef<HTMLElement | null>(null);
   const [acceptReason,setAcceptReason]=useState('');
@@ -145,9 +152,9 @@ export const FindingsPage: React.FC = () => {
   const [batchAssignOpen,setBatchAssignOpen]=useState(false);
   const [batchAssigneeId,setBatchAssigneeId]=useState('');
   const [batchAssignSaving,setBatchAssignSaving]=useState(false);
-  const selectionChanged=batchSelectionChanged(batchSelection,findings);
+  const selectionChanged=batchSelectionChanged(batchSelection,findings,true);
   const batchAllowed=batchSelection.length>0&&batchSelection.length<=100&&!selectionChanged&&batchSelection.every(item=>batchTransitionAllowed(item.expectedStatus,batchStatus));
-  const assignmentSelectionChanged=batchAssignmentSelectionChanged(batchSelection,findings);
+  const assignmentSelectionChanged=batchAssignmentSelectionChanged(batchSelection,findings,true);
   const batchAssignmentAllowed=canWrite&&batchSelection.length>0&&batchSelection.length<=100&&!assignmentSelectionChanged&&!batchAssigneeError&&batchAssigneeId!=='';
   const saveBatch=async()=>{
     if(!canWrite||!batchAllowed)return;
@@ -156,7 +163,7 @@ export const FindingsPage: React.FC = () => {
       setBatchSaving(true);
       const result=await batchFindingDisposition(batchSelection,batchStatus,acceptance);
       const updated=new Map(result.items.map(item=>[item.id,item]));
-      setFindings(previous=>previous.map(item=>updated.get(item.id)??item));
+      setFindings(previous=>previous.map(item=>updated.get(item.id)??item));setFindingRevision(n=>n+1);
       setBatchSelection([]);setBatchOpen(false);setBatchReason('');setBatchUntil('');setEventRevision(n=>n+1);
       message.success(`已更新 ${result.updated} 项并记录审计`);
     }catch(e){message.error(`${e instanceof Error?e.message:String(e)}；整批未保存，请核对当前状态后重新选择`)}finally{setBatchSaving(false)}
@@ -173,18 +180,7 @@ export const FindingsPage: React.FC = () => {
     }catch(e){message.error(`${e instanceof Error?e.message:String(e)}；整批未保存，请核对当前指派状态后重试`)}finally{setBatchAssignSaving(false)}
   };
 
-  const filteredFindings = findings.filter((f) => {
-    if(methodFilter!=='ALL'&&(f.detectMethod??'unknown')!==methodFilter)return false;
-    if(confidenceFilter!=='ALL'&&(f.confidence??'unknown')!==confidenceFilter)return false;
-    if(riskFilter!=='ALL'&&(f.riskType??'unknown')!==riskFilter)return false;
-    if(businessGroup&&f.businessGroup!==businessGroup)return false;
-    if(assetId&&f.assetId!==assetId)return false;
-    if(onlyVerified&&!isVerifiedFinding(f))return false;
-    if (severityFilter !== 'ALL' && f.severity !== severityFilter) return false;
-    if (statusFilter !== 'ALL' && f.status !== statusFilter) return false;
-    if (normalizedQuery && ![f.target, f.package ?? '', f.templateOrCve, f.title].some(value => value.toLowerCase().includes(normalizedQuery))) return false;
-    return true;
-  });
+  const filteredFindings = findings;
   const selectedFinding = selectedFindingForDrawer(findings, filteredFindings, selectedFindingId);
   useEffect(() => {
     if (selectedFindingId && !selectedFinding) setSelectedFindingId(null);
@@ -208,12 +204,12 @@ export const FindingsPage: React.FC = () => {
       message.warning('FIXED 必须经 Server 确认完整扫描、规则执行和未检出阈值，目前不可操作');
       return;
     }
-    setSaving(true);try{const item=await updateFinding(id,newStatus,acceptance);setFindings(prev=>prev.map(f=>f.id===id?item:f));setEventRevision(n=>n+1);message.success('状态已保存并记录审计');}catch(e){message.error(String(e));}finally{setSaving(false)}
+    setSaving(true);try{const item=await updateFinding(id,newStatus,acceptance);setFindings(prev=>prev.map(f=>f.id===id?item:f));setFindingRevision(n=>n+1);setEventRevision(n=>n+1);message.success('状态已保存并记录审计');}catch(e){message.error(String(e));}finally{setSaving(false)}
   };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-      <CollectionNotice loading={loading} error={error} />
+      <CollectionNotice loading={findingLoading} error={findingError} />
       <Alert
         message="扫描引擎发现项"
         description="Nuclei 基线和 ZAP 被动发现需结合服务用途判断；Trivy 展示漏洞编号、受影响组件和修复版本。未检出不自动标记已修复。"
@@ -222,7 +218,7 @@ export const FindingsPage: React.FC = () => {
         icon={<SafetyCertificateOutlined />}
       />
 
-      <Card><Space wrap><Tag color="red">漏洞总数 {counts.vulnerabilities}</Tag><Tag color="blue">登录入口 {counts.loginEntries}</Tag><Tag>未核实类型 {counts.unknown}</Tag><Tag color="orange">版本推断 {counts.version}</Tag><Tag color="green">已验证 {counts.verified}</Tag><Tag>弱口令：本次未启用该检测项</Tag></Space></Card>
+      <Card><Space wrap><Tag color="red">漏洞总数 {findingCountsSummary.vulnerabilities}</Tag><Tag color="blue">登录入口 {findingCountsSummary.loginEntries}</Tag><Tag>未核实类型 {findingCountsSummary.unknown}</Tag><Tag color="orange">版本推断 {findingCountsSummary.version}</Tag><Tag color="green">已验证 {findingCountsSummary.verified}</Tag><Tag>弱口令：本次未启用该检测项</Tag></Space></Card>
       <Space wrap>
         <Select aria-label="检测方式筛选" value={methodFilter} onChange={method => updateFilters({ method })} style={{width:210}} options={[{value:'ALL',label:'全部检测方式'},...Object.entries(methodLabels).map(([value,label])=>({value,label}))]}/>
         <Select aria-label="置信度筛选" value={confidenceFilter} onChange={confidence => updateFilters({ confidence })} style={{width:180}} options={[{value:'ALL',label:'全部置信度'},...Object.entries(confidenceLabels).map(([value,label])=>({value,label}))]}/>
@@ -286,6 +282,7 @@ export const FindingsPage: React.FC = () => {
         </Space>
         <DataTable
           dataSource={filteredFindings}
+          loading={findingLoading}
           rowKey="id"
           rowSelection={{
             selectedRowKeys:batchSelection.map(item=>item.id),
@@ -293,7 +290,7 @@ export const FindingsPage: React.FC = () => {
             onChange:keys=>setBatchSelection(previous=>updateBatchSelection(previous,keys,findings)),
             getCheckboxProps:record=>({disabled:batchSaving||!canWrite||record.status==='FIXED'||(batchSelection.length>=100&&!batchSelection.some(item=>item.id===record.id))}),
           }}
-          pagination={{showTotal:total=>`共 ${total} 项`}}
+          pagination={{current:findingPage,pageSize:findingPageSize,total:findingTotal,showSizeChanger:true,pageSizeOptions:[10,20,50],showTotal:total=>`共 ${total} 项`,onChange:(page,size)=>{if(size!==findingPageSize){setFindingPageSize(size);setFindingPage(1)}else setFindingPage(page)}}}
           scroll={{x:1600}}
           columns={[
             {title:'类型 / 检测依据',width:200,render:(_,r)=><Space direction="vertical" size={3}><Tag>{riskLabels[r.riskType??'unknown']}</Tag><Tag color={isVerifiedFinding(r)?'green':r.detectMethod==='version'?'orange':'default'}>{methodLabels[r.detectMethod??'unknown']}</Tag><Tag>{confidenceLabels[r.confidence??'unknown']}</Tag></Space>},

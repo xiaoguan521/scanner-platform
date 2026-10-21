@@ -2,6 +2,12 @@
 
 记录待核对项的来源、锁定版本、验证日期、结果和未决风险。未经实际验证的项目不得标记为已确认。
 
+## 2026-10-21：漏洞清册服务端分页与筛选
+
+- `/api/v1/findings` 保留无查询参数时的兼容完整响应；带分页参数或筛选条件时由 Server 执行有界分页、稳定排序、搜索和分类计数。筛选只覆盖归一化发现字段，前端不再一次加载全部发现项；跨页批量选择继续携带状态/指派快照，由 Server 做最终并发校验。
+- 新增仓储和 API race 覆盖严重度、风险类型、搜索、业务组/资产、仅已验证、空结果计数、非法查询拒绝和页面响应；OpenAPI、API README、产品现状与路线图同步更新。
+- 已通过：`go test ./internal/repo ./internal/api`、`node web/src/pages/Findings/list.test.mjs`、`node web/src/pages/Findings/batch.test.mjs`、全部 32 项前端源码测试、`npm --prefix web run build`、`make test`、`make lint`、`make build`、OpenAPI YAML 解析和 `git diff --check`。真实浏览器分页体验仍待 `make test-browser`。
+
 ## 2026-10-21：管理员系统设置与会话策略
 
 - 新增 `/settings` 管理员页面和 `GET/PUT /api/v1/system-settings`。时区限定为 `UTC`、`Asia/Shanghai`、`America/New_York`；会话时长限定为 30–1440 分钟；保存写入 `product_settings` 并记录 `update_system_settings` 审计动作。

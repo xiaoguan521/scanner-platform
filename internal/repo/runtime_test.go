@@ -18,14 +18,12 @@ func TestRuntimeTaskPersistsAndReportsAreIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	for range 2 {
-		if err := store.SeedSyntheticTask(ctx); err != nil {
-			t.Fatal(err)
-		}
+	if _, err := store.CreateSyntheticTask(ctx); err != nil {
+		t.Fatal(err)
 	}
 	tasks, err := store.ListRuntimeTasks(ctx)
 	if err != nil || len(tasks) != 1 || tasks[0].Status != "PENDING" {
-		t.Fatalf("seed task: %+v, %v", tasks, err)
+		t.Fatalf("synthetic fixture task: %+v, %v", tasks, err)
 	}
 	task, err := store.ClaimRuntimeTask(ctx, "worker-test")
 	if err != nil || task == nil || task.Status != "RUNNING" {

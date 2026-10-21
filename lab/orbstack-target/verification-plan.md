@@ -50,7 +50,7 @@ curl --fail http://127.0.0.1:8080/readyz
 SCANNER_SSH_CONFIG=runtime/ssh/ssh-config.json make dev
 ```
 
-首次访问 `http://127.0.0.1:8080` 时按页面提示创建管理员。任务列表中的 `framework-demo` 是启动合成数据，不作为靶场扫描结果。
+首次访问 `http://127.0.0.1:8080` 时按页面提示创建管理员。当前启动流程不会自动创建演示资产、任务或发现项；清册中的记录都来自本次操作或测试夹具。
 
 ### 3.2 检查 SSH 指纹与认证
 

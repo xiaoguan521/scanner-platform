@@ -1220,23 +1220,102 @@ paths:
   "/api/v1/findings":
     get:
       summary: Authenticated local findings
+      description: Calls without list query parameters retain the legacy complete response. Supplying any list query parameter returns a bounded Server-side page with category counts; search and filters are evaluated against stable finding fields.
+      parameters:
+      - in: query
+        name: page
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          default: 1
+      - in: query
+        name: page_size
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+      - in: query
+        name: q
+        required: false
+        schema:
+          type: string
+          maxLength: 160
+        description: Search target, package, template/CVE or title.
+      - in: query
+        name: severity
+        required: false
+        schema:
+          type: string
+          enum: [CRITICAL, HIGH, MEDIUM, LOW, INFO]
+      - in: query
+        name: status
+        required: false
+        schema:
+          type: string
+          enum: [OPEN, REOPENED, IN_PROGRESS, FIXED, FALSE_POSITIVE, ACCEPTED_RISK]
+      - in: query
+        name: method
+        required: false
+        schema:
+          type: string
+          enum: [principle, version, configuration, unknown]
+      - in: query
+        name: confidence
+        required: false
+        schema:
+          type: string
+          enum: [high, medium, low, unknown]
+      - in: query
+        name: risk
+        required: false
+        schema:
+          type: string
+          enum: [system, web, weak_credential, login_entry, unknown]
+      - in: query
+        name: onlyVerified
+        required: false
+        schema:
+          type: boolean
+          default: false
+      - in: query
+        name: businessGroup
+        required: false
+        schema:
+          type: string
+          maxLength: 160
+      - in: query
+        name: assetId
+        required: false
+        schema:
+          type: string
+          maxLength: 160
+      - in: query
+        name: sort
+        required: false
+        schema:
+          type: string
+          enum: [last_seen, -last_seen, first_seen, -first_seen, severity, -severity, status, -status, target, -target, title, -title]
+          default: -last_seen
       responses:
         '200':
-          description: Local operation result
+          description: Local operation result. Calls without list query parameters return the legacy complete response; filtered calls return a bounded page and category counts.
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  items:
-                    type: array
+                oneOf:
+                - type: object
+                  properties:
                     items:
-                      "$ref": "#/components/schemas/Finding"
-                  total:
-                    type: integer
-                required:
-                - items
-                - total
+                      type: array
+                      items:
+                        "$ref": "#/components/schemas/Finding"
+                    total:
+                      type: integer
+                  required: [items, total]
+                - "$ref": "#/components/schemas/FindingPage"
       security:
       - sessionCookie: []
   "/api/v1/nodes":
@@ -3182,6 +3261,45 @@ components:
           additionalProperties:
             type: integer
             minimum: 0
+    FindingPage:
+      type: object
+      required: [items, total, page, pageSize, counts]
+      properties:
+        items:
+          type: array
+          items:
+            "$ref": "#/components/schemas/Finding"
+        total:
+          type: integer
+          minimum: 0
+        page:
+          type: integer
+          minimum: 1
+        pageSize:
+          type: integer
+          minimum: 1
+          maximum: 100
+        counts:
+          "$ref": "#/components/schemas/FindingListCounts"
+    FindingListCounts:
+      type: object
+      required: [vulnerabilities, loginEntries, unknown, version, verified]
+      properties:
+        vulnerabilities:
+          type: integer
+          minimum: 0
+        loginEntries:
+          type: integer
+          minimum: 0
+        unknown:
+          type: integer
+          minimum: 0
+        version:
+          type: integer
+          minimum: 0
+        verified:
+          type: integer
+          minimum: 0
     LoginRequest:
       type: object
       required:

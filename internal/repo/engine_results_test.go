@@ -531,7 +531,7 @@ func TestLateEngineCompletionPausesWithoutFinding(t *testing.T) {
 func TestLegacySingleFindingSchemaKeepsStoredRows(t *testing.T) {
 	store, _ := localFixture(t)
 	ctx := context.Background()
-	if err := store.SeedSyntheticTask(ctx); err != nil {
+	if _, err := store.CreateSyntheticTask(ctx); err != nil {
 		t.Fatal(err)
 	}
 	task, err := store.ClaimRuntimeTask(ctx, "worker")

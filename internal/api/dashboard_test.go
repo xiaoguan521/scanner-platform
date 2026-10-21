@@ -34,7 +34,7 @@ func TestDashboardSummaryRequiresAuthAndAggregatesLocalState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SeedSyntheticTask(context.Background()); err != nil {
+	if _, err := store.CreateSyntheticTask(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	handler := NewRuntimeHandler(store, NewDevelopmentHandler(accounts, assetStore), "", accounts)

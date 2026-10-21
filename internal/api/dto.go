@@ -31,6 +31,13 @@ type TaskPageResponse struct {
 	PageSize     int             `json:"pageSize"`
 	StatusCounts map[string]int  `json:"statusCounts"`
 }
+type FindingPageResponse struct {
+	Items    []taskflow.Finding     `json:"items"`
+	Total    int                    `json:"total"`
+	Page     int                    `json:"page"`
+	PageSize int                    `json:"pageSize"`
+	Counts   repo.FindingListCounts `json:"counts"`
+}
 type APIError struct {
 	Error   string `json:"error"`
 	Message string `json:"message"`

@@ -148,6 +148,21 @@ func NewRuntimeHandler(store *repo.RuntimeStore, fallback http.Handler, uiDir st
 		}
 	}))
 	mux.HandleFunc("GET /api/v1/findings", ui(false, func(w http.ResponseWriter, r *http.Request) {
+		if query, paged, ok := parseFindingListQuery(r); paged {
+			if !ok {
+				bad(w, http.StatusBadRequest, "invalid_finding_list_query")
+				return
+			}
+			page, err := store.ListRuntimeFindingsPage(r.Context(), query)
+			if errors.Is(err, repo.ErrInvalidFindingListQuery) {
+				bad(w, http.StatusBadRequest, "invalid_finding_list_query")
+				return
+			}
+			if !runtimeStoreError(w, err) {
+				runtimeJSON(w, http.StatusOK, FindingPageResponse{Items: page.Items, Total: page.Total, Page: page.Page, PageSize: page.PageSize, Counts: page.Counts})
+			}
+			return
+		}
 		items, err := store.ListRuntimeFindings(r.Context())
 		if !runtimeStoreError(w, err) {
 			runtimeJSON(w, http.StatusOK, ListResponse[taskflow.Finding]{Items: items, Total: len(items)})

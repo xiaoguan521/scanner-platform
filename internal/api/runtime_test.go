@@ -26,7 +26,7 @@ func TestRuntimeWorkerHTTPFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if err := store.SeedSyntheticTask(context.Background()); err != nil {
+	if _, err := store.CreateSyntheticTask(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	server := httptest.NewServer(NewRuntimeHandler(store, nil, ""))

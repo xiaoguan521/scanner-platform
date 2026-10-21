@@ -7,11 +7,17 @@ export function batchTransitionAllowed(from: FindingStatus, to: FindingStatus): 
   if (to === 'ACCEPTED_RISK') return ['OPEN', 'REOPENED', 'IN_PROGRESS'].includes(from);
   return ['OPEN', 'IN_PROGRESS', 'FALSE_POSITIVE'].includes(to);
 }
-export function batchSelectionChanged(selection: FindingSelection[], findings: Finding[]): boolean {
-  return selection.some(item => !findings.some(f => f.id === item.id && f.status === item.expectedStatus));
+export function batchSelectionChanged(selection: FindingSelection[], findings: Finding[], ignoreMissing = false): boolean {
+	return selection.some(item => {
+		const current = findings.find(f => f.id === item.id);
+		return current ? current.status !== item.expectedStatus : !ignoreMissing;
+	});
 }
-export function batchAssignmentSelectionChanged(selection: FindingSelection[], findings: Finding[]): boolean {
-  return selection.some(item => !findings.some(f => f.id === item.id && (f.assigneeId ?? '') === (item.expectedAssigneeId ?? '')));
+export function batchAssignmentSelectionChanged(selection: FindingSelection[], findings: Finding[], ignoreMissing = false): boolean {
+	return selection.some(item => {
+		const current = findings.find(f => f.id === item.id);
+		return current ? (current.assigneeId ?? '') !== (item.expectedAssigneeId ?? '') : !ignoreMissing;
+	});
 }
 export function updateBatchSelection(previous: FindingSelection[], keys: Key[], findings: Finding[]): FindingSelection[] {
   const byId = new Map(previous.map(item => [item.id, item]));
