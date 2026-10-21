@@ -1,5 +1,10 @@
 # Verification log
 
+## 2026-10-21：部署边界与当前运行契约
+
+- `deploy/README.md` 已从占位说明更新为当前可运行模式和部署边界：SQLite/显式 PostgreSQL、本地节点 HTTPS、Linux `--fence --once` 以及规则目录/运行目录/令牌文件约束。
+- 未新增生产 Compose 或镜像文件，避免把尚未完成的可信启动器、secret/certificate 编排和隔离 Linux 验收伪装成可上线配置。待验收项仍包括范围外 DROP 计数、降权属性、cgroup 后代回收、禁止 `hostNetwork`、备份恢复和远程部署。
+
 ## 2026-10-21：Linux Worker 围栏接入真实执行路径（代码回归）
 
 - `internal/bootstrap` 已把 Linux `--fence` 模式接入现有 `taskflow.Worker` 的执行、端口探测和自动综合扫描回调。任务由 Server 固定为数字 IP 与端口后，root 阶段只生成精确 nftables 规则；应用成功后通过固定 `setpriv` 参数重新执行 `--fence-child`，子进程以 uid 10001、无 capabilities 和 `no_new_privs` 运行现有执行器。`--once` 强制每个专属 network namespace 只处理一个任务，避免复用旧规则。端口进度通过独立继承 fd 回传到现有 heartbeat，隐藏子进程入口还绑定了任务摘要 capability，避免伪造环境变量后改写任务。
