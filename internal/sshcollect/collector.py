@@ -23,6 +23,7 @@ SNAPSHOT = '.scanner-input.json'
 MAX_FILE = 16 << 30
 MAX_TOTAL = 32 << 30
 MAX_FILES = 10000
+MAX_RUNTIME_SERVICES = 256
 ALIAS = re.compile(r'[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}\Z')
 LOCKS = {'package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock', 'pnpm-lock.yaml',
          'poetry.lock', 'Pipfile.lock', 'uv.lock', 'requirements.txt', 'Gemfile.lock',
@@ -142,6 +143,79 @@ def collect_os(root, destination):
     if not any(name.endswith('os-release') for name in copied) or not any(
             name.endswith(('dpkg/status', 'apk/db/installed', '/Packages', '/Packages.db', '/rpmdb.sqlite')) for name in copied):
         raise ValueError('A Linux os-release file and supported dpkg/apk/rpm package database are required')
+
+
+def runtime_name(value):
+    value = value.strip()
+    if not value or len(value) > 128 or not re.fullmatch(r'[A-Za-z0-9_.@:+-]+', value):
+        return None
+    return value
+
+
+def collect_runtime_services(root, destination):
+    """Collect stable service/process names without command lines or PIDs."""
+    services = {}
+
+    def add(name, manager, state):
+        name = runtime_name(name)
+        if name is None:
+            return
+        key = (manager, name)
+        previous = services.get(key)
+        if previous is None or previous['state'] != 'running' and state == 'running':
+            services[key] = {'name': name, 'manager': manager, 'state': state}
+
+    for relative in ('etc/systemd/system', 'lib/systemd/system', 'usr/lib/systemd/system'):
+        directory = root / relative
+        try:
+            entries = sorted(directory.iterdir(), key=lambda path: path.name)
+        except (FileNotFoundError, NotADirectoryError, PermissionError):
+            continue
+        for entry in entries:
+            try:
+                mode = entry.lstat().st_mode
+            except OSError:
+                continue
+            if not (stat.S_ISREG(mode) or stat.S_ISLNK(mode)) or not entry.name.endswith('.service'):
+                continue
+            add(entry.name[:-8], 'systemd', 'installed')
+
+    init_directory = root / 'etc/init.d'
+    try:
+        entries = sorted(init_directory.iterdir(), key=lambda path: path.name)
+    except (FileNotFoundError, NotADirectoryError, PermissionError):
+        entries = []
+    for entry in entries:
+        try:
+            mode = entry.lstat().st_mode
+        except OSError:
+            continue
+        if (stat.S_ISREG(mode) or stat.S_ISLNK(mode)) and not entry.name.startswith('.'):
+            add(entry.name, 'init', 'installed')
+
+    proc = root / 'proc'
+    try:
+        entries = sorted(proc.iterdir(), key=lambda path: path.name)
+    except (FileNotFoundError, NotADirectoryError, PermissionError):
+        entries = []
+    for entry in entries:
+        if not entry.name.isdigit():
+            continue
+        try:
+            if not stat.S_ISDIR(entry.lstat().st_mode):
+                continue
+            name = (entry / 'comm').read_text(errors='strict')
+        except (OSError, UnicodeError):
+            continue
+        add(name.rstrip('\n'), 'process', 'running')
+        if len(services) >= MAX_RUNTIME_SERVICES:
+            break
+
+    values = sorted(services.values(), key=lambda value: (value['manager'], value['name']))[:MAX_RUNTIME_SERVICES]
+    if values:
+        destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        destination.write_text(json.dumps({'schemaVersion': 1, 'services': values}, ensure_ascii=False, indent=2) + '\n')
+        destination.chmod(0o600)
 
 
 def deployed_file(name):
@@ -364,6 +438,7 @@ def main(argv=None):
         else:
             components = [{'name': 'os', 'kind': 'rootfs', 'path': 'os'}]
             collect_os(args.rootfs.resolve(strict=True), staging / 'os')
+            collect_runtime_services(args.rootfs.resolve(strict=True), staging / 'runtime-services.json')
             snapshot(staging / 'os', args.source, 'rootfs', collected)
         for name, path in args.app:
             destination = staging / 'apps' / name

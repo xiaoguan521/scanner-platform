@@ -297,6 +297,9 @@ export const AssetsPage: React.FC = () => {
           {title:'网站',width:230,render:(_,r)=><Space direction="vertical" size={0}><Text style={{wordBreak:'break-all'}}>{r.url||'—'}</Text><Text type="secondary">{r.title||'无标题'} · TLS {boolLabel(r.tls)}</Text></Space>},
           {title:'最近发现',width:160,dataIndex:'lastSeen',render:(v:string)=>v?new Date(v).toLocaleString():'未知'},
         ]}/></Card>
+        <Card title="SSH 运行态服务" size="small"><DataTable dataSource={detailAsset.runtimeServices??[]} rowKey={r=>`${r.manager}-${r.name}`} size="small" pagination={false} locale={{emptyText:'本次 SSH 采集没有返回运行态服务'}} columns={[
+          {title:'名称',dataIndex:'name',width:260},{title:'管理方式',dataIndex:'manager',width:140,render:(v:string)=>v==='systemd'?'systemd':v==='init'?'init 脚本':'进程表'},{title:'状态',dataIndex:'state',render:(v:string)=>v==='running'?<Tag color="green">运行中</Tag>:<Tag>已安装</Tag>},
+        ]}/><Typography.Paragraph type="secondary" style={{marginTop:10,marginBottom:0}}>仅展示明确授权主机通过 SSH 只读采集到的服务单元和进程名，不包含 PID、命令行或参数。</Typography.Paragraph></Card>
         <Card title="登录入口（单独统计）" size="small"><DataTable dataSource={detailAsset.loginEntries??[]} rowKey={r=>`${r.type}-${r.port}-${r.url??r.name}`} size="small" scroll={{x:750}} columns={[
           {title:'名称 / 类型',render:(_,r)=>`${r.name} · ${r.type==='web'?'Web':'系统'}`},{title:'端口',dataIndex:'port'}, {title:'URL',dataIndex:'url',render:(v:string)=>v||'—'},
           {title:'安全属性',render:(_,r)=><Space direction="vertical" size={0}><Text>HTTPS：{boolLabel(r.https)}</Text><Text>验证码：{boolLabel(r.captcha)}</Text><Text>防爆破：{boolLabel(r.antiBruteForce)}</Text></Space>}, {title:'举证',dataIndex:'evidence'},

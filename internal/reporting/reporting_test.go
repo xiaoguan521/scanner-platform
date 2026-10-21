@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"scanner-platform/internal/inventory"
 	"strings"
 	"testing"
 	"time"
@@ -23,7 +24,7 @@ func exampleSnapshot() Snapshot {
 	score := 9.1
 	at := time.Date(2026, 10, 19, 0, 0, 0, 0, time.UTC)
 	login := LoginEntry{Type: "web", Name: "示例登录", Port: 443, URL: "https://192.0.2.10/login", HTTPS: true, Evidence: "仅识别登录表单，未尝试认证"}
-	s := Snapshot{CreatedAt: at, Template: DefaultTemplate(), Assets: []Asset{{ID: "a", Address: "192.0.2.10", Name: "示例资产", OSName: "Example Linux", DeviceType: "服务器", ReachabilityStatus: "NO_RESPONSE", Services: []Service{{Port: 443, Kind: "WEB", Protocol: "tcp", Software: "example", Version: "1.0", URL: "https://192.0.2.10", Title: "示例网站", LoginEntries: []LoginEntry{login}}}, LoginEntries: []LoginEntry{login}}}, Findings: []Finding{{ID: "one", Fingerprint: "f1", RiskType: "system", Title: "示例系统风险", Target: "192.0.2.10:443", TemplateOrCVE: "CVE-2026-0001", CVSSScore: &score, DetectMethod: "version", Confidence: "low", Description: "版本推断说明", Impact: "可能影响机密性", Solution: "升级修复版本", Evidence: "example:1.0", Identifiers: map[string][]string{"cve": {"CVE-2026-0001"}}, LastSeen: at}, {ID: "two", Fingerprint: "f2", RiskType: "web", Title: "示例 Web 风险<script>", Target: "192.0.2.10:443", Severity: "MEDIUM", TemplateOrCVE: "example-header", DetectMethod: "configuration", Confidence: "high", Evidence: "安全响应头缺失", LastSeen: at}}}
+	s := Snapshot{CreatedAt: at, Template: DefaultTemplate(), Assets: []Asset{{ID: "a", Address: "192.0.2.10", Name: "示例资产", OSName: "Example Linux", DeviceType: "服务器", RuntimeServices: []inventory.RuntimeService{{Name: "sshd", Manager: "process", State: "running"}}, ReachabilityStatus: "NO_RESPONSE", Services: []Service{{Port: 443, Kind: "WEB", Protocol: "tcp", Software: "example", Version: "1.0", URL: "https://192.0.2.10", Title: "示例网站", LoginEntries: []LoginEntry{login}}}, LoginEntries: []LoginEntry{login}}}, Findings: []Finding{{ID: "one", Fingerprint: "f1", RiskType: "system", Title: "示例系统风险", Target: "192.0.2.10:443", TemplateOrCVE: "CVE-2026-0001", CVSSScore: &score, DetectMethod: "version", Confidence: "low", Description: "版本推断说明", Impact: "可能影响机密性", Solution: "升级修复版本", Evidence: "example:1.0", Identifiers: map[string][]string{"cve": {"CVE-2026-0001"}}, LastSeen: at}, {ID: "two", Fingerprint: "f2", RiskType: "web", Title: "示例 Web 风险<script>", Target: "192.0.2.10:443", Severity: "MEDIUM", TemplateOrCVE: "example-header", DetectMethod: "configuration", Confidence: "high", Evidence: "安全响应头缺失", LastSeen: at}}}
 	return Freeze(s)
 }
 func TestSeverityBoundaries(t *testing.T) {
@@ -146,7 +147,7 @@ func TestThreeFormatsHaveSameSnapshotAndDetailContent(t *testing.T) {
 					}
 				}
 			}
-			for _, value := range []string{s.ID, "示例系统风险", "CVE-2026-0001", "版本推断", "置信度", "example:1.0", "示例登录", "弱口令", "未启用"} {
+			for _, value := range []string{s.ID, "示例系统风险", "CVE-2026-0001", "版本推断", "置信度", "example:1.0", "示例登录", "sshd", "弱口令", "未启用"} {
 				if !strings.Contains(content, value) {
 					t.Errorf("missing %q", value)
 				}

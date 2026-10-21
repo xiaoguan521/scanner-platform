@@ -257,6 +257,7 @@ func (s *RuntimeStore) freezeReport(ctx context.Context, tx *sql.Tx, input repor
 					a.DeviceSubtype = task.AssetProfile.DeviceSubtype
 					a.Vendor = task.AssetProfile.Vendor
 					a.Model = task.AssetProfile.Model
+					a.RuntimeServices = task.AssetProfile.RuntimeServices
 				}
 			}
 		}

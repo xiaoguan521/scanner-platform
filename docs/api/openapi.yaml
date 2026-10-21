@@ -5420,6 +5420,18 @@ components:
         deviceSubtype: {"type": "string"}
         vendor: {"type": "string"}
         model: {"type": "string"}
+        runtimeServices:
+          type: array
+          maxItems: 256
+          items: {"$ref": "#/components/schemas/RuntimeService"}
+    RuntimeService:
+      type: object
+      additionalProperties: false
+      required: [name, manager, state]
+      properties:
+        name: {type: string, maxLength: 128}
+        manager: {type: string, enum: [systemd, init, process]}
+        state: {type: string, enum: [installed, running]}
     LoginEntry:
       type: object
       properties:

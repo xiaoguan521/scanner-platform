@@ -24,6 +24,7 @@ import (
 
 	"archive/tar"
 	"net/netip"
+	"scanner-platform/internal/inventory"
 	"scanner-platform/internal/taskflow"
 )
 
@@ -172,44 +173,44 @@ func (c *Collector) ProfilePort(target string) (int, bool) {
 
 // CollectRootfs runs only the embedded read-only package collector. The
 // configured SSH port must be both selected and found open by the same task.
-func (c *Collector) CollectRootfs(ctx context.Context, target string, selectedPorts, openPorts []int, runtimeDir, inputsDir string) (string, func(), string, error) {
+func (c *Collector) CollectRootfs(ctx context.Context, target string, selectedPorts, openPorts []int, runtimeDir, inputsDir string) (string, []inventory.RuntimeService, func(), string, error) {
 	if c == nil {
-		return "", func() {}, taskflow.SystemScanNotConfigured, nil
+		return "", nil, func() {}, taskflow.SystemScanNotConfigured, nil
 	}
 	profile, ok := c.profiles[target]
 	if !ok {
-		return "", func() {}, taskflow.SystemScanNotConfigured, nil
+		return "", nil, func() {}, taskflow.SystemScanNotConfigured, nil
 	}
 	if !containsPort(selectedPorts, profile.SSHPort) {
-		return "", func() {}, taskflow.SystemScanPortOutOfScope, nil
+		return "", nil, func() {}, taskflow.SystemScanPortOutOfScope, nil
 	}
 	if !containsPort(openPorts, profile.SSHPort) {
-		return "", func() {}, taskflow.SystemScanPortClosed, nil
+		return "", nil, func() {}, taskflow.SystemScanPortClosed, nil
 	}
 	sshPath, err := exec.LookPath("ssh")
 	if err != nil {
-		return "", func() {}, taskflow.SystemScanClientMissing, ErrSSH
+		return "", nil, func() {}, taskflow.SystemScanClientMissing, ErrSSH
 	}
 	if err := os.MkdirAll(runtimeDir, 0700); err != nil {
-		return "", func() {}, "", ErrSSH
+		return "", nil, func() {}, "", ErrSSH
 	}
 	if err := os.MkdirAll(inputsDir, 0700); err != nil {
-		return "", func() {}, "", ErrSSH
+		return "", nil, func() {}, "", ErrSSH
 	}
 	var random [12]byte
 	if _, err := rand.Read(random[:]); err != nil {
-		return "", func() {}, "", ErrSSH
+		return "", nil, func() {}, "", ErrSSH
 	}
 	stamp := hex.EncodeToString(random[:])
 	runtimeRoot, err := os.MkdirTemp(runtimeDir, "sshcollect-")
 	if err != nil {
-		return "", func() {}, "", ErrSSH
+		return "", nil, func() {}, "", ErrSSH
 	}
 	archivePath := filepath.Join(runtimeRoot, "rootfs.tar.gz")
 	archive, err := os.OpenFile(archivePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
 		os.RemoveAll(runtimeRoot)
-		return "", func() {}, "", ErrSSH
+		return "", nil, func() {}, "", ErrSSH
 	}
 	args := []string{
 		"-T", "-p", fmt.Sprint(profile.SSHPort),
@@ -234,7 +235,7 @@ func (c *Collector) CollectRootfs(ctx context.Context, target string, selectedPo
 	if !safeRemoteOutput(remoteOutput) {
 		archive.Close()
 		os.RemoveAll(runtimeRoot)
-		return "", func() {}, "", ErrSSH
+		return "", nil, func() {}, "", ErrSSH
 	}
 	addressDigest := sha256.Sum256([]byte(target))
 	sourceAlias := "target-" + hex.EncodeToString(addressDigest[:6])
@@ -250,37 +251,43 @@ func (c *Collector) CollectRootfs(ctx context.Context, target string, selectedPo
 	if runErr != nil || closeErr != nil {
 		os.RemoveAll(runtimeRoot)
 		if ctx.Err() != nil {
-			return "", func() {}, "", ctx.Err()
+			return "", nil, func() {}, "", ctx.Err()
 		}
 		text := stderr.String()
 		if strings.Contains(text, "Host key verification failed") || strings.Contains(text, "REMOTE HOST IDENTIFICATION HAS CHANGED") {
-			return "", func() {}, taskflow.SystemScanHostKeyMismatch, ErrHostKey
+			return "", nil, func() {}, taskflow.SystemScanHostKeyMismatch, ErrHostKey
 		}
 		if strings.Contains(text, "Permission denied") {
-			return "", func() {}, taskflow.SystemScanAuthFailed, ErrAuthentication
+			return "", nil, func() {}, taskflow.SystemScanAuthFailed, ErrAuthentication
 		}
 		if strings.Contains(text, "python3: not found") || strings.Contains(text, "python3: command not found") {
-			return "", func() {}, taskflow.SystemScanPythonMissing, ErrSSH
+			return "", nil, func() {}, taskflow.SystemScanPythonMissing, ErrSSH
 		}
-		return "", func() {}, taskflow.SystemScanCollectionFailed, ErrSSH
+		return "", nil, func() {}, taskflow.SystemScanCollectionFailed, ErrSSH
 	}
 	if err := extractSnapshot(archivePath, filepath.Join(inputsDir, "ssh-"+stamp)); err != nil {
 		os.RemoveAll(runtimeRoot)
 		os.RemoveAll(filepath.Join(inputsDir, "ssh-"+stamp))
-		return "", func() {}, taskflow.SystemScanInvalidSnapshot, ErrSSH
+		return "", nil, func() {}, taskflow.SystemScanInvalidSnapshot, ErrSSH
+	}
+	runtimeServices, err := readRuntimeServices(filepath.Join(inputsDir, "ssh-"+stamp))
+	if err != nil {
+		os.RemoveAll(runtimeRoot)
+		os.RemoveAll(filepath.Join(inputsDir, "ssh-"+stamp))
+		return "", nil, func() {}, taskflow.SystemScanInvalidSnapshot, ErrSSH
 	}
 	inputPath := filepath.Join(inputsDir, "ssh-"+stamp, "os")
 	relative, err := filepath.Rel(inputsDir, inputPath)
 	if err != nil || !filepath.IsLocal(relative) {
 		os.RemoveAll(runtimeRoot)
 		os.RemoveAll(filepath.Join(inputsDir, "ssh-"+stamp))
-		return "", func() {}, "", ErrSSH
+		return "", nil, func() {}, "", ErrSSH
 	}
 	cleanup := func() {
 		_ = os.RemoveAll(runtimeRoot)
 		_ = os.RemoveAll(filepath.Join(inputsDir, "ssh-"+stamp))
 	}
-	return filepath.ToSlash(relative), cleanup, taskflow.SystemScanCompleted, nil
+	return filepath.ToSlash(relative), runtimeServices, cleanup, taskflow.SystemScanCompleted, nil
 }
 
 func nullDevice() string {
@@ -344,7 +351,7 @@ func extractSnapshot(filename, destination string) error {
 		if name == "" || name == "." {
 			continue
 		}
-		if strings.ContainsAny(name, "\\:\x00") || path.IsAbs(name) || path.Clean(name) != name || name != "os" && !strings.HasPrefix(name, "os/") && name != "collection.json" && name != ".gitignore" {
+		if strings.ContainsAny(name, "\\:\x00") || path.IsAbs(name) || path.Clean(name) != name || name != "os" && !strings.HasPrefix(name, "os/") && name != "runtime-services.json" && name != "collection.json" && name != ".gitignore" {
 			return errors.New("archive path is outside selected OS snapshot")
 		}
 		local := filepath.Join(destination, filepath.FromSlash(name))
@@ -388,6 +395,27 @@ func extractSnapshot(filename, destination string) error {
 		return errors.New("archive is missing a valid input manifest")
 	}
 	return nil
+}
+
+func readRuntimeServices(destination string) ([]inventory.RuntimeService, error) {
+	filename := filepath.Join(destination, "runtime-services.json")
+	data, err := os.ReadFile(filename)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil || len(data) > 128<<10 {
+		return nil, errors.New("runtime service inventory is missing or too large")
+	}
+	var payload struct {
+		SchemaVersion int                        `json:"schemaVersion"`
+		Services      []inventory.RuntimeService `json:"services"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&payload); err != nil || decoder.Decode(new(any)) != io.EOF || payload.SchemaVersion != 1 || payload.Services == nil || !inventory.ValidateRuntimeServices(payload.Services) {
+		return nil, errors.New("runtime service inventory is invalid")
+	}
+	return append([]inventory.RuntimeService(nil), payload.Services...), nil
 }
 
 // Keep a compile-time guard against accidentally changing the fixed remote

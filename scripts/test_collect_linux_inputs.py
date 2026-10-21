@@ -69,6 +69,26 @@ class CollectorTest(unittest.TestCase):
         self.assertEqual((output / 'os/etc/os-release').read_bytes(), target.read_bytes())
         self.assertFalse((output / 'os/etc/os-release').is_symlink())
 
+    def test_runtime_service_inventory_is_bounded_and_read_only(self):
+        self.put('etc/systemd/system/apache2.service', '[Unit]\nDescription=fixture\n')
+        self.put('etc/init.d/redis-server', '#!/bin/sh\n')
+        self.put('proc/101/comm', 'java\n')
+        self.put('proc/102/comm', 'java\n')
+        self.put('proc/103/comm', 'bad name\n')
+        (self.linux / 'etc/systemd/system/tomcat.service').symlink_to('/does/not/matter')
+        self.put('proc/101/cmdline', 'secret-args\x00must-not-be-collected')
+        output = self.run_collect()
+        inventory = json.loads((output / 'runtime-services.json').read_text())
+        self.assertEqual(inventory['schemaVersion'], 1)
+        self.assertEqual(inventory['services'], [
+            {'name': 'redis-server', 'manager': 'init', 'state': 'installed'},
+            {'name': 'java', 'manager': 'process', 'state': 'running'},
+            {'name': 'apache2', 'manager': 'systemd', 'state': 'installed'},
+            {'name': 'tomcat', 'manager': 'systemd', 'state': 'installed'},
+        ])
+        self.assertEqual((output / 'runtime-services.json').stat().st_mode & 0o777, 0o600)
+        self.assertNotIn('cmdline', (output / 'runtime-services.json').read_text())
+
     def test_escaping_symlink_and_missing_package_db_fail_atomically(self):
         (self.linux / 'etc/os-release').unlink()
         (self.linux / 'etc/os-release').symlink_to('../../elsewhere')

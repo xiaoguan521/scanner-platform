@@ -83,6 +83,7 @@ func TestExtractSnapshotAcceptsOnlyBoundedRegularSnapshotFiles(t *testing.T) {
 		{name: "os/.scanner-input.json", mode: tar.TypeReg, data: []byte(`{"schemaVersion":1}`)},
 		{name: "os/etc/", mode: tar.TypeDir},
 		{name: "os/etc/os-release", mode: tar.TypeReg, data: []byte("ID=centos\nVERSION_ID=7\n")},
+		{name: "runtime-services.json", mode: tar.TypeReg, data: []byte(`{"schemaVersion":1,"services":[{"name":"sshd","manager":"process","state":"running"}]}`)},
 	})
 	destination := filepath.Join(root, "ssh-abc123")
 	if err := extractSnapshot(archive, destination); err != nil {
@@ -91,6 +92,46 @@ func TestExtractSnapshotAcceptsOnlyBoundedRegularSnapshotFiles(t *testing.T) {
 	if got, err := os.ReadFile(filepath.Join(destination, "os", "etc", "os-release")); err != nil || !strings.Contains(string(got), "ID=centos") {
 		t.Fatalf("got=%q err=%v", got, err)
 	}
+	services, err := readRuntimeServices(destination)
+	if err != nil || len(services) != 1 || services[0].Name != "sshd" {
+		t.Fatalf("runtime services=%+v err=%v", services, err)
+	}
+}
+
+func TestReadRuntimeServicesRejectsInvalidPayloads(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		data string
+	}{
+		{name: "unknown field", data: `{"schemaVersion":1,"services":[],"extra":true}`},
+		{name: "wrong schema", data: `{"schemaVersion":2,"services":[]}`},
+		{name: "missing services", data: `{"schemaVersion":1}`},
+		{name: "duplicate", data: `{"schemaVersion":1,"services":[{"name":"sshd","manager":"process","state":"running"},{"name":"sshd","manager":"process","state":"running"}]}`},
+		{name: "unsafe name", data: `{"schemaVersion":1,"services":[{"name":"sshd --bad","manager":"process","state":"running"}]}`},
+		{name: "trailing data", data: `{"schemaVersion":1,"services":[]} {}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.WriteFile(filepath.Join(root, "runtime-services.json"), []byte(tc.data), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := readRuntimeServices(root); err == nil {
+				t.Fatal("invalid runtime service inventory was accepted")
+			}
+		})
+	}
+}
+
+func FuzzReadRuntimeServices(f *testing.F) {
+	f.Add([]byte(`{"schemaVersion":1,"services":[]}`))
+	f.Add([]byte(`{"schemaVersion":1,"services":[{"name":"sshd","manager":"process","state":"running"}]}`))
+	f.Fuzz(func(t *testing.T, data []byte) {
+		root := t.TempDir()
+		if err := os.WriteFile(filepath.Join(root, "runtime-services.json"), data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		_, _ = readRuntimeServices(root)
+	})
 }
 
 func TestExtractSnapshotRejectsTraversalLinksAndUnexpectedFiles(t *testing.T) {

@@ -12,17 +12,18 @@ import (
 )
 
 type profileData struct {
-	Name          string `json:"name,omitempty"`
-	IsCore        bool   `json:"isCore"`
-	Department    string `json:"department,omitempty"`
-	Phone         string `json:"phone,omitempty"`
-	MAC           string `json:"mac,omitempty"`
-	OSName        string `json:"osName,omitempty"`
-	OSFamily      string `json:"osFamily,omitempty"`
-	DeviceType    string `json:"deviceType,omitempty"`
-	DeviceSubtype string `json:"deviceSubtype,omitempty"`
-	Vendor        string `json:"vendor,omitempty"`
-	Model         string `json:"model,omitempty"`
+	Name            string                     `json:"name,omitempty"`
+	IsCore          bool                       `json:"isCore"`
+	Department      string                     `json:"department,omitempty"`
+	Phone           string                     `json:"phone,omitempty"`
+	MAC             string                     `json:"mac,omitempty"`
+	OSName          string                     `json:"osName,omitempty"`
+	OSFamily        string                     `json:"osFamily,omitempty"`
+	DeviceType      string                     `json:"deviceType,omitempty"`
+	DeviceSubtype   string                     `json:"deviceSubtype,omitempty"`
+	Vendor          string                     `json:"vendor,omitempty"`
+	Model           string                     `json:"model,omitempty"`
+	RuntimeServices []inventory.RuntimeService `json:"runtimeServices,omitempty"`
 }
 
 func profileBytes(value any) ([]byte, error) {
@@ -49,6 +50,10 @@ func validProfile(value any) bool {
 		if text, ok := v.(string); ok && (len(text) > 500 || !utf8.ValidString(text) || strings.ContainsRune(text, 0)) {
 			return false
 		}
+	}
+	var profile inventory.Profile
+	if err := json.Unmarshal(data, &profile); err != nil || !inventory.ValidateRuntimeServices(profile.RuntimeServices) {
+		return false
 	}
 	return true
 }

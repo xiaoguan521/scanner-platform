@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"scanner-platform/internal/inventory"
 )
 
 const SchemaVersion = 1
@@ -99,30 +101,31 @@ type Service struct {
 	LastSeen         string       `json:"lastSeen"`
 }
 type Asset struct {
-	ID                    string       `json:"id"`
-	Kind                  string       `json:"kind"`
-	Address               string       `json:"address"`
-	Name                  string       `json:"name"`
-	Core                  bool         `json:"isCore"`
-	BusinessGroup         string       `json:"businessGroup"`
-	Owner                 string       `json:"owner"`
-	Department            string       `json:"department"`
-	Phone                 string       `json:"phone"`
-	MAC                   string       `json:"mac"`
-	OSName                string       `json:"osName"`
-	OSFamily              string       `json:"osFamily"`
-	DeviceType            string       `json:"deviceType"`
-	DeviceSubtype         string       `json:"deviceSubtype"`
-	Vendor                string       `json:"vendor"`
-	Model                 string       `json:"model"`
-	ReachabilityStatus    string       `json:"reachabilityStatus"`
-	ReachabilityCheckedAt string       `json:"reachabilityCheckedAt"`
-	Alive                 *bool        `json:"alive,omitempty"`
-	LastAliveAt           string       `json:"lastAliveAt"`
-	Services              []Service    `json:"services"`
-	LoginEntries          []LoginEntry `json:"loginEntries"`
-	SkippedPorts          []int        `json:"skippedPorts"`
-	QuarantinedPorts      []int        `json:"quarantinedPorts"`
+	ID                    string                     `json:"id"`
+	Kind                  string                     `json:"kind"`
+	Address               string                     `json:"address"`
+	Name                  string                     `json:"name"`
+	Core                  bool                       `json:"isCore"`
+	BusinessGroup         string                     `json:"businessGroup"`
+	Owner                 string                     `json:"owner"`
+	Department            string                     `json:"department"`
+	Phone                 string                     `json:"phone"`
+	MAC                   string                     `json:"mac"`
+	OSName                string                     `json:"osName"`
+	OSFamily              string                     `json:"osFamily"`
+	DeviceType            string                     `json:"deviceType"`
+	DeviceSubtype         string                     `json:"deviceSubtype"`
+	Vendor                string                     `json:"vendor"`
+	Model                 string                     `json:"model"`
+	RuntimeServices       []inventory.RuntimeService `json:"runtimeServices,omitempty"`
+	ReachabilityStatus    string                     `json:"reachabilityStatus"`
+	ReachabilityCheckedAt string                     `json:"reachabilityCheckedAt"`
+	Alive                 *bool                      `json:"alive,omitempty"`
+	LastAliveAt           string                     `json:"lastAliveAt"`
+	Services              []Service                  `json:"services"`
+	LoginEntries          []LoginEntry               `json:"loginEntries"`
+	SkippedPorts          []int                      `json:"skippedPorts"`
+	QuarantinedPorts      []int                      `json:"quarantinedPorts"`
 	Ports                 []struct {
 		Port int    `json:"port"`
 		Kind string `json:"kind"`
@@ -168,12 +171,13 @@ type Finding struct {
 	BruteForceProtection *bool               `json:"bruteForceProtection,omitempty"`
 }
 type Profile struct {
-	OSName        string `json:"osName"`
-	OSFamily      string `json:"osFamily"`
-	DeviceType    string `json:"deviceType"`
-	DeviceSubtype string `json:"deviceSubtype"`
-	Vendor        string `json:"vendor"`
-	Model         string `json:"model"`
+	OSName          string                     `json:"osName"`
+	OSFamily        string                     `json:"osFamily"`
+	DeviceType      string                     `json:"deviceType"`
+	DeviceSubtype   string                     `json:"deviceSubtype"`
+	Vendor          string                     `json:"vendor"`
+	Model           string                     `json:"model"`
+	RuntimeServices []inventory.RuntimeService `json:"runtimeServices,omitempty"`
 }
 type Task struct {
 	Engines             []string `json:"engines"`

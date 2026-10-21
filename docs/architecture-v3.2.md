@@ -630,6 +630,10 @@ cgroup、DROP 计数和范围外抓包验收；本节 Compose 仍是按环境补
 
 该能力是指定产物的依赖版本分析，不涵盖任意安装路径、全部文件系统、主机配置审计或漏洞利用验证。详见 `ssh-collection.md` 与 `linux-server-scan.md`；本轮先做隔离单元测试，真实 SSH 与引擎验收另行执行。
 
+### 2026-10-21 SSH 运行态服务只读画像
+
+自动综合扫描的 SSH 系统采集在同一已登记且授权的数字 IP 上增加有界运行态线索：只读取 rootfs 中的 systemd `*.service` 单元名、`/etc/init.d` 脚本名和 `/proc/<pid>/comm` 进程名，归一化为最多 256 个 `name/manager/state` 条目。服务单元和 init 脚本标为 `installed`，进程名标为 `running`；不会读取 PID、命令行、参数、环境变量或服务文件内容，也不会连接新的主机或端口。Worker 对归档路径、JSON schema、枚举值、名称字符集、重复项和大小执行失败即关闭校验，结果复用现有 `asset_profiles` JSON，不新增表或迁移。该画像用于资产详情和报告提示，不等同于服务已启动、配置审计或漏洞验证。
+
 ### 2026-10-21 节点 mTLS、轮换与首阶段生命周期
 
 独立节点监听继续强制 TLS 1.3 和每节点 Bearer 令牌；Server 可额外加载 owner 配置的客户端 CA，启用客户端证书校验。Worker/Updater 可分别配置服务端 CA 和客户端证书/私钥，私钥保持 owner-only 文件约束。Server 收到 `SIGHUP` 时原子重载节点证书、客户端 CA 和节点令牌注册表，替换文件解析失败保留上一份有效配置；客户端证书轮换通过重启对应节点完成。

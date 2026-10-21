@@ -104,8 +104,9 @@ func (r *Runner) AutoScan(ctx context.Context, task taskflow.Task) (taskflow.Aut
 	taskflow.ReportProgress(ctx, "ssh_collection", 0, 0)
 	sshPort, configured := r.SSHCollector.ProfilePort(task.Chunks[0].Targets[0])
 	if configured {
-		rootfsPath, cleanup, status, collectErr := r.SSHCollector.CollectRootfs(ctx, task.Chunks[0].Targets[0], task.VulnerabilityPorts, openPorts(open), r.RuntimeDir, r.InputsDir)
+		rootfsPath, runtimeServices, cleanup, status, collectErr := r.SSHCollector.CollectRootfs(ctx, task.Chunks[0].Targets[0], task.VulnerabilityPorts, openPorts(open), r.RuntimeDir, r.InputsDir)
 		result.SystemStatus = status
+		result.AssetProfile.RuntimeServices = runtimeServices
 		if ctx.Err() != nil {
 			return result, ctx.Err()
 		}

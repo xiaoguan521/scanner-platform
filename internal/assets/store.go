@@ -24,17 +24,18 @@ var (
 )
 
 type Asset struct {
-	Name          string `json:"name,omitempty"`
-	IsCore        bool   `json:"isCore"`
-	Department    string `json:"department,omitempty"`
-	Phone         string `json:"phone,omitempty"`
-	MAC           string `json:"mac,omitempty"`
-	OSName        string `json:"osName,omitempty"`
-	OSFamily      string `json:"osFamily,omitempty"`
-	DeviceType    string `json:"deviceType,omitempty"`
-	DeviceSubtype string `json:"deviceSubtype,omitempty"`
-	Vendor        string `json:"vendor,omitempty"`
-	Model         string `json:"model,omitempty"`
+	Name            string                     `json:"name,omitempty"`
+	IsCore          bool                       `json:"isCore"`
+	Department      string                     `json:"department,omitempty"`
+	Phone           string                     `json:"phone,omitempty"`
+	MAC             string                     `json:"mac,omitempty"`
+	OSName          string                     `json:"osName,omitempty"`
+	OSFamily        string                     `json:"osFamily,omitempty"`
+	DeviceType      string                     `json:"deviceType,omitempty"`
+	DeviceSubtype   string                     `json:"deviceSubtype,omitempty"`
+	Vendor          string                     `json:"vendor,omitempty"`
+	Model           string                     `json:"model,omitempty"`
+	RuntimeServices []inventory.RuntimeService `json:"runtimeServices,omitempty"`
 
 	Services     []inventory.Service    `json:"services"`
 	LoginEntries []inventory.LoginEntry `json:"loginEntries"`

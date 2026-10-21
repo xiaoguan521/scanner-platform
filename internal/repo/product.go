@@ -504,6 +504,9 @@ func recordInventory(ctx context.Context, tx *sql.Tx, task taskflow.Task, report
 			fields[k] = text
 		}
 	}
+	if profile.RuntimeServices != nil {
+		fields["runtimeServices"] = profile.RuntimeServices
+	}
 	data, _ = json.Marshal(fields)
 	if _, err := tx.ExecContext(ctx, `INSERT INTO asset_profiles(asset_id,data) VALUES(?,?) ON CONFLICT(asset_id) DO UPDATE SET data=excluded.data`, task.AssetID, string(data)); err != nil {
 		return err

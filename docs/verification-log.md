@@ -781,3 +781,10 @@
 - 审计页面新增“对象 ID”输入框，查询构造、清空和分页保持原有行为；OpenAPI、API 说明和现状文档已同步。
 - `go test -race ./...`、审计 API/仓储测试、前端审计筛选测试和前端生产构建用于本项验证。
 
+## 2026-10-21：SSH 运行态服务只读采集
+
+- SSH 系统采集在同一明确授权主机的 rootfs 内枚举 systemd `*.service` 单元、`/etc/init.d` 脚本和 `/proc/<pid>/comm` 进程名；只写入名称、管理方式和 `installed/running` 状态，不读取 PID、命令行、参数、环境变量或服务文件内容。
+- Worker 对归档路径、JSON schema、名称字符集、枚举值、重复项、条数和文件大小执行失败即关闭校验；结果写入现有资产画像 JSON，不新增数据库表或迁移。资产详情、报告资产表和 OpenAPI 已同步。
+- 验证：`go test ./internal/inventory ./internal/sshcollect ./internal/assets ./internal/repo ./internal/reporting ./internal/executor`、`python3 -m unittest test_collect_linux_inputs.py`（在 `scripts/` 目录，19 项）、`git diff --check`；覆盖有效/无效 JSON、重复/越界服务名、归档路径、合成 systemd/init/proc 夹具、资产画像/报告持久化。
+- 该能力仍是只读运行态线索，不等于服务已启动或配置审计；真实服务器、国产系统和容器/集群运行态盘点仍在路线图中。
+

@@ -13,6 +13,8 @@
 
 SSH 自动采集应用须使用 Python 3.7+、同一已登记 IP 的授权开放 SSH 端口、最多 8 个明确目录及每目录启用的 Java/Go 类型；每文件独立校验与分析，详情显示选中/已分析计数。应用采集、Go 类型确认、Java 索引或任一分析失败会使整体任务失败且不插入部分发现。端口超出本次范围时不连接。目录与解包限制见 [SSH 采集指南](ssh-collection.md#指定部署目录应用)。旧 profile 不配置 `apps` 时不增加连接。
 
+SSH 系统采集还会在同一 rootfs 中只读枚举 `*.service` 单元名、`/etc/init.d` 脚本名和 `/proc/<pid>/comm` 进程名，写入 `runtime-services.json` 并保存到资产画像。只保存名称、管理方式和 `installed/running` 状态，不读取 PID、命令行、参数、环境变量或服务文件内容；最多 256 项，名称只允许稳定的 ASCII 服务名。服务单元的 `installed` 状态表示文件存在，不等于当前已启动；没有权限或没有这些目录时保持“未返回运行态服务”。
+
 ## 在服务器采集，再交给 Worker
 
 把 `scripts/collect_linux_inputs.py` 复制到有权检查的 Linux 服务器，使用 Python 3.6+ 执行；存在 SQLite 格式 RPM 数据库时需要 Python 3.7+ 的一致备份接口。下面的路径和镜像名是占位示例，替换为你明确选择的应用与**本地已有**镜像；没有应用或镜像时可省略对应参数：

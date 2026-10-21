@@ -59,5 +59,5 @@ func validAssetProfile(p inventory.Profile) bool {
 			return false
 		}
 	}
-	return true
+	return inventory.ValidateRuntimeServices(p.RuntimeServices)
 }

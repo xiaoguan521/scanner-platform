@@ -75,7 +75,7 @@ func TestProductInventoryKnowledgeAndTaskObservationRemainHistorical(t *testing.
 		if claimed, err := store.ClaimRuntimeTask(ctx, "example-worker"); err != nil || claimed == nil {
 			t.Fatal(claimed, err)
 		}
-		report := taskflow.Report{TaskID: task.ID, WorkerID: "example-worker", Status: "COMPLETED", SystemScanStatus: taskflow.SystemScanNotConfigured, PortProbeResults: []taskflow.PortProbeResult{{Port: 80}}, ServiceResults: []taskflow.ServiceResult{{Port: 80, Kind: "HTTP", Scheme: "http", Software: "nginx", Version: "1.5", Title: "示例网站", LoginEntries: []inventory.LoginEntry{{Type: "web", Port: 80, Name: "示例登录", URL: "http://192.0.2.20:80/login"}}}}, AssetProfile: inventory.Profile{OSName: "Example Linux", OSFamily: "linux"}}
+		report := taskflow.Report{TaskID: task.ID, WorkerID: "example-worker", Status: "COMPLETED", SystemScanStatus: taskflow.SystemScanNotConfigured, PortProbeResults: []taskflow.PortProbeResult{{Port: 80}}, ServiceResults: []taskflow.ServiceResult{{Port: 80, Kind: "HTTP", Scheme: "http", Software: "nginx", Version: "1.5", Title: "示例网站", LoginEntries: []inventory.LoginEntry{{Type: "web", Port: 80, Name: "示例登录", URL: "http://192.0.2.20:80/login"}}}}, AssetProfile: inventory.Profile{OSName: "Example Linux", OSFamily: "linux", RuntimeServices: []inventory.RuntimeService{{Name: "sshd", Manager: "process", State: "running"}}}}
 		if err = store.CompleteRuntimeTask(ctx, report); err != nil {
 			t.Fatal(err)
 		}
@@ -85,7 +85,7 @@ func TestProductInventoryKnowledgeAndTaskObservationRemainHistorical(t *testing.
 		t.Fatalf("historical observation: count=%d err=%v", len(observations), err)
 	}
 	list, err := assets.ListSnapshot(ctx, store.db)
-	if err != nil || len(list) != 1 || len(list[0].Services) != 1 || len(list[0].LoginEntries) != 1 || list[0].OSName != "Example Linux" {
+	if err != nil || len(list) != 1 || len(list[0].Services) != 1 || len(list[0].LoginEntries) != 1 || len(list[0].RuntimeServices) != 1 || list[0].RuntimeServices[0].Name != "sshd" || list[0].OSName != "Example Linux" {
 		t.Fatalf("inventory not persisted: %+v %v", list, err)
 	}
 	latest, _ := store.ListRuntimeFindings(ctx)
