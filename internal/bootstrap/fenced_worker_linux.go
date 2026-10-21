@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -140,6 +141,14 @@ func (r *fencedTaskRunner) run(ctx context.Context, operation string, task taskf
 	}
 	if decoded.Status != "ok" {
 		return fencedTaskOutput{}, errors.New("fenced task execution failed")
+	}
+	if decoded.FenceStatus != "ENFORCED" {
+		return fencedTaskOutput{}, errors.New("fenced task did not report network counter status")
+	}
+	if decoded.DropCount > 0 {
+		slog.Warn("fenced network drops observed", "drop_count", decoded.DropCount)
+	} else {
+		slog.Info("fenced network drop counters recorded", "drop_count", decoded.DropCount)
 	}
 	return decoded, nil
 }
@@ -285,11 +294,24 @@ func runFencedChild(stdout, stderr io.Writer) (exitCode int) {
 			fmt.Fprintln(stderr, "fenced task rules rejected")
 			return 2
 		}
+		configurator := workerfence.NewConfigurator(input.Config.NftPath, parent)
+		counterReader, ok := configurator.(workerfence.CounterReader)
+		if !ok {
+			fmt.Fprintln(stderr, "fenced worker counter reader unavailable")
+			return 2
+		}
 		fenceCtx, cancel := context.WithDeadline(context.Background(), deadline)
-		err = workerfence.NewConfigurator(input.Config.NftPath, parent).Apply(fenceCtx, rules)
+		err = configurator.Apply(fenceCtx, rules)
 		cancel()
 		if err != nil {
 			fmt.Fprintln(stderr, "fenced task firewall rejected")
+			return 2
+		}
+		counterCtx, counterCancel := context.WithDeadline(context.Background(), deadline)
+		beforeCounters, err := counterReader.ReadDropCounters(counterCtx)
+		counterCancel()
+		if err != nil {
+			fmt.Fprintln(stderr, "fenced task counters unavailable")
 			return 2
 		}
 		executable, err := os.Executable()
@@ -305,7 +327,8 @@ func runFencedChild(stdout, stderr io.Writer) (exitCode int) {
 		fenceCtx, cancel = context.WithDeadline(context.Background(), deadline)
 		command := exec.CommandContext(fenceCtx, input.Config.SetprivPath, argv...)
 		command.Stdin = bytes.NewReader(raw)
-		command.Stdout = stdout
+		childOutput := &boundedBuffer{remaining: maxFencedTaskInput}
+		command.Stdout = childOutput
 		command.Stderr = stderr
 		capRead, capWrite, pipeErr := os.Pipe()
 		if pipeErr != nil {
@@ -340,6 +363,32 @@ func runFencedChild(stdout, stderr io.Writer) (exitCode int) {
 		}
 		defer cancel()
 		if err := command.Run(); err != nil {
+			return 1
+		}
+		counterCtx, counterCancel = context.WithDeadline(context.Background(), deadline)
+		afterCounters, err := counterReader.ReadDropCounters(counterCtx)
+		counterCancel()
+		if err != nil || afterCounters.EgressPackets < beforeCounters.EgressPackets || afterCounters.ForwardPackets < beforeCounters.ForwardPackets {
+			fmt.Fprintln(stderr, "fenced task counters invalid")
+			return 1
+		}
+		egressDelta := afterCounters.EgressPackets - beforeCounters.EgressPackets
+		forwardDelta := afterCounters.ForwardPackets - beforeCounters.ForwardPackets
+		if ^uint64(0)-egressDelta < forwardDelta {
+			fmt.Fprintln(stderr, "fenced task counters overflow")
+			return 1
+		}
+		dropCount := egressDelta + forwardDelta
+		var result fencedTaskOutput
+		decoder := json.NewDecoder(bytes.NewReader(childOutput.Bytes()))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&result); err != nil || decoder.Decode(new(any)) != io.EOF || result.Status == "" {
+			fmt.Fprintln(stderr, "fenced task result rejected")
+			return 1
+		}
+		result.FenceStatus = "ENFORCED"
+		result.DropCount = dropCount
+		if err := json.NewEncoder(stdout).Encode(result); err != nil {
 			return 1
 		}
 		return 0

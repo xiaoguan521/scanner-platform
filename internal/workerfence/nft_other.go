@@ -18,3 +18,7 @@ func NewConfigurator(_ string, _ *os.File) Configurator {
 func (unsupportedConfigurator) Apply(_ context.Context, _ RuleSet) error {
 	return errors.New("kernel-enforced worker fence requires Linux isolated network namespace")
 }
+
+func (unsupportedConfigurator) ReadDropCounters(_ context.Context) (DropCounters, error) {
+	return DropCounters{}, errors.New("kernel-enforced worker counters require Linux isolated network namespace")
+}

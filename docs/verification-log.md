@@ -1,10 +1,16 @@
 # Verification log
 
+## 2026-10-21：fenced Worker DROP 计数回报
+
+- Linux fenced Worker 在应用 nftables 围栏后读取 `egress`/`forward` 默认 DROP 规则的内核 packet counter，任务结束时计算本次增量，并将 `fenceStatus=ENFORCED` 与脱敏的 `dropCount` 回传；计数读取失败、规则缺失、溢出或结果格式异常都会失败关闭，不把任务伪装成成功。
+- 解析器只接受生成规则中同时包含 `counter` 与 `drop` 的表达式，限制 `nft -j` 输出大小，丢弃命令 stderr，不记录目标地址、请求或响应内容；Worker 安全日志仅记录计数数值，计数大于零时提升为 warning。
+- 新增解析器正常/错误路径测试；在一次性 Linux arm64 特权实验容器中重新运行 `TestFencedCgroupKillsDescendants` 与 `TestFencedWorkerTask`，真实 `nft` 计数读取、setpriv 降权、cgroup 清理均通过。该证据仍未替代部署环境中的范围外发包实测、告警接入和 Compose `hostNetwork` 约束验收。
+
 ## 2026-10-21：fenced Worker cgroup v2 生命周期边界
 
 - `internal/workerfence/cgroup_linux.go` 新增专用 cgroup v2 任务边界：只接受部署提供的绝对根目录，强制存在 `cgroup.controllers`、`cgroup.procs` 和 `cgroup.kill`，每个任务使用独立子 cgroup；加入失败或缺少 `cgroup.kill` 时在引擎启动前拒绝。
 - fenced root 子进程在安装 nftables 前加入任务 cgroup，任务结束/取消/失败时使用内核 `cgroup.kill` 清理后代，再删除任务目录；root supervisor 会先回到父 cgroup，避免清理动作杀死自身。
-- 单元测试覆盖根目录/路径越界、缺少 `cgroup.kill`、加入/kill 控制文件和清理；在一次性 Linux arm64 特权实验容器中，`TestFencedCgroupKillsDescendants` 与 `TestFencedWorkerTask` 均已通过，前者故意创建后代进程并验证内核 cgroup kill，后者实际创建临时 cgroup v2、完成 root 子进程加入、setpriv 执行和任务目录清理。该证据尚未覆盖范围外 DROP 计数或生产 Compose `hostNetwork` 约束。
+- 单元测试覆盖根目录/路径越界、缺少 `cgroup.kill`、加入/kill 控制文件和清理；在一次性 Linux arm64 特权实验容器中，`TestFencedCgroupKillsDescendants` 与 `TestFencedWorkerTask` 均已通过，前者故意创建后代进程并验证内核 cgroup kill，后者实际创建临时 cgroup v2、完成 root 子进程加入、setpriv 执行和任务目录清理。该证据尚未覆盖范围外发包与告警链路或生产 Compose `hostNetwork` 约束。
 
 ## 2026-10-21：隔离引擎回归与可选 ZAP 行为
 
@@ -14,7 +20,7 @@
 ## 2026-10-21：部署边界与当前运行契约
 
 - `deploy/README.md` 已从占位说明更新为当前可运行模式和部署边界：SQLite/显式 PostgreSQL、本地节点 HTTPS、Linux `--fence --once` 以及规则目录/运行目录/令牌文件约束。
-- 未新增生产 Compose 或镜像文件，避免把尚未完成的可信启动器、secret/certificate 编排和隔离 Linux 验收伪装成可上线配置。待验收项仍包括范围外 DROP 计数、降权属性、cgroup 后代回收、禁止 `hostNetwork`、备份恢复和远程部署。
+- 未新增生产 Compose 或镜像文件，避免把尚未完成的可信启动器、secret/certificate 编排和隔离 Linux 验收伪装成可上线配置。待验收项仍包括范围外发包与告警链路、降权属性、cgroup 后代回收、禁止 `hostNetwork`、备份恢复和远程部署。
 
 ## 2026-10-21：Linux Worker 围栏接入真实执行路径（代码回归）
 

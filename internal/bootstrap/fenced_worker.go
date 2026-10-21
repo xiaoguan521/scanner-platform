@@ -49,10 +49,12 @@ type fencedTaskInput struct {
 }
 
 type fencedTaskOutput struct {
-	Status     string                     `json:"status"`
-	Detections []taskflow.Detection       `json:"detections,omitempty"`
-	Ports      []taskflow.PortProbeResult `json:"ports,omitempty"`
-	Auto       taskflow.AutoResult        `json:"auto,omitempty"`
+	Status      string                     `json:"status"`
+	FenceStatus string                     `json:"fenceStatus,omitempty"`
+	DropCount   uint64                     `json:"dropCount,omitempty"`
+	Detections  []taskflow.Detection       `json:"detections,omitempty"`
+	Ports       []taskflow.PortProbeResult `json:"ports,omitempty"`
+	Auto        taskflow.AutoResult        `json:"auto,omitempty"`
 }
 
 func (r *fencedTaskRunner) Execute(ctx context.Context, task taskflow.Task) ([]taskflow.Detection, error) {
