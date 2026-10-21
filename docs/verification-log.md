@@ -607,3 +607,9 @@
 - SSH 主机指纹未匹配 Worker 本地 `known_hosts` 时，报告仍以 `COMPLETED` 接收入库，但 `systemScanStatus` 明确标记“未采集”，没有将 SSH 系统包分析误报为“无漏洞”。`CompletedFully` 只用于发现项生命周期收敛，不阻止已完成端口/HTTP 结果入库。
 - 修正 PostgreSQL 默认租约与 Worker 本地 45 秒租约上限一致，并让 Worker 报告携带明确目标，避免 PG 报告校验因缺失目标或租约过长而拒绝。临时回归夹具和数据已清理，未写入仓库。
 - 该回归证明靶机与 PostgreSQL 的核心自动扫描链路可用；要验证 SSH 系统包/指定部署目录，还需在 Worker 本地配置与靶机匹配的已授权主机指纹和 SSH profile。PostgreSQL 规则目录可同步元数据，但规则 ZIP 导入/激活作业、定时任务、通知及部分系统管理能力仍按能力不可用处理。
+
+## 2026-10-21：PostgreSQL SSH 与 Trivy 系统包完整回归
+
+- 在本地实验靶机容器内核对当前 SSH 主机公钥并更新 Worker 本地 `known_hosts` 后，重新执行 PostgreSQL 自动综合扫描。扫描通过了授权端口探测、SSH/HTTP 服务识别、SSH 临时系统包采集、Trivy 本地规则分析、Nuclei 只读 HTTP 基线和报告入库。
+- 任务最终状态为 `COMPLETED`，系统采集状态为“已通过 SSH 临时采集并完成本地系统包检查”；Worker 使用本地规则版本，不向外部目标或互联网扩展请求。测试过程使用临时任务和临时数据库记录，结束后已清理，密钥、主机公钥和扫描明细未写入仓库。
+- 该结果补齐了 PostgreSQL 控制面与真实靶机之间的核心扫描闭环；Java/Go 指定部署目录、PostgreSQL 非核心管理作业、定时/通知、节点 mTLS 和完整浏览器旅程仍按路线图单独验收。
