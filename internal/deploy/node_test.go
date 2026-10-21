@@ -103,6 +103,75 @@ func TestPlanExecuteCleansStagingOnlyBeforePublish(t *testing.T) {
 	}
 }
 
+func TestBuildRotationPlanHasExplicitBackupAndRecovery(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC)
+	complete := filepath.Join(root, "complete")
+	if _, err := provision.Provision(provision.Options{
+		OutputDir: complete, CADir: filepath.Join(root, "ca"), ServerIP: netip.MustParseAddr("192.0.2.10"),
+		Nodes: []provision.NodeSpec{{ID: "worker-a", Kind: "worker"}}, ValidFor: 24 * time.Hour, CAValidFor: 48 * time.Hour,
+		GenerateCA: true, Now: func() time.Time { return now },
+	}); err != nil {
+		t.Fatal(err)
+	}
+	packageDir := filepath.Join(root, "worker-package")
+	if _, err := provision.Package(provision.PackageOptions{
+		SourceDir: complete, OutputDir: packageDir, Role: provision.PackageRoleWorker, NodeID: "worker-a", Now: func() time.Time { return now },
+	}); err != nil {
+		t.Fatal(err)
+	}
+	identity := filepath.Join(root, "id")
+	knownHosts := filepath.Join(root, "known")
+	if err := os.WriteFile(identity, []byte("key"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(knownHosts, []byte("known\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := BuildPlan(Options{
+		PackageDir: packageDir, TargetIP: netip.MustParseAddr("192.0.2.20"), SSHPort: 22, User: "scanner",
+		IdentityFile: identity, KnownHostsFile: knownHosts, RemoteDir: "/var/lib/scanner-platform/node-materials",
+		ServiceName: "sec-worker", RotateExisting: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Operation != OperationRotate || plan.BackupDir == "" || len(plan.Steps) != 6 || len(plan.Recovery) != 2 {
+		t.Fatalf("unexpected rotation plan: %#v", plan)
+	}
+	publishCommand := plan.Steps[3].Args[len(plan.Steps[3].Args)-1]
+	if !strings.Contains(publishCommand, "test -d") || !strings.Contains(publishCommand, "mv --") {
+		t.Fatalf("rotation plan did not guard and move the existing package: %q", publishCommand)
+	}
+	if !strings.Contains(plan.Recovery[0].Args[len(plan.Recovery[0].Args)-1], "mv --") {
+		t.Fatal("rotation plan has no remote restore")
+	}
+}
+
+func TestRotationRestartFailureRunsRollback(t *testing.T) {
+	plan := Plan{
+		Operation: OperationRotate,
+		Steps: []Step{
+			{Name: "stage", Binary: "ssh", Args: []string{"stage"}},
+			{Name: "copy", Binary: "scp", Args: []string{"copy"}},
+			{Name: "verify", Binary: "ssh", Args: []string{"verify"}},
+			{Name: "publish", Binary: "ssh", Args: []string{"publish"}},
+			{Name: "restart", Binary: "ssh", Args: []string{"restart"}},
+			{Name: "cleanup", Binary: "ssh", Args: []string{"cleanup"}},
+		},
+		Recovery: []Step{{Name: "rollback", Binary: "ssh", Args: []string{"rollback"}}, {Name: "restart-old", Binary: "ssh", Args: []string{"restart-old"}}},
+		cleanup:  Step{Name: "cleanup-staging", Binary: "ssh", Args: []string{"cleanup-staging"}},
+	}
+	runner := &recordingRunner{failAt: 4}
+	if err := plan.Execute(context.Background(), runner); err == nil {
+		t.Fatal("restart failure was accepted")
+	}
+	want := []string{"stage", "copy", "verify", "publish", "restart", "rollback", "restart-old", "cleanup-staging"}
+	if strings.Join(runner.calls, "|") != strings.Join(want, "|") {
+		t.Fatalf("rollback calls = %#v, want %#v", runner.calls, want)
+	}
+}
+
 func TestBuildPlanRejectsUnsafeDeploymentInputs(t *testing.T) {
 	root := t.TempDir()
 	identity := filepath.Join(root, "id")

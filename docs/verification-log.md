@@ -1,5 +1,11 @@
 # Verification log
 
+## 2026-10-21：节点材料远程轮换与失败恢复计划
+
+- `sec-node-deploy` 新增显式 `--rotate-existing` 模式。首次安装仍拒绝覆盖已有远程目录；轮换模式先把既有目录移到唯一回滚目录，再复制并只读预检角色包，发布后重启固定服务，只有重启成功才清理回滚目录。
+- 发布或服务重启失败时，计划执行固定的远端恢复和服务重启；恢复失败会包含在错误中并保留回滚目录。计划只接受数字 IP、固定 known_hosts、owner-only SSH 私钥、绝对路径和 allowlist 服务名，不生成、复制或记录 CA 私钥、节点令牌或主机发现结果。
+- 新增安装发布守卫、轮换计划、重启失败回滚和恢复错误路径测试；已运行 `go test -race ./internal/deploy ./cmd/node-deploy`。真实 SSH 传输、systemd 服务和生产 Linux 围栏仍未在本批宣称通过。
+
 ## 2026-10-21：自动综合扫描阶段进度闭环
 
 - Worker 现在按自动综合扫描阶段持续回报 `tcp_probe`、`service_identification`、`http_scan`、`ssh_collection`、`trivy_scan` 和 `application_scan` 的完成数/总数；单引擎任务统一回报 `engine_scan`。应用分析按成功完成的独立产物计数，SSH 采集失败不会误报完成。

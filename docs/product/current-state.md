@@ -50,7 +50,7 @@
 
 ## 2026-10-21：节点材料拆包与显式部署计划
 
-节点部署材料现在支持按 Server、Worker、Updater 角色生成最小权限包。完整材料会在拆包前重新校验，角色包使用版本化 manifest、精确文件清单和 owner-only 权限；`sec-node-provision --verify-dir` 能分别校验三种包，旧版完整材料保持兼容。新增 `sec-node-deploy` 默认 dry-run 计划器，只有在操作者显式关闭 dry-run 后才会对指定数字 IP 通过固定 SSH 主机密钥校验执行暂存、复制、远端预检、目录发布和固定服务重启。远程部署系统、自动证书/令牌轮换、服务管理器和生产 Linux 围栏仍需单独验收。
+节点部署材料现在支持按 Server、Worker、Updater 角色生成最小权限包。完整材料会在拆包前重新校验，角色包使用版本化 manifest、精确文件清单和 owner-only 权限；`sec-node-provision --verify-dir` 能分别校验三种包，旧版完整材料保持兼容。`sec-node-deploy` 默认 dry-run，只有在操作者显式关闭 dry-run 后才会对指定数字 IP 通过固定 SSH 主机密钥校验执行暂存、复制、远端预检、目录发布和固定服务重启；`--rotate-existing` 进入单独的备份、发布、重启、失败恢复流程，成功后才清理旧材料。自动注册、令牌变更、真实远程服务管理和生产 Linux 围栏仍需单独验收。
 
 ## 当前边界和优先缺口
 

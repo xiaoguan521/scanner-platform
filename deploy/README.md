@@ -112,7 +112,15 @@ the destination is absent, and restarts the fixed service. A pre-publish
 failure removes the staging directory; a publish or restart failure is
 reported without deleting the published material. The command never discovers
 hosts, accepts hostnames/CIDRs, invokes a local shell or prints command
-output. Rotation and rollback remain explicit operator actions.
+output.
+
+Pass `--rotate-existing` only for an explicit material replacement. The
+rotation plan moves the old directory to a unique rollback directory before
+publishing, restarts the service, and removes the rollback copy only after a
+successful restart. Publish or restart failures run a fixed restore and
+restart sequence; a failed restore is reported and its rollback directory is
+left for recovery. This is still an operator-triggered action: it does not
+auto-register nodes, change tokens, or deploy the CA private key.
 
 ## Linux fenced Worker contract
 

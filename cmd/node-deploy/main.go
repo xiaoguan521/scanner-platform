@@ -28,6 +28,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	remoteDir := flags.String("remote-dir", "/var/lib/scanner-platform/node-materials", "new remote material directory")
 	service := flags.String("service", "", "fixed scanner service name to restart")
 	provisionBinary := flags.String("provision-binary", "/opt/sec/bin/sec-node-provision", "remote node provisioning verifier")
+	rotateExisting := flags.Bool("rotate-existing", false, "replace an existing remote package with rollback on restart failure")
 	dryRun := flags.Bool("dry-run", true, "print the deployment plan without executing it")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -58,6 +59,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		RemoteDir:       *remoteDir,
 		ServiceName:     strings.TrimSpace(*service),
 		ProvisionBinary: *provisionBinary,
+		RotateExisting:  *rotateExisting,
 	})
 	if err != nil {
 		fmt.Fprintln(stderr, "node deployment plan rejected:", err)

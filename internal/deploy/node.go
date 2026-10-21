@@ -53,7 +53,20 @@ type Options struct {
 	ProvisionBinary string
 	SSHBinary       string
 	SCPBinary       string
+	// RotateExisting enables an explicit, rollback-capable replacement of an
+	// already installed role package. The default install path refuses to
+	// replace an existing remote directory.
+	RotateExisting bool
 }
+
+// Operation identifies the remote material lifecycle operation in a plan.
+// BuildPlan defaults to the safe first-install behavior.
+type Operation string
+
+const (
+	OperationInstall Operation = "install"
+	OperationRotate  Operation = "rotate"
+)
 
 // Step is a command in a deployment plan. Args never contain token or key
 // contents; they contain only paths, role metadata and explicit target data.
@@ -63,15 +76,18 @@ type Step struct {
 	Args   []string `json:"args"`
 }
 
-// Plan is safe to render for operator review. StageDir is a remote temporary
-// path and does not contain credentials.
+// Plan is safe to render for operator review. StageDir and BackupDir are
+// remote temporary paths and do not contain credentials.
 type Plan struct {
 	Target    string                `json:"target"`
+	Operation Operation             `json:"operation"`
 	Role      provision.PackageRole `json:"role"`
 	NodeID    string                `json:"nodeId,omitempty"`
 	RemoteDir string                `json:"remoteDir"`
 	StageDir  string                `json:"stageDir"`
+	BackupDir string                `json:"backupDir,omitempty"`
 	Steps     []Step                `json:"steps"`
+	Recovery  []Step                `json:"recovery,omitempty"`
 	cleanup   Step
 }
 
@@ -112,9 +128,20 @@ func BuildPlan(opts Options) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
-	stage, err := temporaryRemotePath(opts.RemoteDir)
+	stage, err := temporaryRemotePath(opts.RemoteDir, ".incoming-")
 	if err != nil {
 		return Plan{}, err
+	}
+	operation := OperationInstall
+	if opts.RotateExisting {
+		operation = OperationRotate
+	}
+	backup := ""
+	if operation == OperationRotate {
+		backup, err = temporaryRemotePath(opts.RemoteDir, ".rollback-")
+		if err != nil {
+			return Plan{}, err
+		}
 	}
 	sshBinary := opts.SSHBinary
 	if sshBinary == "" {
@@ -150,32 +177,70 @@ func BuildPlan(opts Options) (Plan, error) {
 		Binary: sshBinary,
 		Args:   append(append([]string(nil), baseSSH...), remoteCommand(shellWord(provisionBinary)+" --verify-dir "+shellWord(stage))),
 	})
-	publish := "test ! -e " + shellWord(opts.RemoteDir) + " && mv -- " + shellWord(stage) + " " + shellWord(opts.RemoteDir)
+	publish := ""
+	if operation == OperationRotate {
+		publish = "test -d " + shellWord(opts.RemoteDir) + " && test ! -e " + shellWord(backup) + " && mv -- " + shellWord(opts.RemoteDir) + " " + shellWord(backup) + " && mv -- " + shellWord(stage) + " " + shellWord(opts.RemoteDir)
+	} else {
+		publish = "test ! -e " + shellWord(opts.RemoteDir) + " && mv -- " + shellWord(stage) + " " + shellWord(opts.RemoteDir)
+	}
 	steps = append(steps, Step{Name: "publish-package", Binary: sshBinary, Args: append(append([]string(nil), baseSSH...), remoteCommand(publish))})
 	steps = append(steps, Step{
 		Name:   "restart-service",
 		Binary: sshBinary,
 		Args:   append(append([]string(nil), baseSSH...), remoteCommand("systemctl restart "+shellWord(opts.ServiceName))),
 	})
+	if operation == OperationRotate {
+		steps = append(steps, Step{
+			Name:   "remove-rollback-backup",
+			Binary: sshBinary,
+			Args:   append(append([]string(nil), baseSSH...), remoteCommand("rm -rf -- "+shellWord(backup))),
+		})
+	}
 	cleanup := Step{
 		Name:   "cleanup-staging-directory",
 		Binary: sshBinary,
 		Args:   append(append([]string(nil), baseSSH...), remoteCommand("rm -rf -- "+shellWord(stage))),
 	}
-	return Plan{Target: endpoint, Role: verified.Role, NodeID: verified.NodeID, RemoteDir: opts.RemoteDir, StageDir: stage, Steps: steps, cleanup: cleanup}, nil
+	recovery := []Step(nil)
+	if operation == OperationRotate {
+		recovery = []Step{{
+			Name:   "rollback-package",
+			Binary: sshBinary,
+			Args:   append(append([]string(nil), baseSSH...), remoteCommand("test -d "+shellWord(backup)+" && rm -rf -- "+shellWord(opts.RemoteDir)+" && mv -- "+shellWord(backup)+" "+shellWord(opts.RemoteDir))),
+		}, {
+			Name:   "restart-service-after-rollback",
+			Binary: sshBinary,
+			Args:   append(append([]string(nil), baseSSH...), remoteCommand("systemctl restart "+shellWord(opts.ServiceName))),
+		}}
+	}
+	return Plan{Target: endpoint, Operation: operation, Role: verified.Role, NodeID: verified.NodeID, RemoteDir: opts.RemoteDir, StageDir: stage, BackupDir: backup, Steps: steps, Recovery: recovery, cleanup: cleanup}, nil
 }
 
-// Execute runs a previously built plan. If a pre-publish step fails, the
-// temporary remote directory is removed best-effort. A publish or service
-// restart failure is returned without deleting the published directory.
+// Execute runs a previously built plan. Install plans remove the temporary
+// staging directory when staging or publication fails. Rotation plans restore
+// the prior package and restart the service when publication or restart fails;
+// a failed rollback is included in the returned error.
 func (p Plan) Execute(ctx context.Context, runner Runner) error {
 	if runner == nil {
 		return errors.New("deployment runner is required")
 	}
 	for index, step := range p.Steps {
 		if err := runner.Run(ctx, step.Binary, step.Args); err != nil {
-			if index < 4 && p.cleanup.Binary != "" {
+			if index <= 3 && p.cleanup.Binary != "" {
 				_ = runner.Run(ctx, p.cleanup.Binary, p.cleanup.Args)
+			}
+			if p.Operation == OperationRotate && (index == 3 || index == 4) && len(p.Recovery) > 0 {
+				for _, recovery := range p.Recovery {
+					if recoveryErr := runner.Run(ctx, recovery.Binary, recovery.Args); recoveryErr != nil {
+						if p.cleanup.Binary != "" {
+							_ = runner.Run(ctx, p.cleanup.Binary, p.cleanup.Args)
+						}
+						return fmt.Errorf("deployment step %s failed: %w; rollback step %s failed: %v", step.Name, err, recovery.Name, recoveryErr)
+					}
+				}
+				if p.cleanup.Binary != "" {
+					_ = runner.Run(ctx, p.cleanup.Binary, p.cleanup.Args)
+				}
 			}
 			return fmt.Errorf("deployment step %s failed: %w", step.Name, err)
 		}
@@ -254,12 +319,15 @@ func packageFiles(dir string) ([]string, error) {
 	return files, nil
 }
 
-func temporaryRemotePath(remoteDir string) (string, error) {
+func temporaryRemotePath(remoteDir, prefix string) (string, error) {
 	bytes := make([]byte, 8)
 	if _, err := rand.Read(bytes); err != nil {
 		return "", fmt.Errorf("generate remote staging suffix: %w", err)
 	}
-	return path.Join(remoteDir, ".incoming-"+hex.EncodeToString(bytes)), nil
+	if prefix == ".incoming-" {
+		return path.Join(remoteDir, prefix+hex.EncodeToString(bytes)), nil
+	}
+	return path.Join(path.Dir(remoteDir), "."+path.Base(remoteDir)+prefix+hex.EncodeToString(bytes)), nil
 }
 
 func sshEndpoint(user string, ip netip.Addr) string {
