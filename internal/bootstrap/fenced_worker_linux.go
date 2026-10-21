@@ -369,8 +369,17 @@ func verifyDroppedChild(raw []byte) error {
 	if os.Geteuid() == 0 {
 		return errors.New("child is still privileged")
 	}
+	if os.Geteuid() != 10001 || os.Getegid() != 10001 {
+		return errors.New("worker child must run as uid/gid 10001")
+	}
 	if value, err := procStatusValue(os.Getpid(), "NoNewPrivs:"); err != nil || value != "1" {
 		return errors.New("no_new_privs is not enabled")
+	}
+	for _, key := range []string{"CapInh:", "CapPrm:", "CapEff:", "CapBnd:", "CapAmb:"} {
+		value, err := procStatusValue(os.Getpid(), key)
+		if err != nil || !zeroCapabilityField(value) {
+			return errors.New("worker child retains capabilities")
+		}
 	}
 	parentUID, err := procStatusValue(os.Getppid(), "Uid:")
 	parentFields := strings.Fields(parentUID)
@@ -391,6 +400,15 @@ func verifyDroppedChild(raw []byte) error {
 		return errors.New("fenced task digest mismatch")
 	}
 	return nil
+}
+
+func zeroCapabilityField(value string) bool {
+	fields := strings.Fields(value)
+	if len(fields) != 1 {
+		return false
+	}
+	parsed, err := strconv.ParseUint(fields[0], 16, 64)
+	return err == nil && parsed == 0
 }
 
 func procStatusValue(pid int, key string) (string, error) {

@@ -16,6 +16,7 @@
 - 离线 Trivy 任务不生成目标网络许可，只保留明确的控制面/基础设施白名单；Server 地址自动加入白名单，额外 DNS/制品库必须使用逐项 `--fence-infra IP:port`。主机名、CIDR、未指定地址和未知操作在子进程协议层拒绝。
 - 新增围栏计划、离线任务、无解析目标、输入尾随数据和受限 argv 失败路径覆盖。已运行 `go test -race ./internal/bootstrap ./internal/workerfence`、`go vet ./internal/bootstrap ./internal/workerfence`、`GOOS=linux GOARCH=amd64 go build ./cmd/worker`、Linux bootstrap 测试二进制交叉编译和 `git diff --check`；未在 macOS 上伪造 Linux nftables 结果。
 - 在一次性 OrbStack Linux 特权实验容器中安装临时 nftables，并运行 `pocs/01` 的 `TestIsolatedFenceInstall` 与 `TestFencedWorkerTask`：两个测试均通过。后者实际启动 Linux arm64 `sec-worker --fence-child`，验证新 network namespace、真实 nftables 配置、setpriv 子进程、任务摘要 fd capability 和端口进度 fd；任务目标仅为 namespace 内的 `127.0.0.1:1`，没有访问当前靶机或 PostgreSQL。该证据覆盖代码路径联调，不替代生产容器的 namespace、DROP 计数和后代回收验收。
+- 新增降权硬闸后再次运行同一 Linux arm64 隔离实验：子进程实际 UID/GID 为 `10001`，`NoNewPrivs=1`，`CapInh/CapPrm/CapEff/CapBnd/CapAmb` 全为零；测试通过后才保留该路径。仍未把范围外发包、DROP 计数、cgroup 后代回收和 Compose `hostNetwork` 约束标记为生产验收。
 - 仍待隔离 Linux 实验：真实父/子 network namespace、nftables DROP 计数、范围外发包、uid/capabilities/no-new-privs、SSH 文件对 uid 10001 的权限、cgroup 后代回收和禁止 `hostNetwork`。因此 PoC #1 和生产部署仍未验收。
 
 ## 2026-10-21：统一 API 错误契约与请求编号
@@ -225,7 +226,7 @@
 | Phase 0 PoC | 未运行 | 真实扫描、防火墙和抓包验证只允许在隔离实验环境开展。 |
 | PoC #1 应用层准入（2026-10-16） | 单元测试通过，实验验收未运行 | 显式 IP:端口、审批/到期、端口隔离、时间窗均为纯逻辑验证；网络围栏、降权、DROP 告警和隔离靶场验收未做。 |
 | PoC #1 Linux 围栏与受限启动预备代码（2026-10-16，历史记录） | 本地模拟通过，实验待验证 | 当时记录为尚未接入 cmd/worker；当前接入状态见本文件顶部 2026-10-21 条目。Linux nft/setpriv、namespace 隔离、实际无外联和 DROP 统计仍必须人工核对。 |
-| 引擎受限启动硬闸（2026-10-16） | 默认阻断，待参数验证 | 未接入 `internal/executor` 经版本锁定的参数白名单前，`RestrictedExec.Launch` 显式拒绝真正运行 Nuclei/Trivy；当前 setpriv 仅验证参数构造，未实测进程 UID/capabilities。 |
+| 引擎受限启动硬闸（2026-10-16） | Worker 围栏子进程隔离联调通过；生产引擎全链路待验收 | Linux arm64 隔离实验实际核对 Worker 子进程 UID/GID 10001、NoNewPrivs 和全部 capability 清零；`internal/executor` 仍通过锁定版本的参数白名单启动引擎。独立 `RestrictedExec.Launch` 继续 fail-closed，生产环境的范围抓包、cgroup 后代回收和 Nuclei/Trivy 围栏内全链路仍待验证。 |
 | GitHub Actions 六平台 CI / Release（2026-10-16） | 本地检查及 GitHub 云端 CI 通过；Release 未发布 | 提交 `798f832` 的 CI 已通过前端、race 测试、lint 和 Linux/macOS/Windows 六平台构建。标签构建只有完整 CI 通过才打包；发布权限仅 Release Job，标签仅创建 Draft + Pre-release。漏洞库手工工作流需另看当前签名步骤结果。 |
 | 漏洞库 Ed25519 签名与平台验签 | 本地平台实现、隔离测试和当前主分支 GitHub Actions 均通过 | 当前工作流使用 `vulnerability-data-signing` 环境、`BUNDLE_SIGNING_PRIVATE_KEY_PEM` 密钥和 `BUNDLE_SIGNING_PUBLIC_KEY_PEM` 变量；云端已完成 8 个文件完整性校验、Ed25519 签名/验签和 `vulnerability-data` 制品上传。Updater 现支持 2 GiB 以内的已签名本地/HTTPS 流式导入，网页 multipart 仍为 256 MiB；单公钥轮换、多密钥过渡与完整引擎兼容矩阵仍未完成。 |
 | SSH 指定目录 Java/Go 应用 | Go 与含 class 的 Java 合成 JAR 隔离路径通过；活动规则已切换到含 Java DB 的版本 | Go ELF 与 Java JAR 均完成 SSH 采集、快照校验、Trivy 类型确认和覆盖计数；缺少 Java 索引时仍明确为 `analysis_failed`，带 Java DB 的规则版本已验证 Java 选中/已分析均为 1。当前活动版本通过 Updater 本地显式准备，`signatureVerified=false`；仅覆盖合成输入，独立挂载目录和真实业务应用仍待验收。 |

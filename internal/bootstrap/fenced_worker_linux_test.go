@@ -33,3 +33,18 @@ func TestReadFencedProgressRejectsMalformedUpdate(t *testing.T) {
 		t.Fatal("unknown progress field accepted")
 	}
 }
+
+func TestZeroCapabilityField(t *testing.T) {
+	for value, want := range map[string]bool{
+		"0000000000000000": true,
+		"0":                true,
+		"0000000000000001": false,
+		"00000000zzzzzzzz": false,
+		"":                 false,
+		"0 0":              false,
+	} {
+		if got := zeroCapabilityField(value); got != want {
+			t.Fatalf("zeroCapabilityField(%q) = %v, want %v", value, got, want)
+		}
+	}
+}

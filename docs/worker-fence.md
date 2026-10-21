@@ -39,9 +39,8 @@ Server 的 HTTPS 地址会自动加入基础设施白名单；额外的 DNS、Ha
 
 ## 现阶段验收边界
 
-本地已通过计划生成、非法目标拒绝、围栏失败不启动、受限 argv 构造、交叉编译和 Go race 单测。尚未在本机 macOS 上伪造 Linux 结果；以下必须在隔离 Linux 实验环境验证后才能进入部署清单：
+本地已通过计划生成、非法目标拒绝、围栏失败不启动、受限 argv 构造、交叉编译和 Go race 单测。在一次性 Linux arm64 隔离容器中，真实 `nft`/`setpriv`/network namespace Worker 联调也已通过，并核对了 uid/gid 10001、`NoNewPrivs=1` 和全部 capability 字段为零；这不是生产部署验收。以下仍必须在隔离 Linux 部署环境验证后才能进入部署清单：
 
 - 范围外 TCP/UDP/DNS/HTTP 请求确实被 DROP，计数可观测；
-- 子进程真实 UID/GID 为 10001、无 capabilities、`NoNewPrivs=1`；
 - 任务结束或租约失联时进程组/cgroup 后代全部终止；
 - Docker/Compose 网络路径不会绕过 namespace，Server、规则库和 SSH 输入路径仅通过明确白名单访问。
