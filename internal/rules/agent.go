@@ -66,17 +66,8 @@ func pause(ctx context.Context) error {
 	}
 }
 func (a *Agent) Run(ctx context.Context, once bool) error {
-	bundles, err := a.Manager.List(ctx)
-	if err != nil {
+	if err := a.SyncState(ctx); err != nil {
 		return err
-	}
-	for {
-		if _, err = a.post(ctx, "/api/v1/updater/state", map[string]any{"nodeId": a.ID, "bundles": bundles}, nil); err == nil {
-			break
-		}
-		if err := pause(ctx); err != nil {
-			return err
-		}
 	}
 	for {
 		worked, err := a.ProcessOne(ctx)
@@ -93,6 +84,25 @@ func (a *Agent) Run(ctx context.Context, once bool) error {
 			if err := pause(ctx); err != nil {
 				return err
 			}
+		}
+	}
+}
+
+// SyncState publishes only the local rule catalog metadata. PostgreSQL
+// runtime uses this operation while rule import/activation jobs are still
+// deliberately unavailable; keeping it separate lets a development runtime
+// start without repeatedly polling an unsupported job queue.
+func (a *Agent) SyncState(ctx context.Context) error {
+	bundles, err := a.Manager.List(ctx)
+	if err != nil {
+		return err
+	}
+	for {
+		if _, err = a.post(ctx, "/api/v1/updater/state", map[string]any{"nodeId": a.ID, "bundles": bundles}, nil); err == nil {
+			return nil
+		}
+		if err := pause(ctx); err != nil {
+			return err
 		}
 	}
 }

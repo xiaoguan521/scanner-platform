@@ -32,6 +32,7 @@ func RunUpdater(args []string, stdout, stderr io.Writer) int {
 	binDir := flags.String("bin-dir", "bin", "Pinned engine binaries")
 	dbCache := flags.String("db-cache", "runtime/engine-data/trivy", "Updater DB download cache")
 	once := flags.Bool("once", false, "Process at most one queued operation")
+	syncStateOnly := flags.Bool("sync-state-only", false, "Publish local rule catalog metadata, then exit")
 	status := flags.Bool("status", false, "Print updater mode")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -71,8 +72,8 @@ func RunUpdater(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	if *importBundle != "" {
-		if *prepare || *skipDownload || *withJava || *once {
-			fmt.Fprintln(stderr, "--import-bundle-file cannot be combined with preparation or --once")
+		if *prepare || *skipDownload || *withJava || *once || *syncStateOnly {
+			fmt.Fprintln(stderr, "--import-bundle-file cannot be combined with preparation, --once or --sync-state-only")
 			return 2
 		}
 		archivePath, err := filepath.Abs(*importBundle)
@@ -87,6 +88,19 @@ func RunUpdater(args []string, stdout, stderr io.Writer) int {
 		}
 		fmt.Fprintln(stdout, "Imported signed rules", bundle.Version, "(manifest signature and file hashes verified)")
 		fmt.Fprintln(stdout, "Restart the Updater, then activate this version from the rules page so the operation is audited")
+		return 0
+	}
+	if *syncStateOnly {
+		if *prepare || *skipDownload || *withJava || *once {
+			fmt.Fprintln(stderr, "--sync-state-only cannot be combined with preparation or --once")
+			return 2
+		}
+		agent := rules.Agent{ServerURL: *server, ID: *id, NodeToken: nodeToken, Manager: manager}
+		if err := agent.SyncState(ctx); err != nil {
+			fmt.Fprintln(stderr, "sync rule state:", err)
+			return 1
+		}
+		fmt.Fprintln(stdout, "Synchronized local rule catalog metadata")
 		return 0
 	}
 	if *prepare {

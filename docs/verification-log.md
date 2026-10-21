@@ -613,3 +613,8 @@
 - 在本地实验靶机容器内核对当前 SSH 主机公钥并更新 Worker 本地 `known_hosts` 后，重新执行 PostgreSQL 自动综合扫描。扫描通过了授权端口探测、SSH/HTTP 服务识别、SSH 临时系统包采集、Trivy 本地规则分析、Nuclei 只读 HTTP 基线和报告入库。
 - 任务最终状态为 `COMPLETED`，系统采集状态为“已通过 SSH 临时采集并完成本地系统包检查”；Worker 使用本地规则版本，不向外部目标或互联网扩展请求。测试过程使用临时任务和临时数据库记录，结束后已清理，密钥、主机公钥和扫描明细未写入仓库。
 - 该结果补齐了 PostgreSQL 控制面与真实靶机之间的核心扫描闭环；Java/Go 指定部署目录、PostgreSQL 非核心管理作业、定时/通知、节点 mTLS 和完整浏览器旅程仍按路线图单独验收。
+
+## 2026-10-21：PostgreSQL 开发启动回归
+
+- 使用 `POSTGRES_DSN_FILE=... make dev-postgres` 启动 Web、Worker 和规则目录同步流程，`/readyz` 返回 `mode: postgres`，Updater 完成一次本地规则目录元数据同步后正常退出，未再请求未实现的规则作业接口。
+- Worker 进程和 PostgreSQL Server 在启动检查期间保持运行；退出开发命令后子进程均被清理。该启动路径不会切换或读取 SQLite 数据库。
