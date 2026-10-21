@@ -815,6 +815,12 @@
 - 新增 `POST /api/v1/nodes/{id}/issue` OpenAPI 契约、SQLite/PostgreSQL 审计适配和失败回滚；数据库只保存节点生命周期与审计状态，令牌仍属于受保护的文件注册表。远程部署、自动证书签发和客户端自动注册仍未实现。
 - 验证：`make build`、`make lint`、`make test`（Go race 与 Python 18 项采集测试）、`node --test $(find web/src -name '*.test.mjs' -print)`（36 项）、`npm --prefix web run build`、`POSTGRES_DSN_FILE="$PWD/runtime/postgres/dsn" go test -tags=lab -count=1 ./internal/repo`、OpenAPI YAML 解析和 `git diff --check` 均通过；新增 API 测试覆盖成功签发、owner-only 注册表写入、审计记录、重复签发、审计失败回滚和 `no-store` 响应。测试使用临时数据库、隔离 PostgreSQL、文档保留地址和临时令牌，未写入真实凭据或资产。
 
+## 2026-10-21：节点令牌显式轮换闭环
+
+- 节点清册新增管理员“轮换令牌”操作和 `POST /api/v1/nodes/{id}/rotate`。轮换只针对已登记且未吊销、已有令牌的节点；Server 在同一进程锁下原子替换 owner-only 注册表，立即使旧令牌失效，审计只记录 `rotate_node_credential` 动作，不保存明文令牌。新令牌只在 `Cache-Control: no-store` 响应中返回一次，页面提示运维及时替换节点 owner-only 文件并发送 SIGHUP。
+- 新增 SQLite/PostgreSQL 审计适配、旧令牌失效和审计失败回滚测试；轮换缺少既有令牌时返回明确的 `node_credential_not_found`，不隐式签发新令牌。远程部署、自动证书/令牌轮换和客户端自动注册仍未实现。
+- 验证：`make test`（Go race 与 Python 37 项）、`make lint`、`make build`、`node web/src/pages/Nodes/pagination.test.mjs`、`node --test $(find web/src -name '*.test.mjs' -print)`（37 项）、`npm --prefix web run build`、OpenAPI YAML 解析、`POSTGRES_DSN_FILE="$PWD/runtime/postgres/dsn" go test -tags lab -race ./internal/repo`、`git diff --check` 均通过；PostgreSQL lab 实际执行了轮换审计写入。测试使用临时数据库、隔离 PostgreSQL、文档保留地址和临时令牌，未写入真实凭据或资产。
+
 ## 2026-10-21：Compose 部署静态安全门禁
 
 - 新增 `scripts/verify_compose_security.py`：通过 `docker compose config --format json` 规范化候选部署文件，随后不启动任何容器，失败即关闭。

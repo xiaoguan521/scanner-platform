@@ -23,10 +23,11 @@
 | `unauthorized` / `invalid_credentials` | 401 | 当前会话无效或登录凭据错误 |
 | `forbidden` / `admin_required` | 403 | 当前账号没有该操作权限 |
 | `request_header_required` | 403 | 写请求缺少 `X-Requested-With: XMLHttpRequest` |
-| `not_found` / `task_not_found` | 404 | 资源不存在或已被删除 |
+| `not_found` / `task_not_found` / `node_credential_not_found` | 404 | 资源不存在或节点还没有可轮换的令牌 |
 | `task_conflict` / `lease_conflict` | 409 | 任务、租约或结果与当前状态不一致 |
 | `task_not_terminal` / `task_has_findings` / `task_state_conflict` | 409 | 任务当前状态不允许归档、删除、暂停或恢复 |
 | `approval_conflict` / `port_request_conflict` | 409 | 审批、端口或授权状态已发生变化 |
+| `node_credential_exists` | 409 | 节点已经有令牌；使用显式轮换操作替换它 |
 | `node_revoked` / `node_kind_mismatch` | 403 | 节点已吊销或节点类型与接口不匹配 |
 | `node_auth_required` / `node_identity_mismatch` | 401 | 节点令牌缺失、无效或身份不一致 |
 | `node_registry_unavailable` | 503 | 节点状态注册表暂不可用 |
@@ -62,7 +63,8 @@ invalid_rule_list_query, invalid_rule_readiness, invalid_rule_version,
 invalid_scan_plan, invalid_schedule_run_pagination, invalid_scope_list_query,
 invalid_system_settings, invalid_task_export_format, invalid_task_list_query,
 invalid_task_progress, invalid_user, invalid_worker, knowledge_id_mismatch,
-node_already_registered, node_issuance_unavailable, node_not_registered,
+node_already_registered, node_credential_exists, node_credential_not_found,
+node_issuance_unavailable, node_not_registered,
 notification_not_found, oversized_zip, port_request_pagination_unavailable,
 reachability_check_failed, report_conflict, report_not_found, scan_plan_conflict,
 scope_pagination_unavailable, setup_unavailable, template_id_mismatch, user_exists

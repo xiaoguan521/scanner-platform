@@ -21,6 +21,7 @@ type NodeCredential struct {
 
 type NodeCredentialIssuer interface {
 	IssueNodeCredential(context.Context, string, string) (NodeCredential, error)
+	RotateNodeCredential(context.Context, string, string) (NodeCredential, error)
 }
 
 type fileNodeCredentialIssuer struct {
@@ -63,6 +64,32 @@ func (i *fileNodeCredentialIssuer) IssueNodeCredential(ctx context.Context, id, 
 	return NodeCredential{ID: item.ID, Kind: item.Kind, HostID: item.HostID, ServerURL: i.serverURL, Token: token}, nil
 }
 
+func (i *fileNodeCredentialIssuer) RotateNodeCredential(ctx context.Context, id, actor string) (NodeCredential, error) {
+	if i == nil || i.store == nil || i.registry == nil {
+		return NodeCredential{}, repo.ErrBackendCapability
+	}
+	if !runtimeWorkerID.MatchString(id) {
+		return NodeCredential{}, repo.ErrInvalidNodeLifecycle
+	}
+	item, found, err := i.store.GetNodeLifecycle(ctx, id)
+	if err != nil {
+		return NodeCredential{}, err
+	}
+	if !found {
+		return NodeCredential{}, repo.ErrNodeLifecycleNotFound
+	}
+	if item.Status == "REVOKED" {
+		return NodeCredential{}, repo.ErrNodeRevoked
+	}
+	token, err := i.registry.rotateFile(i.registryPath, id, func(string) error {
+		return i.store.RecordNodeCredentialRotated(ctx, id, actor)
+	})
+	if err != nil {
+		return NodeCredential{}, err
+	}
+	return NodeCredential{ID: item.ID, Kind: item.Kind, HostID: item.HostID, ServerURL: i.serverURL, Token: token}, nil
+}
+
 func nodeCredentialError(err error) (int, string, bool) {
 	switch {
 	case errors.Is(err, repo.ErrNodeLifecycleNotFound):
@@ -71,6 +98,8 @@ func nodeCredentialError(err error) (int, string, bool) {
 		return 409, "node_revoked", true
 	case errors.Is(err, repo.ErrNodeCredentialExists):
 		return 409, "node_credential_exists", true
+	case errors.Is(err, repo.ErrNodeCredentialNotFound):
+		return 404, "node_credential_not_found", true
 	case errors.Is(err, repo.ErrInvalidNodeLifecycle):
 		return 400, "invalid_node_id", true
 	case errors.Is(err, ErrInvalidNodeTokenFile):

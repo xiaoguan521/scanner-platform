@@ -107,6 +107,52 @@ func (r *NodeTokenRegistry) issueFile(path, nodeID string, commit func(string) e
 	return token, nil
 }
 
+// rotateFile replaces an existing node token atomically. The old token is
+// invalid as soon as the in-memory registry is replaced. If the audit commit
+// fails, both the file and in-memory registry are restored to the last
+// known-good state before returning the error.
+func (r *NodeTokenRegistry) rotateFile(path, nodeID string, commit func(string) error) (string, error) {
+	if r == nil {
+		return "", fmt.Errorf("%w: registry is not configured", ErrInvalidNodeTokenFile)
+	}
+	if !runtimeWorkerID.MatchString(nodeID) {
+		return "", fmt.Errorf("%w: invalid node id", ErrInvalidNodeTokenFile)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	previous, err := ReadNodeTokenSetFile(path)
+	if err != nil {
+		return "", err
+	}
+	if _, exists := previous[nodeID]; !exists {
+		return "", repo.ErrNodeCredentialNotFound
+	}
+	bytes := make([]byte, 32)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", fmt.Errorf("generate node credential: %w", err)
+	}
+	token := base64.RawURLEncoding.EncodeToString(bytes)
+	next := make(NodeTokenSet, len(previous))
+	for id, value := range previous {
+		next[id] = value
+	}
+	next[nodeID] = token
+	if err := writeNodeTokenSetFile(path, next); err != nil {
+		return "", err
+	}
+	r.replace(next)
+	if commit != nil {
+		if err := commit(token); err != nil {
+			if rollbackErr := writeNodeTokenSetFile(path, previous); rollbackErr != nil {
+				return "", fmt.Errorf("commit node credential rotation: %w; rollback registry: %v", err, rollbackErr)
+			}
+			r.replace(previous)
+			return "", err
+		}
+	}
+	return token, nil
+}
+
 // ReloadFile reads and swaps a complete owner-only registry under the same
 // lock used by credential issuance, so SIGHUP cannot interleave with a
 // failed issuance rollback.

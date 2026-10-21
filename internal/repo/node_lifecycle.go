@@ -11,12 +11,13 @@ import (
 )
 
 var (
-	ErrInvalidNodeLifecycle  = errors.New("invalid node lifecycle input")
-	ErrNodeLifecycleExists   = errors.New("node already registered")
-	ErrNodeLifecycleNotFound = errors.New("node is not registered")
-	ErrNodeRevoked           = errors.New("node is revoked")
-	ErrNodeCredentialExists  = errors.New("node credential already exists")
-	nodeLifecycleID          = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$`)
+	ErrInvalidNodeLifecycle   = errors.New("invalid node lifecycle input")
+	ErrNodeLifecycleExists    = errors.New("node already registered")
+	ErrNodeLifecycleNotFound  = errors.New("node is not registered")
+	ErrNodeRevoked            = errors.New("node is revoked")
+	ErrNodeCredentialExists   = errors.New("node credential already exists")
+	ErrNodeCredentialNotFound = errors.New("node credential does not exist")
+	nodeLifecycleID           = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$`)
 )
 
 const nodeOfflineAfter = 10 * time.Second
@@ -269,7 +270,7 @@ func listNodeLifecycleEvents(ctx context.Context, db *sql.DB, postgres bool, id 
 	return items, rows.Err()
 }
 
-func recordNodeCredentialIssued(ctx context.Context, db *sql.DB, postgres bool, id, actor string) error {
+func recordNodeCredentialAudit(ctx context.Context, db *sql.DB, postgres bool, id, actor, action string) error {
 	if !nodeLifecycleID.MatchString(id) || actor == "" {
 		return ErrInvalidNodeLifecycle
 	}
@@ -287,13 +288,21 @@ func recordNodeCredentialIssued(ctx context.Context, db *sql.DB, postgres bool, 
 	if status == "REVOKED" {
 		return ErrNodeRevoked
 	}
-	if err := nodeAuditTx(ctx, tx, postgres, actor, "issue_node_credential", id, nodeTime(time.Now())); err != nil {
+	if err := nodeAuditTx(ctx, tx, postgres, actor, action, id, nodeTime(time.Now())); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit node credential audit: %w", err)
 	}
 	return nil
+}
+
+func recordNodeCredentialIssued(ctx context.Context, db *sql.DB, postgres bool, id, actor string) error {
+	return recordNodeCredentialAudit(ctx, db, postgres, id, actor, "issue_node_credential")
+}
+
+func recordNodeCredentialRotated(ctx context.Context, db *sql.DB, postgres bool, id, actor string) error {
+	return recordNodeCredentialAudit(ctx, db, postgres, id, actor, "rotate_node_credential")
 }
 
 func (s *RuntimeStore) RegisterNodeLifecycle(ctx context.Context, in NodeLifecycle, actor string) (NodeLifecycle, error) {
@@ -339,4 +348,12 @@ func (s *RuntimeStore) RecordNodeCredentialIssued(ctx context.Context, id, actor
 
 func (s *PostgresRuntimeStore) RecordNodeCredentialIssued(ctx context.Context, id, actor string) error {
 	return recordNodeCredentialIssued(ctx, s.db, true, id, actor)
+}
+
+func (s *RuntimeStore) RecordNodeCredentialRotated(ctx context.Context, id, actor string) error {
+	return recordNodeCredentialRotated(ctx, s.db, false, id, actor)
+}
+
+func (s *PostgresRuntimeStore) RecordNodeCredentialRotated(ctx context.Context, id, actor string) error {
+	return recordNodeCredentialRotated(ctx, s.db, true, id, actor)
 }

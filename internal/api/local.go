@@ -43,6 +43,22 @@ func registerLocalHandlers(mux *http.ServeMux, store repo.RuntimeBackend, ui fun
 		w.Header().Set("Cache-Control", "no-store")
 		runtimeJSON(w, http.StatusCreated, credential)
 	}))
+	mux.HandleFunc("POST /api/v1/nodes/{id}/rotate", admin(func(w http.ResponseWriter, r *http.Request) {
+		if issuer == nil {
+			bad(w, http.StatusServiceUnavailable, "node_issuance_unavailable")
+			return
+		}
+		credential, err := issuer.RotateNodeCredential(r.Context(), r.PathValue("id"), actor(r))
+		if status, code, ok := nodeCredentialError(err); ok {
+			bad(w, status, code)
+			return
+		}
+		if runtimeStoreError(w, err) {
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		runtimeJSON(w, http.StatusOK, credential)
+	}))
 	mux.HandleFunc("POST /api/v1/nodes/{id}/revoke", admin(func(w http.ResponseWriter, r *http.Request) {
 		err := store.RevokeNodeLifecycle(r.Context(), r.PathValue("id"), actor(r))
 		if errors.Is(err, repo.ErrInvalidNodeLifecycle) {

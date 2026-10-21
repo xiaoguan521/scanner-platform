@@ -39,6 +39,9 @@ func (unsupportedRuntimeBackend) ListNodeLifecycleEvents(context.Context, string
 func (unsupportedRuntimeBackend) RecordNodeCredentialIssued(context.Context, string, string) error {
 	return backendCapabilityError("RecordNodeCredentialIssued")
 }
+func (unsupportedRuntimeBackend) RecordNodeCredentialRotated(context.Context, string, string) error {
+	return backendCapabilityError("RecordNodeCredentialRotated")
+}
 
 func backendCapabilityError(operation string) error {
 	return fmt.Errorf("%w: %s", ErrBackendCapability, operation)

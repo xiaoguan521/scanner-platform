@@ -68,7 +68,7 @@ func errorHint(code string) string {
 		return "请重新登录或检查节点凭据"
 	case "forbidden", "admin_required", "request_header_required":
 		return "请确认当前账号权限和请求来源"
-	case "not_found", "task_not_found", "node_not_registered":
+	case "not_found", "task_not_found", "node_not_registered", "node_credential_not_found":
 		return "请刷新页面并确认资源仍然存在"
 	case "invalid_json", "extra_json", "json_required":
 		return "请按接口要求提交一个 JSON 对象"

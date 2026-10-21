@@ -46,6 +46,12 @@ func TestPostgresNodeLifecycleLab(t *testing.T) {
 	if err != nil || item.Status != "REGISTERED" {
 		t.Fatalf("register item=%+v err=%v", item, err)
 	}
+	if err := store.RecordNodeCredentialIssued(ctx, nodeID, "lab-admin"); err != nil {
+		t.Fatalf("record issued credential audit: %v", err)
+	}
+	if err := store.RecordNodeCredentialRotated(ctx, nodeID, "lab-admin"); err != nil {
+		t.Fatalf("record rotated credential audit: %v", err)
+	}
 	page, err := store.ListNodesPage(ctx, NodeListQuery{Page: 1, PageSize: 20, Search: nodeID})
 	if err != nil || page.Total != 1 || len(page.Items) != 1 || page.Items[0].LifecycleStatus != "REGISTERED" {
 		t.Fatalf("registered-only node page=%+v err=%v", page, err)
