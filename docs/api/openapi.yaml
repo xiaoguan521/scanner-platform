@@ -1438,23 +1438,82 @@ paths:
   "/api/v1/rule-jobs":
     get:
       summary: Authenticated local rule-jobs
+      description: "Without query parameters this keeps the legacy recent-job response. With list parameters, the Server returns a bounded page with operation type, status and search filters."
+      parameters:
+      - in: query
+        name: page
+        schema: {type: integer, minimum: 1, default: 1}
+      - in: query
+        name: page_size
+        schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+      - in: query
+        name: q
+        schema: {type: string, maxLength: 160}
+        description: Search job ID, operation kind, version or message
+      - in: query
+        name: status
+        schema: {type: string, enum: [PENDING, RUNNING, COMPLETED, FAILED, ALL]}
+      - in: query
+        name: kind
+        schema: {type: string, enum: [IMPORT, FETCH, ACTIVATE, ALL]}
+      - in: query
+        name: sort
+        schema: {type: string, enum: [created_at, -created_at, status, -status, kind, -kind, version, -version]}
       responses:
         '200':
-          description: Local operation result
+          description: Local operation result; legacy recent jobs without query parameters, bounded page otherwise
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  items:
-                    type: array
+                oneOf:
+                - type: object
+                  properties:
                     items:
-                      "$ref": "#/components/schemas/RuleJob"
-                  total:
-                    type: integer
-                required:
-                - items
-                - total
+                      type: array
+                      items: {"$ref": "#/components/schemas/RuleJob"}
+                    total: {type: integer}
+                  required: [items, total]
+                - "$ref": "#/components/schemas/RuleJobPage"
+      security:
+      - sessionCookie: []
+  "/api/v1/custom-rules":
+    get:
+      summary: Authenticated custom HTTP read-only rules
+      description: "Without query parameters this returns the complete bounded custom-rule catalog. With list parameters, the Server returns a bounded page; search covers only the ID, name and description."
+      parameters:
+      - in: query
+        name: page
+        schema: {type: integer, minimum: 1, default: 1}
+      - in: query
+        name: page_size
+        schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+      - in: query
+        name: q
+        schema: {type: string, maxLength: 160}
+      - in: query
+        name: severity
+        schema: {type: string, enum: [info, low, medium, high, critical, ALL]}
+      - in: query
+        name: enabled
+        schema: {type: string, enum: ["true", "false", ALL]}
+      - in: query
+        name: sort
+        schema: {type: string, enum: [updated_at, -updated_at, name, -name, severity, -severity, id, -id]}
+      responses:
+        '200':
+          description: Custom rule catalog; legacy complete response without query parameters, bounded page otherwise
+          content:
+            application/json:
+              schema:
+                oneOf:
+                - type: object
+                  properties:
+                    items:
+                      type: array
+                      items: {"$ref": "#/components/schemas/CustomRule"}
+                    total: {type: integer}
+                  required: [items, total]
+                - "$ref": "#/components/schemas/CustomRulePage"
       security:
       - sessionCookie: []
   "/api/v1/auth/setup":
@@ -4673,6 +4732,40 @@ components:
         nodeId:
           type: string
       required: []
+    RuleJobPage:
+      type: object
+      required: [items, total, page, pageSize]
+      properties:
+        items:
+          type: array
+          items: {"$ref": "#/components/schemas/RuleJob"}
+        total: {type: integer, minimum: 0}
+        page: {type: integer, minimum: 1}
+        pageSize: {type: integer, minimum: 1, maximum: 100}
+    CustomRule:
+      type: object
+      required: [id, name, severity, description, matchType, enabled]
+      properties:
+        id: {type: string, maxLength: 100}
+        name: {type: string, minLength: 1, maxLength: 120}
+        severity: {type: string, enum: [info, low, medium, high, critical]}
+        description: {type: string, maxLength: 2000}
+        matchType: {type: string, enum: [word, regex, status]}
+        part: {type: string, enum: [header, body]}
+        values: {type: array, maxItems: 8, items: {type: string, maxLength: 256}}
+        statusCodes: {type: array, items: {type: integer, minimum: 100, maximum: 599}}
+        enabled: {type: boolean}
+        template: {type: string}
+    CustomRulePage:
+      type: object
+      required: [items, total, page, pageSize]
+      properties:
+        items:
+          type: array
+          items: {"$ref": "#/components/schemas/CustomRule"}
+        total: {type: integer, minimum: 0}
+        page: {type: integer, minimum: 1}
+        pageSize: {type: integer, minimum: 1, maximum: 100}
     EngineStatus:
       type: object
       required:

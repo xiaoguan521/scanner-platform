@@ -10,6 +10,21 @@ import (
 
 func registerRuleHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui func(bool, http.HandlerFunc) http.HandlerFunc, actor func(*http.Request) string) {
 	mux.HandleFunc("GET /api/v1/custom-rules", ui(false, func(w http.ResponseWriter, r *http.Request) {
+		if query, paged, ok := parseCustomRuleListQuery(r); paged {
+			if !ok {
+				bad(w, http.StatusBadRequest, "invalid_custom_rule_list_query")
+				return
+			}
+			page, err := store.ListCustomRulesPage(r.Context(), query)
+			if errors.Is(err, repo.ErrInvalidCustomRuleListQuery) {
+				bad(w, http.StatusBadRequest, "invalid_custom_rule_list_query")
+				return
+			}
+			if !runtimeStoreError(w, err) {
+				runtimeJSON(w, http.StatusOK, PageListResponse[rules.CustomRule]{Items: page.Items, Total: page.Total, Page: page.Page, PageSize: page.PageSize})
+			}
+			return
+		}
 		items, err := store.ListCustomRules(r.Context())
 		if !runtimeStoreError(w, err) {
 			runtimeJSON(w, 200, ListResponse[rules.CustomRule]{Items: items, Total: len(items)})
@@ -76,6 +91,21 @@ func registerRuleHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui func(
 		}
 	}))
 	mux.HandleFunc("GET /api/v1/rule-jobs", ui(false, func(w http.ResponseWriter, r *http.Request) {
+		if query, paged, ok := parseRuleJobListQuery(r); paged {
+			if !ok {
+				bad(w, http.StatusBadRequest, "invalid_rule_job_list_query")
+				return
+			}
+			page, err := store.ListRuleJobsPage(r.Context(), query)
+			if errors.Is(err, repo.ErrInvalidRuleJobListQuery) {
+				bad(w, http.StatusBadRequest, "invalid_rule_job_list_query")
+				return
+			}
+			if !runtimeStoreError(w, err) {
+				runtimeJSON(w, http.StatusOK, PageListResponse[rules.Job]{Items: page.Items, Total: page.Total, Page: page.Page, PageSize: page.PageSize})
+			}
+			return
+		}
 		items, err := store.ListRuleJobs(r.Context())
 		if !runtimeStoreError(w, err) {
 			runtimeJSON(w, 200, ListResponse[rules.Job]{Items: items, Total: len(items)})

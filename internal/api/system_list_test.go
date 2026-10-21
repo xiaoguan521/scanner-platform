@@ -68,3 +68,52 @@ func TestNodeAndRuleListPaginationAPI(t *testing.T) {
 		}
 	}
 }
+
+func TestRuleJobAndCustomRuleListPaginationAPI(t *testing.T) {
+	ctx := context.Background()
+	store, err := repo.OpenRuntime(filepath.Join(t.TempDir(), "rule-lists.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if _, err := store.QueueRuleJob(ctx, rules.Job{Kind: "IMPORT", Bundle: []byte("zip")}, "tester"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SaveCustomRule(ctx, "tester", rules.CustomRule{ID: "legacy-console", Name: "Legacy console", Severity: "medium", MatchType: "word", Part: "body", Values: []string{"marker"}, Enabled: true}, true); err != nil {
+		t.Fatal(err)
+	}
+	handler := NewRuntimeHandler(store, nil, "")
+	for _, test := range []struct {
+		path string
+	}{
+		{path: "/api/v1/rule-jobs?page=1&page_size=1&kind=IMPORT"},
+		{path: "/api/v1/custom-rules?page=1&page_size=1&severity=medium&enabled=true&q=legacy"},
+	} {
+		request := httptest.NewRequest(http.MethodGet, test.path, nil)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("%s status=%d body=%s", test.path, response.Code, response.Body.String())
+		}
+		var body PageListResponse[map[string]any]
+		if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body.Total != 1 || len(body.Items) != 1 || body.Page != 1 || body.PageSize != 1 {
+			t.Fatalf("%s body=%+v", test.path, body)
+		}
+	}
+	for _, path := range []string{
+		"/api/v1/rule-jobs?page=1&status=UNKNOWN",
+		"/api/v1/rule-jobs?page=1&kind=UNKNOWN",
+		"/api/v1/custom-rules?page=1&enabled=maybe",
+		"/api/v1/custom-rules?page=1&sort=drop_table",
+	} {
+		request := httptest.NewRequest(http.MethodGet, path, strings.NewReader(""))
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("%s status=%d body=%s", path, response.Code, response.Body.String())
+		}
+	}
+}

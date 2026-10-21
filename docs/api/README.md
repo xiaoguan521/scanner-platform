@@ -26,7 +26,7 @@ UI 使用 HttpOnly 的 `scanner_session` Cookie，所有写请求携带 `X-Reque
 - `/schedules`：首次运行时间、分钟间隔（0=单次）、显式目标、时间窗；`PUT /schedules/{id}` 修改，`PATCH` 启停，`DELETE` 删除后续调度，返回最近任务及错误。
 - `GET /schedules/{id}/runs`：按时间倒序分页查看每次定时触发的任务状态；保留已删除计划的历史，只返回触发时间、状态、任务 ID 和安全错误摘要，不返回目标、输入或引擎输出。
 - `/nodes`：真实本机心跳，10 秒未上报显示离线，并回报固定版本、安装与就绪状态 `engines`。`GET /nodes` 不带查询参数时保留完整清单；带 `page`、`page_size`、`q` 或 `sort` 时由 Server 返回有界分页，搜索只覆盖节点 ID、类型和主机 ID。`/nodes/heartbeat`、`/worker/*`、`/updater/*` 仅为绑定回环地址的本机进程协议，不是生产部署接口。
-- `/rules`、`/rule-jobs`：Updater 回报的版本与操作状态。`GET /rules` 不带查询参数时保留完整清单；带 `page`、`page_size`、`q` 或 `sort` 时由 Server 返回规则版本有界分页，搜索只覆盖版本和渠道。`/rules/import` 上传不超过 256 MiB 的 ZIP；`/rules/fetch` 提交 HTTPS ZIP URL 和包哈希，大签名包由 Updater 流式下载（最多 2 GiB）；`/rules/{version}/activate` 激活或通过 `rollback: true` 显式回滚。人工下载的大签名 ZIP 使用 Updater 的 `--import-bundle-file`，不经过 Server SQLite BLOB。
+- `/rules`、`/rule-jobs`、`/custom-rules`：Updater 回报的版本与操作状态及受限自定义规则。`GET /rules` 不带查询参数时保留完整清单；带 `page`、`page_size`、`q` 或 `sort` 时由 Server 返回规则版本有界分页，搜索只覆盖版本和渠道。`GET /rule-jobs` 与 `GET /custom-rules` 带分页参数时分别支持操作类型/状态和规则等级/启用状态筛选；自定义规则搜索只覆盖 ID、名称和说明。`/rules/import` 上传不超过 256 MiB 的 ZIP；`/rules/fetch` 提交 HTTPS ZIP URL 和包哈希，大签名包由 Updater 流式下载（最多 2 GiB）；`/rules/{version}/activate` 激活或通过 `rollback: true` 显式回滚。人工下载的大签名 ZIP 使用 Updater 的 `--import-bundle-file`，不经过 Server SQLite BLOB。
 
 `/worker/claim` 为每个非模拟任务返回固定的 `pinnedRuleVersion` 和短期 `leaseExpiresAt`；真实 Worker 会在请求中携带本地 `localRuleVersion`/`rulesReady`。Server 只把规则版本匹配的规则任务交给该 Worker，缺少 CURRENT 时将规则任务留在队列；端口探测和被动 ZAP 不依赖规则，可继续领取。`/worker/renew` 只接受同一任务、Worker 和版本绑定，并把续租限制在任务 hard deadline 以内。租约到期后续租和结果回报均被拒绝，Server 的 `Tick` 会把任务回收到 `PENDING` 或 `PAUSED_WINDOW`，避免失联 Worker 永久占用任务。当前本地 API 仍只绑定回环地址，TLS 和节点令牌属于后续部署工作。
 
