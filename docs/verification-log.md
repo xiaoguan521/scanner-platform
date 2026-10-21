@@ -34,6 +34,11 @@
 - 新增 `docs/browser-acceptance.md` 和 `web/e2e/core-journey.spec.mjs`。脚本要求 `LAB_ENV=isolated`、人为确认值、已有账号、单个数字 IP 和明确端口范围；不会创建演示账号、默认目标或扩大扫描范围。
 - 验收步骤覆盖页面登录、资产登记、自动综合扫描向导、授权确认、任务完成轮询和任务详情结果检查。任务/资产默认保留，便于人工复核；真实执行需在隔离靶机上运行 `make test-browser`，本次提交只完成脚本和门槛，未代替用户授权运行。
 
+## 2026-10-21：三条核心旅程浏览器验收覆盖
+
+- 抽取 `web/e2e/helpers.mjs` 统一隔离环境、数字 IP、端口范围、账号和登录门槛；新增总览下钻/指定发现项详情以及定时/报告页面验收脚本。所有脚本共 5 个测试，深入发现项和报告选择分别需要显式提供现有 `SCANNER_E2E_FINDING_ID`、`SCANNER_E2E_TASK_ID`，不写入状态或创建报告。
+- `node --test $(find web/src -name '*.test.mjs' -print)` 共 25 项通过；`npm --prefix web run test:e2e -- --list` 列出 5 个测试；`npm --prefix web run build` 通过。当前未连接正在运行的 Server，未宣称真实浏览器实跑或抓包证据已完成。
+
 ## 2026-10-20：单项接受风险、到期与状态事件
 
 - 新增 finding_events SQLite 表及按发现项/时间索引；PATCH 接收状态、原因、到期，GET `/api/v1/findings/{id}/events` 返回时间线。Server 角色/CSRF 沿用现有写权限，非写角色只能查看。

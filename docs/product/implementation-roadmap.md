@@ -9,9 +9,9 @@
 | P0 | 六域信息架构与统一布局 | 现有路由 | 本提交完成导航分组和角色菜单守卫 | `navigation.test.mjs`、前端构建 |
 | P0 | 单一真实 API 通道 | P0 导航 | 已完成：认证、集合、总览和业务写入统一走 Server；已移除浏览器 mock、演示种子和 `VITE_DATA_MODE` | Server-only 源码契约、前端构建、真实靶机回归 |
 | P0 | 通用状态与表格组件 | P0 布局/API | 已完成：共享加载、错误、空状态、`DataTable`、严重度/漏洞状态/任务状态标签和统计卡片已覆盖主要列表与总览 | `DataState.test.mjs`、`Semantic.test.mjs`、24 项前端测试、前端构建 |
-| P1 | 资产 → 扫描 → 结果核心旅程 | P0 | 已有真实 SQLite/Worker 闭环，已提供隔离靶机 Playwright 5 点击验收脚本；待在当前靶机运行并保留抓包证据 | `docs/browser-acceptance.md`、`web/e2e/core-journey.spec.mjs`、授权范围抓包证据 |
-| P1 | 漏洞处置与总览下钻 | P0 | 服务端和页面能力已实现，缺真实浏览器回归 | 数字与明细一致、URL 筛选回归 |
-| P1 | 报告、定时与系统管理 | P0 | 主体已实现；系统设置、独立通知中心、PDF 尚缺 | API/权限/审计和浏览器验收 |
+| P1 | 资产 → 扫描 → 结果核心旅程 | P0 | 已有真实 SQLite/Worker 闭环，已提供隔离靶机 Playwright 资产登记、扫描向导和任务结果验收；待在当前靶机运行并保留抓包证据 | `docs/browser-acceptance.md`、`web/e2e/core-journey.spec.mjs`、授权范围抓包证据 |
+| P1 | 漏洞处置与总览下钻 | P0 | 服务端和页面能力已实现，已提供总览下钻和指定发现项只读详情验收；真实浏览器回归待运行 | `web/e2e/disposition-dashboard.spec.mjs`、数字与明细一致、URL 筛选回归 |
+| P1 | 报告、定时与系统管理 | P0 | 报告与定时主体已实现，已提供 Server-backed 页面验收；系统设置、独立通知中心、PDF 尚缺 | `web/e2e/schedule-report.spec.mjs`、API/权限/审计和浏览器验收 |
 | P2 | 真实引擎与平台适配 | P0/P1 | 实验靶机链路已具备，真实服务器、国产系统和 PostgreSQL 尚待验收 | 隔离靶机测试、引擎日志、范围抓包 |
 | P2 | 性能、无障碍、国际化 | 所有 P1 | 未完成 | 1 万条列表、键盘操作、i18n 检查 |
 
