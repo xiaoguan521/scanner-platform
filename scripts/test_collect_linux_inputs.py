@@ -89,6 +89,32 @@ class CollectorTest(unittest.TestCase):
         self.assertEqual((output / 'runtime-services.json').stat().st_mode & 0o777, 0o600)
         self.assertNotIn('cmdline', (output / 'runtime-services.json').read_text())
 
+    def test_runtime_container_inventory_is_read_only_and_bounded(self):
+        completed = mock.Mock(returncode=0, stdout=b'web\tnginx:1.27\tUp 2 minutes\nold\tbusybox:1.36\tExited (0) 1 hour ago\n')
+        with mock.patch.object(collector.shutil, 'which', side_effect=lambda name: '/usr/bin/' + name), \
+                mock.patch.object(collector.subprocess, 'run', return_value=completed) as run:
+            values = collector.collect_runtime_workloads(Path('/'))
+        self.assertEqual(values, [
+            {'name': 'old', 'manager': 'container', 'runtime': 'docker', 'image': 'busybox:1.36', 'state': 'stopped'},
+            {'name': 'web', 'manager': 'container', 'runtime': 'docker', 'image': 'nginx:1.27', 'state': 'running'},
+            {'name': 'old', 'manager': 'container', 'runtime': 'podman', 'image': 'busybox:1.36', 'state': 'stopped'},
+            {'name': 'web', 'manager': 'container', 'runtime': 'podman', 'image': 'nginx:1.27', 'state': 'running'},
+        ])
+        for call in run.call_args_list:
+            self.assertEqual(call.args[0][1:5], ['ps', '--all', '--no-trunc', '--format'])
+            self.assertEqual(call.kwargs['stdin'], collector.subprocess.DEVNULL)
+            self.assertEqual(call.kwargs['stderr'], collector.subprocess.DEVNULL)
+            self.assertNotIn('DOCKER_HOST', call.kwargs['env'])
+
+    def test_runtime_container_inventory_has_global_bound(self):
+        stdout = ''.join(f'web-{index}\tnginx:1.27\tUp\n' for index in range(300)).encode()
+        completed = mock.Mock(returncode=0, stdout=stdout)
+        with mock.patch.object(collector.shutil, 'which', side_effect=lambda name: '/usr/bin/' + name), \
+                mock.patch.object(collector.subprocess, 'run', return_value=completed):
+            values = collector.collect_runtime_workloads(Path('/'))
+        self.assertEqual(len(values), collector.MAX_RUNTIME_WORKLOADS)
+        self.assertTrue(all(value['runtime'] == 'docker' for value in values))
+
     def test_escaping_symlink_and_missing_package_db_fail_atomically(self):
         (self.linux / 'etc/os-release').unlink()
         (self.linux / 'etc/os-release').symlink_to('../../elsewhere')

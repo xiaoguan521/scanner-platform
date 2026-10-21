@@ -108,6 +108,8 @@ func TestReadRuntimeServicesRejectsInvalidPayloads(t *testing.T) {
 		{name: "missing services", data: `{"schemaVersion":1}`},
 		{name: "duplicate", data: `{"schemaVersion":1,"services":[{"name":"sshd","manager":"process","state":"running"},{"name":"sshd","manager":"process","state":"running"}]}`},
 		{name: "unsafe name", data: `{"schemaVersion":1,"services":[{"name":"sshd --bad","manager":"process","state":"running"}]}`},
+		{name: "container missing image", data: `{"schemaVersion":1,"services":[{"name":"web","manager":"container","runtime":"docker","state":"running"}]}`},
+		{name: "container unsafe image", data: `{"schemaVersion":1,"services":[{"name":"web","manager":"container","runtime":"docker","image":"nginx\tlatest","state":"running"}]}`},
 		{name: "trailing data", data: `{"schemaVersion":1,"services":[]} {}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -119,6 +121,17 @@ func TestReadRuntimeServicesRejectsInvalidPayloads(t *testing.T) {
 				t.Fatal("invalid runtime service inventory was accepted")
 			}
 		})
+	}
+}
+
+func TestReadRuntimeServicesAcceptsContainerWorkload(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "runtime-services.json"), []byte(`{"schemaVersion":1,"services":[{"name":"web","manager":"container","runtime":"docker","image":"nginx:1.27","state":"running"}]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	services, err := readRuntimeServices(root)
+	if err != nil || len(services) != 1 || services[0].Runtime != "docker" || services[0].Image != "nginx:1.27" {
+		t.Fatalf("services=%+v err=%v", services, err)
 	}
 }
 

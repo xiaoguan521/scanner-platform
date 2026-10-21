@@ -43,13 +43,16 @@ type Service struct {
 	LoginEntries     []LoginEntry `json:"loginEntries,omitempty"`
 }
 
-// RuntimeService is a bounded, read-only observation of a service unit or
-// process name collected over the explicitly configured SSH target. It does
-// not contain command lines, PIDs, paths, arguments or user data.
+// RuntimeService is a bounded, read-only observation of a service unit,
+// process name, or local container workload collected over the explicitly
+// configured SSH target. It does not contain command lines, PIDs, paths,
+// arguments, environment variables, ports or user data.
 type RuntimeService struct {
 	Name    string `json:"name"`
 	Manager string `json:"manager"`
 	State   string `json:"state"`
+	Runtime string `json:"runtime,omitempty"`
+	Image   string `json:"image,omitempty"`
 }
 
 // ValidateRuntimeServices checks the stable runtime inventory contract shared
@@ -63,19 +66,30 @@ func ValidateRuntimeServices(services []RuntimeService) bool {
 		if len(service.Name) == 0 || len(service.Name) > 128 || !utf8.ValidString(service.Name) || strings.ContainsRune(service.Name, 0) || !validRuntimeServiceName(service.Name) {
 			return false
 		}
-		if service.Manager != "systemd" && service.Manager != "init" && service.Manager != "process" {
+		if service.Manager != "systemd" && service.Manager != "init" && service.Manager != "process" && service.Manager != "container" {
 			return false
 		}
-		if service.State != "installed" && service.State != "running" {
+		if service.State != "installed" && service.State != "running" && service.State != "stopped" {
 			return false
 		}
-		key := service.Manager + "\x00" + service.Name
+		if service.Manager == "container" {
+			if service.Runtime != "docker" && service.Runtime != "podman" || !validRuntimeServiceText(service.Image, 500) {
+				return false
+			}
+		} else if service.Runtime != "" || service.Image != "" {
+			return false
+		}
+		key := service.Manager + "\x00" + service.Runtime + "\x00" + service.Name
 		if _, ok := seen[key]; ok {
 			return false
 		}
 		seen[key] = struct{}{}
 	}
 	return true
+}
+
+func validRuntimeServiceText(value string, limit int) bool {
+	return len(value) > 0 && len(value) <= limit && utf8.ValidString(value) && !strings.ContainsRune(value, 0) && !strings.ContainsAny(value, "\r\n\t")
 }
 
 func validRuntimeServiceName(value string) bool {

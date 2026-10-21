@@ -81,7 +81,7 @@ export interface PortQuarantine {
 
 export interface LoginEntry { type: 'system'|'web'; name: string; port: number; url?: string; https: boolean; captcha?: boolean|null; antiBruteForce?: boolean|null; evidence?: string }
 export interface AssetService { port: number; scheme?: string; kind?: 'HTTP'|'OTHER'; protocol?: string; state?: string; serviceName?: string; software?: string; version?: string; middleware?: string; language?: string; framework?: string; database?: string; application?: string; url?: string; title?: string; tls?: boolean; firstSeen?: string; lastSeen?: string; excluded?: boolean; quarantined?: boolean; quarantineReason?: string; loginEntries?: LoginEntry[] }
-export interface RuntimeService { name: string; manager: 'systemd'|'init'|'process'; state: 'installed'|'running' }
+export interface RuntimeService { name: string; manager: 'systemd'|'init'|'process'|'container'; state: 'installed'|'running'|'stopped'; runtime?: 'docker'|'podman'; image?: string }
 export interface AssetProfile { name?: string; isCore?: boolean; department?: string; phone?: string; mac?: string; osName?: string; osFamily?: string; deviceType?: string; deviceSubtype?: string; vendor?: string; model?: string; runtimeServices?: RuntimeService[] }
 export interface Asset extends AssetProfile {
   id: string;

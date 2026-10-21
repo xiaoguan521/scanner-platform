@@ -24,6 +24,7 @@ MAX_FILE = 16 << 30
 MAX_TOTAL = 32 << 30
 MAX_FILES = 10000
 MAX_RUNTIME_SERVICES = 256
+MAX_RUNTIME_WORKLOADS = 256
 ALIAS = re.compile(r'[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}\Z')
 LOCKS = {'package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock', 'pnpm-lock.yaml',
          'poetry.lock', 'Pipfile.lock', 'uv.lock', 'requirements.txt', 'Gemfile.lock',
@@ -152,8 +153,50 @@ def runtime_name(value):
     return value
 
 
+def runtime_workload_state(status):
+    status = status.lower()
+    if status.startswith('up') or 'running' in status:
+        return 'running'
+    return 'stopped'
+
+
+def collect_runtime_workloads(root):
+    """Collect local Docker/Podman metadata without inspecting workload contents."""
+    if root != Path('/'):
+        return []
+    workloads = []
+    for runtime in ('docker', 'podman'):
+        executable = shutil.which(runtime)
+        if not executable:
+            continue
+        try:
+            result = subprocess.run(
+                [executable, 'ps', '--all', '--no-trunc', '--format', '{{.Names}}\t{{.Image}}\t{{.Status}}'],
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                check=False, timeout=20, env={'PATH': os.environ.get('PATH', '')},
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if result.returncode != 0 or len(result.stdout) > 1 << 20:
+            continue
+        for raw in result.stdout.decode('utf-8', errors='strict').splitlines():
+            if len(workloads) >= MAX_RUNTIME_WORKLOADS:
+                break
+            fields = raw.split('\t')
+            if len(fields) != 3:
+                continue
+            name, image, status = (field.strip() for field in fields)
+            if not name or not image or len(name) > 128 or len(image) > 500:
+                continue
+            if not ALIAS.fullmatch(name) or any(ord(ch) < 32 or ord(ch) == 127 for ch in image):
+                continue
+            workloads.append({'name': name, 'manager': 'container', 'runtime': runtime,
+                              'image': image, 'state': runtime_workload_state(status)})
+    return sorted(workloads, key=lambda value: (value['runtime'], value['name']))[:MAX_RUNTIME_WORKLOADS]
+
+
 def collect_runtime_services(root, destination):
-    """Collect stable service/process names without command lines or PIDs."""
+    """Collect stable service/process/container names without command lines or PIDs."""
     services = {}
 
     def add(name, manager, state):
@@ -211,7 +254,10 @@ def collect_runtime_services(root, destination):
         if len(services) >= MAX_RUNTIME_SERVICES:
             break
 
-    values = sorted(services.values(), key=lambda value: (value['manager'], value['name']))[:MAX_RUNTIME_SERVICES]
+    workloads = collect_runtime_workloads(root)
+    native_limit = max(0, MAX_RUNTIME_SERVICES - len(workloads))
+    values = sorted(services.values(), key=lambda value: (value['manager'], value['name']))[:native_limit]
+    values.extend(workloads[:MAX_RUNTIME_SERVICES])
     if values:
         destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         destination.write_text(json.dumps({'schemaVersion': 1, 'services': values}, ensure_ascii=False, indent=2) + '\n')
@@ -492,8 +538,9 @@ def main(argv=None):
             components.append({'name': name, 'kind': 'image-archive', 'path': 'images/' + name + '.tar'})
         receipt = {'source': args.source, 'collectedAt': collected, 'components': components,
                    'coverage': ['OS package database snapshot; not live kernel or process verification',
+                                'Read-only local Docker/Podman container names, image references and running/stopped state when available',
                                 'Only explicitly selected application dependency files and image archives',
-                                'Image writable layers, volumes and unregistered native binaries are not covered']}
+                                'Container contents, volumes, cluster workloads and unregistered native binaries are not covered']}
         if not ssh_apps:
             (staging / 'collection.json').write_text(json.dumps(receipt, indent=2) + '\n')
             (staging / 'collection.json').chmod(0o600)

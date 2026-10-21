@@ -794,3 +794,10 @@
 - 验证：`go test ./internal/inventory ./internal/sshcollect ./internal/assets ./internal/repo ./internal/reporting ./internal/executor`、`python3 -m unittest test_collect_linux_inputs.py`（在 `scripts/` 目录，19 项）、`git diff --check`；覆盖有效/无效 JSON、重复/越界服务名、归档路径、合成 systemd/init/proc 夹具、资产画像/报告持久化。
 - 该能力仍是只读运行态线索，不等于服务已启动或配置审计；真实服务器、国产系统和容器/集群运行态盘点仍在路线图中。
 
+## 2026-10-21：SSH 本机容器运行态元数据
+
+- 在上一项 SSH 运行态服务采集基础上，对同一明确授权主机只读调用本机 Docker/Podman 的固定 `ps` 格式，记录容器名称、镜像引用和运行/停止状态；不读取容器内容、卷、进程命令行、环境变量，也不访问 Kubernetes 或其他集群 API。
+- 采集器固定使用参数切片、`DOCKER_HOST` 隔离环境、20 秒超时、1 MiB 输出上限和最多 256 项；运行时缺失、命令失败、超时或返回非法字段时跳过，不因此扩大扫描范围。合成 rootfs 夹具不会调用宿主运行时。
+- 资产画像、资产详情、报告资产表和 OpenAPI 已同步 `container`、`docker/podman`、`stopped` 与镜像字段；没有新增数据库表或迁移。
+- 待执行验证：`go test -race ./internal/inventory ./internal/sshcollect ./internal/assets ./internal/repo ./internal/reporting ./internal/executor`、`PYTHONPATH=scripts python3 -m unittest scripts.test_collect_linux_inputs`、`npm --prefix web run build` 及全量 `make test && make lint && make build`。本批不连接外部节点、不执行容器内扫描，也不把容器记录成新的扫描目标。
+

@@ -5430,8 +5430,10 @@ components:
       required: [name, manager, state]
       properties:
         name: {type: string, maxLength: 128}
-        manager: {type: string, enum: [systemd, init, process]}
-        state: {type: string, enum: [installed, running]}
+        manager: {type: string, enum: [systemd, init, process, container]}
+        state: {type: string, enum: [installed, running, stopped]}
+        runtime: {type: string, enum: [docker, podman]}
+        image: {type: string, maxLength: 500}
     LoginEntry:
       type: object
       properties:

@@ -136,7 +136,7 @@ func loginTable(s Snapshot) Table {
 	return t
 }
 func assetTable(s Snapshot) Table {
-	t := newTable("资产基本信息", "IP / 资产", "名称", "核心资产", "业务组", "责任人", "部门", "联系电话", "MAC", "操作系统", "系统族", "设备类型", "设备小类", "厂商", "型号", "SSH 运行态服务", "存活状态", "最近存活时间")
+	t := newTable("资产基本信息", "IP / 资产", "名称", "核心资产", "业务组", "责任人", "部门", "联系电话", "MAC", "操作系统", "系统族", "设备类型", "设备小类", "厂商", "型号", "SSH 运行态服务/容器", "存活状态", "最近存活时间")
 	for _, a := range s.Assets {
 		alive := "未知"
 		if a.Alive != nil {
@@ -152,7 +152,14 @@ func assetTable(s Snapshot) Table {
 		}
 		runtime := make([]string, 0, len(a.RuntimeServices))
 		for _, service := range a.RuntimeServices {
-			runtime = append(runtime, service.Manager+":"+service.Name+" ("+service.State+")")
+			label := service.Manager + ":" + service.Name
+			if service.Runtime != "" {
+				label += " [" + service.Runtime + "]"
+			}
+			if service.Image != "" {
+				label += " " + service.Image
+			}
+			runtime = append(runtime, label+" ("+service.State+")")
 		}
 		t.Rows = append(t.Rows, []string{a.Address, text(a.Name), strconv.FormatBool(a.Core), text(a.BusinessGroup), text(a.Owner), text(a.Department), text(a.Phone), text(a.MAC), text(a.OSName), text(a.OSFamily), text(a.DeviceType), text(a.DeviceSubtype), text(a.Vendor), text(a.Model), text(strings.Join(runtime, "；")), alive, text(lastAlive)})
 	}
