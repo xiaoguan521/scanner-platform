@@ -26,3 +26,11 @@
 - 真实扫描仍只接受已登记且明确授权的数字 IP 和端口；路线图不扩大扫描范围。
 - 真实测试只使用隔离靶机和明确授权的目标；不能把本地扫描结果或密钥写入仓库。
 - 每个工作包完成时同步 `docs/product/current-state.md`、`docs/verification-log.md` 和相应 OpenAPI 契约。
+
+## 本次推进：部署静态安全门禁
+
+已增加 `make verify-deploy`。它先由 Docker Compose 将候选文件规范化为
+JSON，再检查服务角色、显式网络、host namespace、特权和 capabilities、
+secret 文件引用、端口发布边界，以及 Worker 的规则目录只读和 runtime 可写
+约束。该门禁不替代 Linux 围栏、抓包和真实部署验收，也不意味着生产
+Compose 已经交付。

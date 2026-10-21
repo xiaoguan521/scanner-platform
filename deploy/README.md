@@ -123,6 +123,28 @@ Only the Server address and explicitly listed numeric `IP:port` infrastructure
 permits may be reachable. The Server still fixes every scan target and port;
 the Worker does not resolve names or expand networks.
 
+## Compose security gate
+
+The repository intentionally does not provide a runnable production Compose
+file. Before operating a deployment file, normalize it with Docker Compose and
+run the static security gate:
+
+```text
+DEPLOY_COMPOSE_FILE=/path/to/compose.yaml make verify-deploy
+```
+
+`scripts/verify_compose_security.py` consumes only `docker compose config
+--format json`; it never starts services. It fails closed when the deployment
+is missing the `sec-server`, `sec-updater`, `postgres`, or `sec-worker-*`
+roles, uses a host namespace or privileged container, publishes Worker/Updater/
+PostgreSQL ports, places sensitive values directly in environment variables,
+gives a Worker unsafe capabilities, mounts `/vuln-data` writable in a Worker,
+or leaves the Worker runtime read-only. Server ports must bind loopback, the
+Updater must run non-root, and all secret sources must be owner-managed files.
+The check is a deployment gate, not proof that the resulting Linux namespace,
+firewall, cgroup, or packet-drop behavior has been accepted; those isolated
+runtime tests remain required.
+
 ## Remaining deployment gates
 
 The following items are intentionally not represented by a fake Compose file:

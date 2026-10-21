@@ -751,3 +751,9 @@
 - 新增 `POST /api/v1/nodes/{id}/issue` OpenAPI 契约、SQLite/PostgreSQL 审计适配和失败回滚；数据库只保存节点生命周期与审计状态，令牌仍属于受保护的文件注册表。远程部署、自动证书签发和客户端自动注册仍未实现。
 - 验证：`make build`、`make lint`、`make test`（Go race 与 Python 18 项采集测试）、`node --test $(find web/src -name '*.test.mjs' -print)`（36 项）、`npm --prefix web run build`、`POSTGRES_DSN_FILE="$PWD/runtime/postgres/dsn" go test -tags=lab -count=1 ./internal/repo`、OpenAPI YAML 解析和 `git diff --check` 均通过；新增 API 测试覆盖成功签发、owner-only 注册表写入、审计记录、重复签发、审计失败回滚和 `no-store` 响应。测试使用临时数据库、隔离 PostgreSQL、文档保留地址和临时令牌，未写入真实凭据或资产。
 
+## 2026-10-21：Compose 部署静态安全门禁
+
+- 新增 `scripts/verify_compose_security.py`：通过 `docker compose config --format json` 规范化候选部署文件，随后不启动任何容器，失败即关闭。
+- 校验服务角色、显式命名网络、禁止 `network_mode: host`/`hostNetwork`/`privileged`/危险 capability，限制 Server 仅回环发布端口，禁止 Worker/Updater/PostgreSQL 发布宿主端口，要求 secret 使用 owner-managed file，Updater 非 root，Worker `/vuln-data` 只读且 `/runtime` 可写。
+- 新增无网络单元测试，覆盖合法配置、host namespace、特权、规则目录/runtime 权限、明文凭据、危险 capability、端口和 secret/网络缺失路径；`make test` 已纳入该测试文件。该门禁仍不能替代 Linux namespace、nftables、cgroup 和范围外抓包验收，也不声称生产 Compose 已完成。
+

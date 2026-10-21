@@ -6,7 +6,7 @@ ifeq ($(GOOS),windows)
 EXE_EXT := .exe
 endif
 
-.PHONY: build test lint verify-flags test-lab test-fence-lab web-install web-dev web-build dev dev-postgres test-local test-browser engines engines-zap engines-java test-engines-local migrate-postgres
+.PHONY: build test lint verify-flags verify-deploy test-lab test-fence-lab web-install web-dev web-build dev dev-postgres test-local test-browser engines engines-zap engines-java test-engines-local migrate-postgres
 
 dev:
 	bash scripts/dev.sh
@@ -36,7 +36,7 @@ web-build:
 
 test:
 	$(GO) test -race ./...
-	python3 -m unittest discover -s scripts -p 'test_collect_linux_inputs.py'
+	PYTHONPATH=scripts python3 -m unittest scripts.test_collect_linux_inputs scripts.test_verify_compose_security
 
 lint:
 	@command -v $(GOFMT) >/dev/null 2>&1 || { echo 'gofmt unavailable' >&2; exit 1; }
@@ -60,6 +60,10 @@ engines-zap:
 
 verify-flags:
 	REQUIRE_ZAP=$(REQUIRE_ZAP) python3 scripts/verify_engine_flags.py
+
+verify-deploy:
+	@test -n "$${DEPLOY_COMPOSE_FILE:-}" || { printf '%s\n' 'Set DEPLOY_COMPOSE_FILE to the deployment Compose file to validate.' >&2; exit 2; }
+	python3 scripts/verify_compose_security.py "$${DEPLOY_COMPOSE_FILE}"
 
 engines-java:
 	mkdir -p dist

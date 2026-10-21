@@ -550,6 +550,14 @@ secrets:
 
 > 二期的 ZAP sidecar 通过独立 profile 启用,且必须强制设置 API Key。
 
+部署文件在进入隔离 Linux 验收前必须通过仓库的静态安全门禁：
+`DEPLOY_COMPOSE_FILE=/path/to/compose.yaml make verify-deploy`。门禁使用
+`docker compose config --format json` 规范化候选文件，检查服务角色、显式
+命名网络、禁止 host namespace/privileged/危险 capabilities、secret 文件
+引用、Server 回环端口、Worker/Updater/PostgreSQL 端口发布，以及 Worker
+规则目录只读和私有 runtime 可写约束。它不替代实际 namespace、nftables、
+cgroup、DROP 计数和范围外抓包验收；本节 Compose 仍是按环境补全的部署骨架。
+
 ---
 
 ## 11. 安全、合规与 AI
