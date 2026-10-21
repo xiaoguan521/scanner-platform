@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"strconv"
 
 	"scanner-platform/internal/findings"
 	"scanner-platform/internal/repo"
@@ -110,6 +111,41 @@ func registerProductHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui fu
 			runtimeJSON(w, http.StatusOK, saved)
 		}
 	}))
+	mux.HandleFunc("GET /api/v1/notification-settings", adminRead(func(w http.ResponseWriter, r *http.Request) {
+		settings, err := store.GetNotificationSettings(r.Context())
+		if !runtimeStoreError(w, err) {
+			runtimeJSON(w, http.StatusOK, settings)
+		}
+	}))
+	mux.HandleFunc("PUT /api/v1/notification-settings", admin(func(w http.ResponseWriter, r *http.Request) {
+		var settings repo.NotificationSettings
+		if !runtimeDecode(w, r, &settings) {
+			return
+		}
+		saved, err := store.SaveNotificationSettings(r.Context(), settings, actor(r))
+		if errors.Is(err, repo.ErrInvalidNotificationSettings) {
+			bad(w, http.StatusBadRequest, "invalid_notification_settings")
+			return
+		}
+		if !runtimeStoreError(w, err) {
+			runtimeJSON(w, http.StatusOK, saved)
+		}
+	}))
+	mux.HandleFunc("GET /api/v1/notification-deliveries", adminRead(func(w http.ResponseWriter, r *http.Request) {
+		limit, offset, ok := parseNotificationDeliveryPage(r)
+		if !ok {
+			bad(w, http.StatusBadRequest, "invalid_notification_delivery_query")
+			return
+		}
+		items, err := store.ListNotificationDeliveries(r.Context(), limit, offset)
+		if errors.Is(err, repo.ErrInvalidNotificationSettings) {
+			bad(w, http.StatusBadRequest, "invalid_notification_delivery_query")
+			return
+		}
+		if !runtimeStoreError(w, err) {
+			runtimeJSON(w, http.StatusOK, items)
+		}
+	}))
 	mux.HandleFunc("GET /api/v1/notifications", ui(false, func(w http.ResponseWriter, r *http.Request) {
 		unreadOnly := false
 		if raw := r.URL.Query().Get("unread"); raw != "" {
@@ -215,4 +251,29 @@ func registerProductHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui fu
 			runtimeJSON(w, 200, map[string]string{"status": "RELEASED"})
 		}
 	}))
+}
+
+func parseNotificationDeliveryPage(r *http.Request) (limit, offset int, ok bool) {
+	values := r.URL.Query()
+	for key := range values {
+		if key != "limit" && key != "offset" {
+			return 0, 0, false
+		}
+	}
+	limit, offset = 50, 0
+	for key, target := range map[string]*int{"limit": &limit, "offset": &offset} {
+		items, exists := values[key]
+		if !exists {
+			continue
+		}
+		if len(items) != 1 {
+			return 0, 0, false
+		}
+		parsed, err := strconv.Atoi(items[0])
+		if err != nil || parsed < 0 {
+			return 0, 0, false
+		}
+		*target = parsed
+	}
+	return limit, offset, limit > 0 && limit <= 200 && offset <= 1000000
 }

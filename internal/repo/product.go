@@ -27,8 +27,8 @@ type ScanPolicy struct {
 }
 
 // SystemSettings contains the small set of control-plane preferences that are
-// persisted by the local Server. External notification delivery is deliberately
-// not part of this contract yet; the in-product notification center is separate.
+// persisted by the local Server. External notification delivery has its own
+// explicitly disabled-by-default settings type in notification_delivery.go.
 type SystemSettings struct {
 	TimeZone               string `json:"timeZone"`
 	SessionDurationMinutes int    `json:"sessionDurationMinutes"`
@@ -108,6 +108,15 @@ func (s *RuntimeStore) initProduct(ctx context.Context) error {
 			title TEXT NOT NULL,message TEXT NOT NULL,object_type TEXT NOT NULL,
 			object_id TEXT NOT NULL,created_at TEXT NOT NULL,read_at TEXT)`,
 		`CREATE INDEX IF NOT EXISTS notifications_read_created ON notifications(read_at,created_at DESC,id DESC)`,
+		`CREATE TABLE IF NOT EXISTS notification_deliveries(
+			id TEXT PRIMARY KEY,notification_id TEXT NOT NULL UNIQUE REFERENCES notifications(id) ON DELETE CASCADE,
+			state TEXT NOT NULL CHECK(state IN ('PENDING','SENDING','FAILED','DELIVERED','DEAD')),
+			attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts >= 0),next_attempt_at TEXT NOT NULL,
+			last_error TEXT NOT NULL DEFAULT '',delivered_at TEXT,created_at TEXT NOT NULL)`,
+		`CREATE INDEX IF NOT EXISTS notification_deliveries_queue ON notification_deliveries(state,next_attempt_at,created_at,id)`,
+		`INSERT INTO notification_deliveries(id,notification_id,state,next_attempt_at,created_at)
+			SELECT 'delivery-'||n.id,n.id,'PENDING',n.created_at,n.created_at FROM notifications n
+			WHERE NOT EXISTS (SELECT 1 FROM notification_deliveries d WHERE d.notification_id=n.id)`,
 		`CREATE TABLE IF NOT EXISTS vulnerability_knowledge(id TEXT PRIMARY KEY,data TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS scan_plans(id TEXT PRIMARY KEY,data TEXT NOT NULL,created_by TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,updated_at TEXT NOT NULL)`,
 		`CREATE INDEX IF NOT EXISTS scan_plans_updated ON scan_plans(updated_at DESC,id DESC)`,

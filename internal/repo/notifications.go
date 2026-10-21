@@ -54,6 +54,13 @@ func insertNotification(ctx context.Context, tx *sql.Tx, n Notification) error {
 		(id,kind,severity,title,message,object_type,object_id,created_at)
 		VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING`,
 		n.ID, n.Kind, n.Severity, n.Title, n.Message, n.ObjectType, n.ObjectID, n.CreatedAt)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO notification_deliveries
+		(id,notification_id,state,next_attempt_at,created_at)
+		VALUES(?,?, 'PENDING', ?, ?) ON CONFLICT(notification_id) DO NOTHING`,
+		"delivery-"+n.ID, n.ID, n.CreatedAt, n.CreatedAt)
 	return err
 }
 

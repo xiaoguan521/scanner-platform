@@ -136,6 +136,23 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 			}
 		}
 	}()
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := store.RefreshNotifications(ctx); err != nil && ctx.Err() == nil {
+					slog.Error("notification refresh failed", "error", err)
+				}
+				if _, err := store.DispatchNotificationOutbox(ctx); err != nil && ctx.Err() == nil {
+					slog.Error("notification delivery failed", "error", err)
+				}
+			}
+		}
+	}()
 	handler := api.NewRuntimeHandler(store, api.NewDevelopmentHandler(accounts, assetStore, approvalsStore), *uiDir, accounts)
 	server := &http.Server{Addr: *addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 	go func() {

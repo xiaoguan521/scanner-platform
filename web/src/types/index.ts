@@ -34,6 +34,27 @@ export interface NotificationList {
   unreadCount: number;
 }
 
+export interface NotificationSettings {
+  webhookEnabled: boolean;
+  webhookUrl: string;
+}
+
+export interface NotificationDelivery {
+  id: string;
+  notificationId: string;
+  state: 'PENDING' | 'SENDING' | 'FAILED' | 'DELIVERED' | 'DEAD';
+  attempts: number;
+  nextAttemptAt: string;
+  lastError?: string;
+  deliveredAt?: string;
+  createdAt: string;
+}
+
+export interface NotificationDeliveryList {
+  items: NotificationDelivery[];
+  total: number;
+}
+
 export type PortKind = 'WEB' | 'NON_WEB' | 'EXCLUDED_PROXY';
 
 export interface AssetPort {

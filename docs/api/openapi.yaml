@@ -118,6 +118,78 @@ paths:
         '400': {description: Invalid timezone or session duration}
         '401': {description: Unauthenticated}
         '403': {description: Admin role or mutation header required}
+  "/api/v1/notification-settings":
+    get:
+      tags:
+      - system
+      summary: Read optional outbound notification settings
+      description: Returns only the configured endpoint and enabled state; no delivery secret is stored or returned.
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          description: Current notification delivery settings
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/NotificationSettings"
+        '401': {description: Unauthenticated}
+        '403': {description: Admin role required}
+    put:
+      tags:
+      - system
+      summary: Configure optional outbound notification Webhook
+      description: Disabled by default. Non-loopback endpoints must use HTTPS; requests contain only safe in-product notification summaries and do not follow redirects.
+      security:
+      - sessionCookie: []
+      parameters:
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema:
+          type: string
+          enum: [XMLHttpRequest]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/NotificationSettings"
+      responses:
+        '200':
+          description: Saved notification settings
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/NotificationSettings"
+        '400': {description: Invalid Webhook URL or settings}
+        '401': {description: Unauthenticated}
+        '403': {description: Admin role or mutation header required}
+  "/api/v1/notification-deliveries":
+    get:
+      tags:
+      - system
+      summary: Read bounded outbound notification delivery status
+      description: Administrator-only status projection; it never returns Webhook response bodies or endpoint credentials.
+      security:
+      - sessionCookie: []
+      parameters:
+      - in: query
+        name: limit
+        schema: {type: integer, minimum: 1, maximum: 200, default: 50}
+      - in: query
+        name: offset
+        schema: {type: integer, minimum: 0, maximum: 1000000, default: 0}
+      responses:
+        '200':
+          description: Delivery status page
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/NotificationDeliveryList"
+        '400': {description: Invalid pagination}
+        '401': {description: Unauthenticated}
+        '403': {description: Admin role required}
   "/api/v1/notifications":
     get:
       tags:
@@ -4983,6 +5055,33 @@ components:
           type: integer
           minimum: 30
           maximum: 1440
+    NotificationSettings:
+      type: object
+      required: [webhookEnabled, webhookUrl]
+      properties:
+        webhookEnabled: {type: boolean}
+        webhookUrl:
+          type: string
+          maxLength: 2048
+          description: HTTPS endpoint; loopback HTTP is allowed only for isolated local testing.
+    NotificationDelivery:
+      type: object
+      required: [id, notificationId, state, attempts, nextAttemptAt, createdAt]
+      properties:
+        id: {type: string}
+        notificationId: {type: string}
+        state: {type: string, enum: [PENDING, SENDING, FAILED, DELIVERED, DEAD]}
+        attempts: {type: integer, minimum: 0}
+        nextAttemptAt: {type: string, format: date-time}
+        lastError: {type: string}
+        deliveredAt: {type: string, format: date-time}
+        createdAt: {type: string, format: date-time}
+    NotificationDeliveryList:
+      type: object
+      required: [items, total]
+      properties:
+        items: {type: array, items: {"$ref": "#/components/schemas/NotificationDelivery"}}
+        total: {type: integer, minimum: 0}
     Notification:
       type: object
       required: [id, kind, severity, title, message, objectType, objectId, createdAt]

@@ -6,8 +6,9 @@ UI 使用 HttpOnly 的 `scanner_session` Cookie，所有写请求携带 `X-Reque
 
 - `/auth/setup`：首次管理员初始化状态/创建，已有用户后拒绝再次初始化。
 - `/auth/login`、`/auth/me`、`/auth/logout`、`/users`：账号与会话；管理员可通过 `/users/{id}/password-reset` 重置密码，重置会撤销目标账号全部旧会话，不返回密码哈希、密码或令牌。
-- `/system-settings`：管理员读取和修改系统时区、后续新登录会话时长；保存写入审计，外部通知投递尚未启用。
-- `/notifications`：登录用户读取 Server 生成的授权、接受风险和扫描失败通知，并可通过带 CSRF 请求头的接口标记已读；只保留安全摘要，不发送外部消息。
+- `/system-settings`：管理员读取和修改系统时区、后续新登录会话时长；保存写入审计。
+- `/notification-settings`：管理员配置默认关闭的安全摘要 Webhook；非回环地址必须使用 HTTPS，请求不跟随重定向，不包含目标地址、凭据、原始请求/响应或引擎输出。`/notification-deliveries` 仅返回管理员可读的投递状态和受限错误摘要。
+- `/notifications`：登录用户读取 Server 生成的授权、接受风险和扫描失败通知，并可通过带 CSRF 请求头的接口标记已读；同一安全摘要可按配置异步投递到 Webhook。
 - `/audit-logs`：仅管理员可读的审计记录投影，支持按操作者、动作、对象类型和 RFC3339 时间范围筛选，并分页返回时间、动作和对象标识；不会返回历史 `detail`、目标地址或凭据等敏感内容，也不提供编辑、删除或导出入口。
 - `/dashboard/summary`：登录用户可读取总览聚合，包括资产/任务/漏洞计数、7/30/90 天趋势、风险业务组与资产排行、最多 5 条待处置严重/高危摘要和当前规则版本；不返回证据、凭据、原始请求/响应或引擎输出。前端 Server 模式按趋势窗口轮询该接口，任务清册仍单独读取。
 - `/assets`：数字 IP 或镜像仓库登记；`requestedPorts` 为端口申请，`skippedPorts` 为需要排除的端口。列表可用 `page`、`page_size`、`q`（地址/名称/业务组/负责人）和白名单 `sort` 进行 Server 端分页、搜索与排序，返回 `page/pageSize/total`；不带查询参数时保留完整清册响应。`GET /assets/export` 下载当前清册的 UTF-8 CSV，可用 `q` 复用地址、名称、业务组、负责人筛选；只导出稳定台账字段，不包含服务详情、登录入口、请求/响应证据或引擎输出，并对表格公式前缀做转义。`GET /business-groups` 和 `POST /business-groups` 提供可复用的业务组目录及当前资产数；`GET /assets/import-history` 仅返回最近 200 次 CSV 导入的操作者、数量和时间摘要，不返回 CSV 原文、地址或名称。`POST /assets/reachability-test` 测试表单中当前填写的单个数字 IP,不要求先登记资产且不保存测试结果。Server 启动后立即探测已登记主机,每轮完成后间隔 60 秒继续,清册状态自动刷新;无响应只作可达性提示。`POST /assets/{id}/reachability-check` 由新增/改 IP 后的页面流程用于立即更新该资产状态。`PATCH` 可修改资产，改 IP 会撤销已有范围授权并清除旧 Ping 结果；`DELETE` 在存在关联范围记录时返回冲突。`POST /assets/{id}/port-requests` 可把探测候选追加为待审批申请；不会直接授权扫描。`/port-quarantines` 读取实际隔离记录。

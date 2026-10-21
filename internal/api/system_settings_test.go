@@ -88,6 +88,33 @@ func TestSystemSettingsAdminAPIAndSessionCookiePolicy(t *testing.T) {
 	if got := send(http.MethodPut, "/api/v1/system-settings", `{"timeZone":"UTC","sessionDurationMinutes":60}`, adminToken, true); got.Code != http.StatusOK {
 		t.Fatalf("admin settings write: %d %s", got.Code, got.Body.String())
 	}
+	if got := send(http.MethodGet, "/api/v1/notification-settings", "", viewerToken, false); got.Code != http.StatusForbidden {
+		t.Fatalf("viewer notification settings read: %d", got.Code)
+	}
+	if got := send(http.MethodGet, "/api/v1/notification-settings", "", adminToken, false); got.Code != http.StatusOK {
+		t.Fatalf("admin notification settings read: %d %s", got.Code, got.Body.String())
+	}
+	if got := send(http.MethodPut, "/api/v1/notification-settings", `{"webhookEnabled":true,"webhookUrl":"http://notify.example.test/hook"}`, adminToken, true); got.Code != http.StatusBadRequest {
+		t.Fatalf("unsafe notification webhook accepted: %d %s", got.Code, got.Body.String())
+	}
+	if got := send(http.MethodPut, "/api/v1/notification-settings", `{"webhookEnabled":true,"webhookUrl":"https://notify.example.test/hook"}`, viewerToken, true); got.Code != http.StatusForbidden {
+		t.Fatalf("viewer notification settings write: %d", got.Code)
+	}
+	if got := send(http.MethodPut, "/api/v1/notification-settings", `{"webhookEnabled":true,"webhookUrl":"https://notify.example.test/hook"}`, adminToken, true); got.Code != http.StatusOK {
+		t.Fatalf("admin notification settings write: %d %s", got.Code, got.Body.String())
+	}
+	if got := send(http.MethodGet, "/api/v1/notification-deliveries?limit=1&offset=0", "", adminToken, false); got.Code != http.StatusOK {
+		t.Fatalf("admin notification deliveries read: %d %s", got.Code, got.Body.String())
+	}
+	if got := send(http.MethodGet, "/api/v1/notification-deliveries?limit=0", "", adminToken, false); got.Code != http.StatusBadRequest {
+		t.Fatalf("invalid notification delivery pagination accepted: %d", got.Code)
+	}
+	if got := send(http.MethodGet, "/api/v1/notification-deliveries?secret=1", "", adminToken, false); got.Code != http.StatusBadRequest {
+		t.Fatalf("unknown notification delivery query accepted: %d", got.Code)
+	}
+	if got := send(http.MethodGet, "/api/v1/notification-deliveries", "", viewerToken, false); got.Code != http.StatusForbidden {
+		t.Fatalf("viewer notification deliveries read: %d", got.Code)
+	}
 	loginHandler := NewDevelopmentHandler(accounts, registry)
 	login := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(`{"username":"settingsviewer","password":"Viewer-System-Password-2026"}`))

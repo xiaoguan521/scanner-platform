@@ -69,6 +69,8 @@ type RuleBundleDTO = rules.Bundle
 type RuleJobDTO = rules.Job
 type ScanPlanDTO = scanplans.Plan
 type SystemSettingsDTO = repo.SystemSettings
+type NotificationSettingsDTO = repo.NotificationSettings
+type NotificationDeliveryDTO = repo.NotificationDelivery
 type PortQuarantineDTO struct {
 	AssetID    string     `json:"assetId"`
 	Address    string     `json:"address"`
