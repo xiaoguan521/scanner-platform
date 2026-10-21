@@ -2571,7 +2571,7 @@ paths:
               type: object
               required: [format]
               properties:
-                format: {type: string, enum: [html, xlsx, docx, csv, json]}
+                format: {type: string, enum: [html, xlsx, docx, csv, json, pdf]}
       responses:
         "202":
           description: "Queued format export using the original frozen snapshot"
@@ -4523,7 +4523,7 @@ components:
       required: ["format", "scope"]
       properties:
         templateId: {"type": "string"}
-        format: {"type": "string", "enum": ["html", "xlsx", "docx", "csv", "json"]}
+        format: {"type": "string", "enum": ["html", "xlsx", "docx", "csv", "json", "pdf"]}
         scope: {"$ref": "#/components/schemas/ReportScope"}
     ReportTemplate:
       type: object

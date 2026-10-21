@@ -78,6 +78,8 @@ func Render(ctx context.Context, w io.Writer, s Snapshot, format string) error {
 		return renderCSV(bw, s)
 	case "json":
 		return renderJSON(bw, s)
+	case "pdf":
+		return renderPDF(bw, s)
 	default:
 		return ErrInvalid
 	}

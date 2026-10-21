@@ -167,6 +167,26 @@ func TestThreeFormatsHaveSameSnapshotAndDetailContent(t *testing.T) {
 		t.Fatal("expected eight worksheets")
 	}
 }
+
+func TestPDFFormatContainsSnapshotTextAndUsesCJKFont(t *testing.T) {
+	s := exampleSnapshot()
+	var b bytes.Buffer
+	if err := Render(context.Background(), &b, s, "pdf"); err != nil {
+		t.Fatal(err)
+	}
+	content := b.String()
+	if !strings.HasPrefix(content, "%PDF-1.4") || !strings.Contains(content, "xref") || !strings.Contains(content, "/Subtype /Type0") {
+		t.Fatalf("invalid PDF structure: %q", content[:min(len(content), 120)])
+	}
+	for _, value := range []string{s.ID, "示例系统风险", "CVE-2026-0001", "本次未启用该检测项"} {
+		if !strings.Contains(content, strings.Trim(pdfTextHex(value), "<>")) {
+			t.Errorf("PDF missing %q", value)
+		}
+	}
+	if strings.Contains(content, "<script>") {
+		t.Fatal("PDF retained raw HTML markup")
+	}
+}
 func TestTopLimitsAndDistinctAffectedAssets(t *testing.T) {
 	s := exampleSnapshot()
 	s.Findings = nil
@@ -268,7 +288,7 @@ func TestCSVAndJSONFormats(t *testing.T) {
 	if decoded.ID != s.ID || decoded.SchemaVersion != SchemaVersion || len(decoded.Findings) != len(s.Findings) || decoded.Findings[0].Title != s.Findings[0].Title {
 		t.Fatalf("JSON did not preserve frozen snapshot: %+v", decoded)
 	}
-	for _, format := range []string{"csv", "json"} {
+	for _, format := range []string{"csv", "json", "pdf"} {
 		if err := ValidateRequest(Request{Format: format}); err != nil {
 			t.Fatalf("%s rejected: %v", format, err)
 		}
@@ -294,7 +314,7 @@ func TestExportSyntheticReportArtifacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := exampleSnapshot()
-	for _, format := range []string{"html", "xlsx", "docx", "csv", "json"} {
+	for _, format := range []string{"html", "xlsx", "docx", "pdf", "csv", "json"} {
 		file, err := os.Create(filepath.Join(dir, "example."+format))
 		if err != nil {
 			t.Fatal(err)
@@ -319,10 +339,16 @@ func TestIncompleteSystemAndInfoOnlyAssessmentIsExplicit(t *testing.T) {
 	if !strings.Contains(s.Summary.Assessment, "仅信息项") || !strings.Contains(s.Summary.Assessment, "本次系统检测未完成") || s.Summary.SystemDetectionComplete {
 		t.Fatalf("misleading assessment: %+v", s.Summary)
 	}
-	for _, format := range []string{"html", "xlsx", "docx"} {
+	for _, format := range []string{"html", "xlsx", "docx", "pdf"} {
 		var b bytes.Buffer
 		if err := Render(context.Background(), &b, s, format); err != nil {
 			t.Fatal(err)
+		}
+		if format == "pdf" {
+			if !strings.Contains(b.String(), strings.Trim(pdfTextHex("本次系统检测未完成"), "<>")) || !strings.Contains(b.String(), strings.Trim(pdfTextHex("仅信息项"), "<>")) {
+				t.Fatalf("%s missing coverage limitation", format)
+			}
+			continue
 		}
 		content := b.String()
 		if format != "html" {

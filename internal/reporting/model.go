@@ -241,8 +241,8 @@ func DefaultTemplate() Template {
 	return Template{ID: "default", Name: "全面扫描报告", Company: "安全运营中心", Header: "资产安全评估", Footer: "内部资料 · 请妥善保管", RatingText: "单一系统漏洞、单一 Web 漏洞均按 CVSS：9–10 严重；7–<9 高危；4–<7 中危；0–<4 低危。单一资产与总体取范围内最高漏洞等级，顺序为严重 > 高危 > 中危 > 低危 > 安全。登录入口单独统计。", Advice: "优先修复严重和高危漏洞；按责任人制定修复计划并复测。版本推断建议登录主机核查，或使用主机本地扫描。未检出不代表不存在风险。", Sections: map[string]bool{}}
 }
 func ValidateRequest(r Request) error {
-	if r.Format != "html" && r.Format != "xlsx" && r.Format != "docx" && r.Format != "csv" && r.Format != "json" {
-		return fmt.Errorf("%w: 只支持 HTML、Excel、Word、CSV 或 JSON", ErrInvalid)
+	if r.Format != "html" && r.Format != "xlsx" && r.Format != "docx" && r.Format != "csv" && r.Format != "json" && r.Format != "pdf" {
+		return fmt.Errorf("%w: 只支持 HTML、Excel、Word、CSV、JSON 或 PDF", ErrInvalid)
 	}
 	if len(r.TemplateID) > 100 || len(r.Scope.TaskID) > 200 || len(r.Scope.AssetID) > 200 || len(r.Scope.BusinessGroup) > 200 {
 		return ErrInvalid

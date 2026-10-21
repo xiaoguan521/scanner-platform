@@ -14,6 +14,12 @@
 - 通知写入 SQLite `notifications` 表，刷新幂等；登录用户可筛选未读、标记单条或全部已读。读取和已读操作不会启动探测、扫描或外部网络请求；外部邮件/Webhook 投递保留到后续阶段。
 - `go test -race ./internal/repo ./internal/api`、`node --test web/src/pages/Notifications/notifications.test.mjs web/src/components/Layout/navigation.test.mjs` 和前端生产构建通过；真实浏览器交互、PostgreSQL 运行时和外部投递未验收/未实现。
 
+## 2026-10-21：报告 PDF 输出
+
+- 报告格式新增 `pdf`，继续复用原有冻结快照、异步队列、重试、历史和同快照导出；下载接口返回 `application/pdf`，报告页面可生成和导出 PDF。
+- PDF 使用 PDF 标准的 `STSong-Light` CJK 字体，离线生成 A4 文本与表格，保留八章内容、范围说明、漏洞明细和覆盖限制；不读取远程资源、不启动扫描器、不提交字体文件。
+- `go test ./internal/reporting ./internal/repo ./internal/api`、合成 PDF 输出、`pdfinfo` 结构检查、前端生产构建和 OpenAPI YAML 解析通过。PDF 的原生办公软件视觉排版、PostgreSQL 运行时和真实浏览器点击仍待环境验收。
+
 ## 2026-10-21：移除演示种子与浏览器 mock 通道
 
 - 根据隔离靶机真实 SSH/自动综合扫描结果，移除 `cmd/seed-demo`、`make seed-demo` 和 Server 的 `--seed-demo` 启动参数；本地启动不再自动写入合成资产、任务或发现项。`scripts/test_local.py` 改为从空数据库开始验证登录、资产、任务和 Worker API。

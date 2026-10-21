@@ -11,7 +11,7 @@ import type { ReportJob, ReportScope, ReportTemplate } from './types';
 
 const sections = { cover: '封面', overview: '综述', assets: '资产统计', 'asset-risks': '资产风险信息', 'asset-details': '资产详情', 'risk-statistics': '风险统计', 'risk-details': '风险详情', appendix: '附录' };
 const stateNames = { QUEUED: '排队中', GENERATING: '生成中', READY: '就绪', FAILED: '失败' };
-const formatNames = { html: 'HTML', xlsx: 'Excel', docx: 'Word', csv: 'CSV（漏洞明细）', json: 'JSON（完整快照）' };
+const formatNames = { html: 'HTML', xlsx: 'Excel', docx: 'Word', pdf: 'PDF', csv: 'CSV（漏洞明细）', json: 'JSON（完整快照）' };
 const endpoint = '/api/v1/reports';
 const templatesEndpoint = '/api/v1/report-templates';
 const { Text } = Typography;
@@ -88,7 +88,7 @@ export const ReportsPage: React.FC = () => {
   };
   return <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
     <CollectionNotice loading={assetsLoading || tasksLoading} error={assetsError || tasksError || error} />
-    <Alert showIcon type="info" message="后台生成与历史记录" description="每次生成冻结一份带版本的数据快照，HTML、Excel、Word、CSV 与 JSON 使用相同数据与统计规则。CSV 为漏洞明细平面文件，JSON 为完整快照。弱口令本次未启用，登录入口单独统计。报告上限 64 MiB，失败可用原快照重试。" />
+    <Alert showIcon type="info" message="后台生成与历史记录" description="每次生成冻结一份带版本的数据快照，HTML、Excel、Word、PDF、CSV 与 JSON 使用相同数据与统计规则。CSV 为漏洞明细平面文件，JSON 为完整快照。弱口令本次未启用，登录入口单独统计。报告上限 64 MiB，失败可用原快照重试。" />
     <Card title={<Space><FileTextOutlined />生成安全报告</Space>} extra={<Button icon={<SettingOutlined />} disabled={!canWrite || !selectedTemplate} onClick={editTemplate}>配置模板</Button>}>
       <Space wrap align="end">
         <div><Text type="secondary">报告模板</Text><Select aria-label="报告模板" value={templateId} onChange={setTemplateId} style={{ display: 'block', width: 190 }} options={templates.map(t => ({ value: t.id, label: t.name }))} /></div>
@@ -122,7 +122,7 @@ export const ReportsPage: React.FC = () => {
         <Form.Item name="footer" label="页脚" rules={[{ max: 500 }]}><Input /></Form.Item>
         <Form.Item name="ratingText" label="评定标准" rules={[{ max: 20000 }]}><Input.TextArea rows={5} /></Form.Item>
         <Form.Item name="advice" label="安全建议" rules={[{ max: 20000 }]}><Input.TextArea rows={5} /></Form.Item>
-        <Form.Item name="enabledSections" label="Word / HTML 章节"><Checkbox.Group options={Object.entries(sections).map(([value, label]) => ({ value, label }))} /></Form.Item>
+        <Form.Item name="enabledSections" label="Word / HTML / PDF 章节"><Checkbox.Group options={Object.entries(sections).map(([value, label]) => ({ value, label }))} /></Form.Item>
       </Form>
       <Alert type="info" showIcon message="模板更新只影响之后创建的报告，已有报告与重试均使用原冻结模板。Excel 固定保留八个工作表。" />
     </Drawer>

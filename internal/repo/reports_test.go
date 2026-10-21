@@ -185,7 +185,7 @@ func TestReportOtherFormatsReuseFrozenSnapshotAfterChanges(t *testing.T) {
 	if _, err := s.SaveReportTemplate(ctx, tpl, "test-user"); err != nil {
 		t.Fatal(err)
 	}
-	for _, format := range []string{"xlsx", "docx", "csv", "json"} {
+	for _, format := range []string{"xlsx", "docx", "pdf", "csv", "json"} {
 		other, err := s.CreateReportFormat(ctx, first.ID, format, "format-creator")
 		if err != nil {
 			t.Fatal(err)
@@ -211,9 +211,6 @@ func TestReportOtherFormatsReuseFrozenSnapshotAfterChanges(t *testing.T) {
 		if ready.Status != "READY" {
 			t.Fatal("other format not generated")
 		}
-	}
-	if _, err := s.CreateReportFormat(ctx, first.ID, "pdf", "test-user"); err == nil {
-		t.Fatal("invalid derivative format accepted")
 	}
 }
 

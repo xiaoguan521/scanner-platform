@@ -69,8 +69,19 @@ func TestReportAPIAuthenticationWriteGuardsAndDownloads(t *testing.T) {
 	if got := send("POST", "/api/v1/reports", `{"format":"html"}`, adminToken, false); got.Code != 403 {
 		t.Fatalf("missing CSRF guard: %d", got.Code)
 	}
-	if got := send("POST", "/api/v1/reports", `{"format":"pdf"}`, adminToken, true); got.Code != 400 {
-		t.Fatalf("unsupported format: %d", got.Code)
+	pdfCreated := send("POST", "/api/v1/reports", `{"format":"pdf"}`, adminToken, true)
+	if pdfCreated.Code != 202 {
+		t.Fatalf("pdf create: %d %s", pdfCreated.Code, pdfCreated.Body.String())
+	}
+	var pdfJob reporting.Job
+	if err := json.Unmarshal(pdfCreated.Body.Bytes(), &pdfJob); err != nil {
+		t.Fatal(err)
+	}
+	if done, err := store.ProcessNextReport(ctx, t.TempDir()); err != nil || !done {
+		t.Fatalf("generate pdf: %v %v", done, err)
+	}
+	if got := send("GET", "/api/v1/reports/"+pdfJob.ID+"/download", "", viewerToken, false); got.Code != http.StatusOK || got.Header().Get("Content-Type") != "application/pdf" || !strings.HasPrefix(got.Body.String(), "%PDF-1.4") {
+		t.Fatalf("pdf download: %d %s", got.Code, got.Header().Get("Content-Type"))
 	}
 	created := send("POST", "/api/v1/reports", `{"format":"html"}`, adminToken, true)
 	if created.Code != 202 {
@@ -93,8 +104,9 @@ func TestReportAPIAuthenticationWriteGuardsAndDownloads(t *testing.T) {
 	if got := send("POST", "/api/v1/reports/"+job.ID+"/formats", `{"format":"xlsx"}`, viewerToken, true); got.Code != 403 {
 		t.Fatalf("viewer format export: %d", got.Code)
 	}
-	if got := send("POST", "/api/v1/reports/"+job.ID+"/formats", `{"format":"pdf"}`, adminToken, true); got.Code != 400 {
-		t.Fatalf("invalid format export: %d", got.Code)
+	pdfDerived := send("POST", "/api/v1/reports/"+job.ID+"/formats", `{"format":"pdf"}`, adminToken, true)
+	if pdfDerived.Code != 202 {
+		t.Fatalf("pdf format export: %d %s", pdfDerived.Code, pdfDerived.Body.String())
 	}
 	derivative := send("POST", "/api/v1/reports/"+job.ID+"/formats", `{"format":"docx"}`, adminToken, true)
 	if derivative.Code != 202 {
