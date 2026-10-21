@@ -1,5 +1,11 @@
 # Verification log
 
+## 2026-10-21：Linux fenced Worker 可信启动器
+
+- 新增 `cmd/fence-launcher`：仅 Linux 可用，要求 root 和绝对、非 group/other 可写的 Worker 可执行文件；启动前打开 `/proc/self/ns/net` 并校验 nsfs，使用 `CLONE_NEWNET` 创建专属 network namespace，以 fd 3 传递父 namespace，强制追加 `--fence --once --fence-parent-netns-fd=3`，拒绝调用方覆盖这些边界；父启动器退出时由 `Pdeathsig` 终止 Worker。
+- `make build` 已纳入 `sec-fence-launcher`；非 Linux 构建保留明确不可用入口。启动器不读取数据库、令牌或扫描结果，只负责 namespace 和进程边界，外部 supervisor 负责在一次任务结束后重新拉起。
+- Linux arm64 特权容器验证通过：启动器运行独立 helper，子进程 network namespace 与容器父 namespace 不同，fd 3 保持 nsfs；Linux 启动器单元测试覆盖受保护参数覆盖、可执行文件权限和父 namespace 类型。该证据仍不等同于生产 Compose `hostNetwork`、真实 Worker 任务和部署 supervisor 验收。
+
 ## 2026-10-21：fenced Worker DROP 计数回报
 
 - Linux fenced Worker 在应用 nftables 围栏后读取 `egress`/`forward` 默认 DROP 规则的内核 packet counter，任务结束时计算本次增量，并将 `fenceStatus=ENFORCED` 与脱敏的 `dropCount` 回传；计数读取失败、规则缺失、溢出或结果格式异常都会失败关闭，不把任务伪装成成功。

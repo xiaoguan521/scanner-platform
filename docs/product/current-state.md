@@ -43,7 +43,7 @@
 | Stage 2 资产与扫描核心旅程 | 真实资产、任务、Worker 和引擎已超出“假任务”阶段；资产可用数字 IP，任务已做授权范围校验；资产 CSV 已支持预览确认导入；清册显示最近扫描/活动风险，资产详情可查看漏洞摘要和扫描历史；资产清册已支持 Server 端分页、搜索和排序；任务清册已支持 Server 端分页、搜索、状态/引擎/归档筛选和状态计数；总览已提供首次使用清单；自动综合扫描从 `scan-plans` 目录读取快速/标准预置方案，并可复制、编辑和删除自定义方案；任务详情支持最新进度、目标级状态、安全日志、稳定结果导出和手动暂停/恢复；PostgreSQL 隔离靶机 Playwright 五条核心旅程已通过；用户已确认隔离靶机真实 SSH/自动综合扫描回归通过 | 发布级验收仍需保留 `make test-browser` 与授权范围抓包证据 |
 | Stage 3 漏洞管理与总览 | 有发现项 Server 端分页清册、详情抽屉、风险算法文档、趋势、风险业务组/资产及 URL 下钻；总览有待处置严重/高危卡片、Server 首次使用清单和安全聚合接口；总览下钻和指定发现项详情已在 PostgreSQL 隔离靶机浏览器回归通过 | 批量状态处置已实现；大数据量性能仍待验收 |
 | Stage 4 报告、计划与系统管理 | 有服务端报告作业/历史、历史分页搜索筛选、HTML/Excel/Word/PDF/CSV/JSON 输出、定时计划及运行历史、用户/节点/规则/授权页；节点、规则版本、规则操作、自定义规则、知识库、业务组、导入记录、通知、授权范围和端口审批清册支持 Server 端分页/搜索/筛选/排序；管理员审计查询、系统设置、平台内通知中心和默认关闭的安全摘要 Webhook 已接入；授权页已提供七天到期/已过期提醒；已提供定时/报告页面验收脚本 | 邮件/其他消息渠道；独立报告预览、审计高级筛选和 PostgreSQL 非核心接口仍待验收 |
-| Stage 5 真实扫描引擎 | 自动任务组合端口、HTTP(S) 基线/自定义规则和 Worker 本地 SSH 系统包采集；Trivy/Nuclei/ZAP 引擎单独可用；Linux Worker 围栏代码路径和一次性 arm64 隔离联调已核对 namespace、nftables、setpriv、UID/GID 10001、cgroup v2、`NoNewPrivs` 和 capabilities 清零 | 生产范围外 DROP 计数、故意后代进程的 cgroup 清理和 Compose `hostNetwork` 约束仍待部署验收；真实服务器仍待获批验证；银河麒麟和国产软件公告源、源码部署中间件、容器/集群运行态盘点尚未覆盖；温和/标准强度选择尚未实现 |
+| Stage 5 真实扫描引擎 | 自动任务组合端口、HTTP(S) 基线/自定义规则和 Worker 本地 SSH 系统包采集；Trivy/Nuclei/ZAP 引擎单独可用；Linux Worker 围栏代码路径和一次性 arm64 隔离联调已核对 namespace、nftables、setpriv、UID/GID 10001、cgroup v2、DROP counter、`NoNewPrivs` 和 capabilities 清零；`sec-fence-launcher` 已能创建专属 namespace 并传递父 namespace fd | 生产范围外发包/告警、故意后代进程的 cgroup 清理和 Compose `hostNetwork` 约束仍待部署验收；真实服务器仍待获批验证；银河麒麟和国产软件公告源、源码部署中间件、容器/集群运行态盘点尚未覆盖 |
 | Stage 6 打磨 | 已有共享加载/错误/空状态、语义标签和统计卡片 | 缺完整设计令牌、性能与无障碍测试、i18n、核心旅程端到端实跑 |
 
 ## 当前边界和优先缺口

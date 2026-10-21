@@ -48,8 +48,30 @@ web UI remains on the loopback listener. See `docs/runtime.md` and
 
 ## Linux fenced Worker contract
 
-The only supported production-shaped Worker execution path is the Linux
-fenced mode described in `docs/worker-fence.md`:
+The repository now includes `sec-fence-launcher` as the trusted Linux entry
+point. It opens the parent namespace before forking, creates a private
+network namespace for `sec-worker`, passes the parent namespace as fd 3, and
+owns the `--fence --once --fence-parent-netns-fd=3` flags. Worker arguments
+must appear after `--`; the launcher rejects attempts to override those
+flags. A supervisor should restart the launcher for the next task after the
+one-shot Worker exits.
+
+Example (paths and addresses are deployment values, not repository defaults):
+
+```text
+sec-fence-launcher \
+  --worker /opt/sec/bin/sec-worker -- \
+  --server https://192.0.2.10:8443 \
+  --node-token-file /run/secrets/worker-token \
+  --fence-cgroup-root /sys/fs/cgroup/sec-worker \
+  --fence-infra tcp://192.0.2.53:53 \
+  --bin-dir /opt/sec/bin --rules-dir /vuln-data \
+  --runtime-dir /runtime/worker --inputs-dir /runtime/inputs
+```
+
+The launcher is the trusted boundary; the Worker still enforces all task
+scope and rule checks. The Linux fenced Worker execution path is described in
+`docs/worker-fence.md`:
 
 ```text
 sec-worker \
@@ -62,9 +84,9 @@ sec-worker \
   --runtime-dir /runtime/worker --inputs-dir /runtime/inputs
 ```
 
-The trusted launcher must create a dedicated network namespace and pass the
-parent namespace as fd 3. Worker containers must not use `hostNetwork` or
-reuse the host namespace. The Worker rule directory is read-only; only the
+The launcher creates a dedicated network namespace and passes the parent
+namespace as fd 3. Worker containers must not use `hostNetwork` or reuse the
+host namespace. The Worker rule directory is read-only; only the
 private runtime and input directories are writable by uid 10001. `nft` and
 `setpriv` paths are pinned, and the dropped engine process has no capabilities
 and `no_new_privs`. Each namespace handles one task and is then destroyed.
@@ -78,7 +100,8 @@ the Worker does not resolve names or expand networks.
 The following items are intentionally not represented by a fake Compose file:
 
 - pinned Server/Updater/Worker images and reproducible image builds;
-- secret, certificate, token, and parent-namespace launcher orchestration;
+- secret, certificate, token, and supervisor restart orchestration around the
+    launcher;
 - isolated-Linux evidence for out-of-scope packet drops, uid/capabilities,
     `no_new_privs`, cgroup-v2 descendant cleanup, and forbidden `hostNetwork`;
 - production PostgreSQL backup/restore, monitoring, and migration rollout;

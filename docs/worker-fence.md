@@ -7,6 +7,13 @@
 - 本机开发和便携模式继续使用普通 `sec-worker`。macOS/Windows 没有 Linux nftables 围栏时，Worker 只执行 Go 层范围校验，不能把这种模式当作生产隔离证明。
 - Linux 执行器使用 `--fence`。该模式要求 root 仅作为可信 supervisor 启动，必须同时传 `--once` 和由启动器继承的父网络 namespace fd。一个进程只领取一个任务，任务结束后销毁 Worker 所在的专属 namespace，再启动新的 Worker 处理下一任务。
 
+仓库提供 `sec-fence-launcher` 作为可信启动器：它在 fork/exec 前打开
+`/proc/self/ns/net`，使用 Linux `CLONE_NEWNET` 创建 Worker 专属 namespace，
+把父 namespace 作为 fd 3 传给 Worker，并强制追加
+`--fence --once --fence-parent-netns-fd=3`。启动器拒绝子参数覆盖这三个边界，
+Worker 退出后由外部 supervisor 重新启动下一次任务；启动器本身不是任务队列，
+也不读取数据库或令牌内容。
+
 示意参数如下，地址和路径必须替换为部署环境的明确值：
 
 ```text
