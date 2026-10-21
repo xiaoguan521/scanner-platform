@@ -970,24 +970,36 @@ paths:
       tags:
       - approvals
       summary: Authenticated scope requests list, not execution rights
+      description: Without query parameters the endpoint preserves the compatibility list. With page/page_size and optional expiry, Server returns bounded pagination plus global expiringCount and expiredCount values.
       security:
       - sessionCookie: []
+      parameters:
+      - in: query
+        name: page
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100000
+      - in: query
+        name: page_size
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+      - in: query
+        name: expiry
+        schema:
+          type: string
+          enum: [all, expiring, expired]
       responses:
         '200':
-          description: All scope applications
+          description: Scope applications; response shape depends on whether pagination parameters are present
           content:
             application/json:
               schema:
-                allOf:
-                - "$ref": "#/components/schemas/Pagination"
-                - type: object
-                  required:
-                  - items
-                  properties:
-                    items:
-                      type: array
-                      items:
-                        "$ref": "#/components/schemas/AuthorizedScope"
+                oneOf:
+                - "$ref": "#/components/schemas/ScopePage"
+                - "$ref": "#/components/schemas/ScopeListResponse"
         '401':
           description: Missing session
     post:
@@ -1161,24 +1173,41 @@ paths:
       tags:
       - approvals
       summary: Authenticated list of registered port requests
+      description: Without query parameters the endpoint preserves the compatibility list. With page/page_size and optional status or q, Server returns bounded pagination and searches only registered asset address or ID.
       security:
       - sessionCookie: []
+      parameters:
+      - in: query
+        name: page
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100000
+      - in: query
+        name: page_size
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+      - in: query
+        name: status
+        schema:
+          type: string
+          enum: [ALL, PENDING, APPROVED, REJECTED]
+      - in: query
+        name: q
+        schema:
+          type: string
+          maxLength: 160
       responses:
         '200':
-          description: Port review status and request identities
+          description: Port review status and request identities; response shape depends on whether pagination parameters are present
           content:
             application/json:
               schema:
-                allOf:
-                - "$ref": "#/components/schemas/Pagination"
-                - type: object
-                  required:
-                  - items
-                  properties:
-                    items:
-                      type: array
-                      items:
-                        "$ref": "#/components/schemas/PortRequest"
+                oneOf:
+                - "$ref": "#/components/schemas/PortRequestPage"
+                - "$ref": "#/components/schemas/PortRequestListResponse"
   "/api/v1/port-requests/{assetId}/{port}/review":
     post:
       tags:
@@ -3455,6 +3484,70 @@ components:
           type: integer
           minimum: 1
           maximum: 100
+    ScopePage:
+      type: object
+      required: [items, total, page, pageSize, expiringCount, expiredCount]
+      properties:
+        items:
+          type: array
+          items:
+            "$ref": "#/components/schemas/AuthorizedScope"
+        total:
+          type: integer
+          minimum: 0
+        page:
+          type: integer
+          minimum: 1
+        pageSize:
+          type: integer
+          minimum: 1
+          maximum: 100
+        expiringCount:
+          type: integer
+          minimum: 0
+        expiredCount:
+          type: integer
+          minimum: 0
+    ScopeListResponse:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            "$ref": "#/components/schemas/AuthorizedScope"
+        total:
+          type: integer
+          minimum: 0
+    PortRequestPage:
+      type: object
+      required: [items, total, page, pageSize]
+      properties:
+        items:
+          type: array
+          items:
+            "$ref": "#/components/schemas/PortRequest"
+        total:
+          type: integer
+          minimum: 0
+        page:
+          type: integer
+          minimum: 1
+        pageSize:
+          type: integer
+          minimum: 1
+          maximum: 100
+    PortRequestListResponse:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            "$ref": "#/components/schemas/PortRequest"
+        total:
+          type: integer
+          minimum: 0
     TaskPage:
       type: object
       required: [items, total, page, pageSize, statusCounts]

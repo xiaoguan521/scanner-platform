@@ -114,3 +114,72 @@ func TestScopeUpdateDeleteAndRevokeEndpoints(t *testing.T) {
 		t.Fatalf("delete revoked scope: %d %s", deleted.Code, deleted.Body.String())
 	}
 }
+
+func TestApprovalListPaginationEndpoints(t *testing.T) {
+	ctx := context.Background()
+	accounts, err := account.New(filepath.Join(t.TempDir(), "approval-page-api.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer accounts.Close()
+	if err := accounts.InitAdmin(ctx, "pageadmin", "Safe-Sample-Password-12"); err != nil {
+		t.Fatal(err)
+	}
+	admin, _, err := accounts.Authenticate(ctx, "pageadmin", "Safe-Sample-Password-12")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assetStore, err := assets.New(accounts.SQLDB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	asset, err := assetStore.Create(ctx, admin.ID, assets.Input{Kind: "host", Address: "192.0.2.41", BusinessGroup: "QA", Owner: "Owner", RequestedPorts: []int{22, 8080}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	approvalStore, err := approvals.New(accounts.SQLDB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := NewDevelopmentHandler(accounts, assetStore, approvalStore)
+	send := func(path string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodGet, path, nil)
+		r.AddCookie(&http.Cookie{Name: sessionCookie, Value: mustSession(t, accounts, "pageadmin", "Safe-Sample-Password-12")})
+		out := httptest.NewRecorder()
+		handler.ServeHTTP(out, r)
+		return out
+	}
+	request := `{"assetId":"` + asset.ID + `","timeWindows":[{"weekdays":[1],"start":"09:00","end":"18:00","timeZone":"UTC"}],"expiresAt":"` + time.Now().Add(2*time.Hour).UTC().Format(time.RFC3339) + `"}`
+	post := httptest.NewRequest(http.MethodPost, "/api/v1/scopes", strings.NewReader(request))
+	post.Header.Set("Content-Type", "application/json")
+	post.Header.Set("X-Requested-With", "XMLHttpRequest")
+	post.AddCookie(&http.Cookie{Name: sessionCookie, Value: mustSession(t, accounts, "pageadmin", "Safe-Sample-Password-12")})
+	created := httptest.NewRecorder()
+	handler.ServeHTTP(created, post)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create scope: %d %s", created.Code, created.Body.String())
+	}
+	var scopePage ScopePageResponse
+	if got := send("/api/v1/scopes?page=1&page_size=1&expiry=all"); got.Code != http.StatusOK || json.Unmarshal(got.Body.Bytes(), &scopePage) != nil || scopePage.Total != 1 || scopePage.PageSize != 1 {
+		t.Fatalf("scope page: %d %s %+v", got.Code, got.Body.String(), scopePage)
+	}
+	if got := send("/api/v1/scopes?page=1&page_size=101"); got.Code != http.StatusBadRequest || !strings.Contains(got.Body.String(), "invalid_scope_list_query") {
+		t.Fatalf("invalid scope page: %d %s", got.Code, got.Body.String())
+	}
+	var portPage PageListResponse[approvals.PortRequest]
+	if got := send("/api/v1/port-requests?page=1&page_size=1&status=PENDING&q=192.0.2.41"); got.Code != http.StatusOK || json.Unmarshal(got.Body.Bytes(), &portPage) != nil || portPage.Total != 2 || len(portPage.Items) != 1 {
+		t.Fatalf("port page: %d %s %+v", got.Code, got.Body.String(), portPage)
+	}
+	if got := send("/api/v1/port-requests?page=1&page_size=1&status=UNKNOWN"); got.Code != http.StatusBadRequest || !strings.Contains(got.Body.String(), "invalid_port_request_list_query") {
+		t.Fatalf("invalid port page: %d %s", got.Code, got.Body.String())
+	}
+}
+
+func mustSession(t *testing.T, accounts account.Repository, username, password string) string {
+	t.Helper()
+	_, token, err := accounts.Authenticate(context.Background(), username, password)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return token
+}

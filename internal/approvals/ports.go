@@ -16,14 +16,16 @@ func readPort(row interface{ Scan(...any) error }) (PortRequest, error) {
 	return p, err
 }
 
+const portListFrom = `FROM asset_port_requests r JOIN assets a ON a.id=r.asset_id
+ LEFT JOIN asset_port_reviews v ON v.asset_id=r.asset_id AND v.port=r.port
+ LEFT JOIN asset_port_request_authors author ON author.asset_id=r.asset_id AND author.port=r.port
+ LEFT JOIN asset_ports ap ON ap.asset_id=r.asset_id AND ap.port=r.port`
+
 const portListQuery = `SELECT r.asset_id,a.address,r.port,
  COALESCE(v.status,'PENDING'),COALESCE(author.requested_by,''),COALESCE(v.reviewed_by,''),
  COALESCE(v.approval_ticket,''),COALESCE(v.reviewed_at,''),
  COALESCE(v.review_note,''),COALESCE(ap.kind,'')
- FROM asset_port_requests r JOIN assets a ON a.id=r.asset_id
- LEFT JOIN asset_port_reviews v ON v.asset_id=r.asset_id AND v.port=r.port
- LEFT JOIN asset_port_request_authors author ON author.asset_id=r.asset_id AND author.port=r.port
- LEFT JOIN asset_ports ap ON ap.asset_id=r.asset_id AND ap.port=r.port`
+ ` + portListFrom
 
 func (s *Store) ListPortRequests(ctx context.Context) ([]PortRequest, error) {
 	rows, err := s.db.QueryContext(ctx, portListQuery+" ORDER BY a.address,r.port")

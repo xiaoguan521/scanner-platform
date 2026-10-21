@@ -25,6 +25,14 @@ type PageListResponse[T any] struct {
 	Page     int `json:"page"`
 	PageSize int `json:"pageSize"`
 }
+type ScopePageResponse struct {
+	Items         []approvals.Scope `json:"items"`
+	Total         int               `json:"total"`
+	Page          int               `json:"page"`
+	PageSize      int               `json:"pageSize"`
+	ExpiringCount int               `json:"expiringCount"`
+	ExpiredCount  int               `json:"expiredCount"`
+}
 type TaskPageResponse struct {
 	Items        []taskflow.Task `json:"items"`
 	Total        int             `json:"total"`

@@ -28,6 +28,29 @@ func registerApprovalHandlers(mux *http.ServeMux, users account.Repository, repo
 		}
 	}
 	mux.HandleFunc("GET /api/v1/scopes", auth(users, false, func(w http.ResponseWriter, r *http.Request, _ account.User) {
+		query, paged, ok := parseScopeListQuery(r)
+		if !ok {
+			bad(w, http.StatusBadRequest, "invalid_scope_list_query")
+			return
+		}
+		if paged {
+			pageRepo, available := repo.(approvals.ScopePageRepository)
+			if !available {
+				bad(w, http.StatusNotImplemented, "scope_pagination_unavailable")
+				return
+			}
+			page, err := pageRepo.ListScopesPage(r.Context(), query)
+			if err != nil {
+				if errors.Is(err, approvals.ErrInvalid) {
+					bad(w, http.StatusBadRequest, "invalid_scope_list_query")
+				} else {
+					bad(w, http.StatusInternalServerError, "db_error")
+				}
+				return
+			}
+			respond(w, http.StatusOK, ScopePageResponse{Items: page.Items, Total: page.Total, Page: page.Page, PageSize: page.PageSize, ExpiringCount: page.ExpiringCount, ExpiredCount: page.ExpiredCount})
+			return
+		}
 		items, err := repo.ListScopes(r.Context())
 		if err != nil {
 			handleError(w, err)
@@ -122,6 +145,29 @@ func registerApprovalHandlers(mux *http.ServeMux, users account.Repository, repo
 		respond(w, 200, item)
 	}))
 	mux.HandleFunc("GET /api/v1/port-requests", auth(users, false, func(w http.ResponseWriter, r *http.Request, _ account.User) {
+		query, paged, ok := parsePortRequestListQuery(r)
+		if !ok {
+			bad(w, http.StatusBadRequest, "invalid_port_request_list_query")
+			return
+		}
+		if paged {
+			pageRepo, available := repo.(approvals.PortRequestPageRepository)
+			if !available {
+				bad(w, http.StatusNotImplemented, "port_request_pagination_unavailable")
+				return
+			}
+			page, err := pageRepo.ListPortRequestsPage(r.Context(), query)
+			if err != nil {
+				if errors.Is(err, approvals.ErrInvalid) {
+					bad(w, http.StatusBadRequest, "invalid_port_request_list_query")
+				} else {
+					bad(w, http.StatusInternalServerError, "db_error")
+				}
+				return
+			}
+			respond(w, http.StatusOK, PageListResponse[approvals.PortRequest]{Items: page.Items, Total: page.Total, Page: page.Page, PageSize: page.PageSize})
+			return
+		}
 		items, err := repo.ListPortRequests(r.Context())
 		if err != nil {
 			handleError(w, err)
