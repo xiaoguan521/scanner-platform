@@ -606,7 +606,7 @@ secrets:
 
 ### 2026-10-19 报告与资产画像数据扩展
 
-资产画像、服务、登录入口、可达性、策略、知识库、任务观察和报告数据采用独立表及 TEXT JSON,与 SQLite 可移植结构一致。PostgreSQL 新增迁移 `0004_report_inventory.sql` 和后续资产目录、任务投影、发现项投影迁移,不改已应用的迁移。当前运行存储仍是 SQLite；账号、资产、授权、核心任务队列、任务安全投影和发现项生命周期适配已在隔离 PostgreSQL 夹具验证，报告适配及 Server 后端选择仍未实现。
+资产画像、服务、登录入口、可达性、策略、知识库、任务观察和报告数据采用独立表及 TEXT JSON,与 SQLite 可移植结构一致。PostgreSQL 新增迁移 `0004_report_inventory.sql` 和后续资产目录、任务投影、发现项投影迁移,不改已应用的迁移。当前运行存储仍是 SQLite；账号、资产、授权、核心任务队列、任务安全投影、发现项生命周期和报告作业适配已在隔离 PostgreSQL 夹具验证，Server 后端选择仍未实现。
 
 发现项保留检测方式、置信度、CVSS、分类、外部编号和中文内容;版本匹配明确标记未原理验证。知识库只接受公开来源整理的规范 JSON,不自动接入 CNNVD/CNVD。报告在 Server 冻结快照后异步输出 HTML、Excel、Word、漏洞明细 CSV 和完整 JSON;生成过程不连接目标。登录入口独立计数,弱口令未启用不显示零项。详见 `product/report-usage.md` 与 `product/report-checklist.md`。
 

@@ -1,5 +1,12 @@
 # Verification log
 
+## 2026-10-21：PostgreSQL 报告模板、快照与作业适配
+
+- 新增 `internal/repo/postgres_reports.go`，覆盖默认模板初始化、模板保存/读取、资产/任务/发现项冻结快照、分页历史、格式复用、失败重试、生成恢复、文件完整性读取和带 `FOR UPDATE SKIP LOCKED` 的报告队列。报告快照使用 PostgreSQL 资产画像/服务/登录入口、任务安全投影、任务观察和当前发现项投影，不读取目标或执行扫描。
+- 默认单测覆盖空连接、搜索占位符绑定、排序白名单和共享报告格式校验；实验回归使用文档保留地址，验证任务范围快照、系统漏洞汇总、报告历史筛选、JSON 生成和文件大小校验。
+- 已运行：`POSTGRES_DSN_FILE="$PWD/runtime/postgres/dsn" go test -tags lab ./internal/repo -run 'TestPostgresReportStoreLab$' -count=2`，并与队列、任务投影、发现项、账号、资产、资产管理和授权适配器组合回归，全部通过。
+- 该适配器仍未接入当前 SQLite Web 启动路径；Server 后端选择、报告之外的计划/通知 PostgreSQL 适配和 PostgreSQL 浏览器核心旅程仍待完成。报告文件只写入 Server 指定的本地输出目录，不把路径写入快照。
+
 ## 2026-10-21：PostgreSQL 发现项投影与生命周期适配
 
 - 新增 PostgreSQL 迁移 `0009_finding_projection.sql` 和 `internal/repo/postgres_findings.go`。适配器以稳定指纹 `(asset_id, fingerprint_hash)` 去重，保留人工处置字段，支持接受风险到期、状态事件、任务观察、分页/搜索/风险筛选和固定排序；发现项投影保存完整页面字段，`security_findings` 的稳定身份与生命周期列保持权威。
