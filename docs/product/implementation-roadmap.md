@@ -31,6 +31,6 @@
 
 已增加 `make verify-deploy`。它先由 Docker Compose 将候选文件规范化为
 JSON，再检查服务角色、显式网络、host namespace、特权和 capabilities、
-secret 文件引用、端口发布边界，以及 Worker 的规则目录只读和 runtime 可写
+digest 固定镜像、secret 文件引用、端口发布边界，以及 Worker 的规则目录只读和 runtime 可写
 约束。该门禁不替代 Linux 围栏、抓包和真实部署验收，也不意味着生产
 Compose 已经交付。

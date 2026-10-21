@@ -555,7 +555,8 @@ secrets:
 `docker compose config --format json` 规范化候选文件，检查服务角色、显式
 命名网络、禁止 host namespace/privileged/危险 capabilities、secret 文件
 引用、Server 回环端口、Worker/Updater/PostgreSQL 端口发布，以及 Worker
-规则目录只读和私有 runtime 可写约束。它不替代实际 namespace、nftables、
+规则目录只读和私有 runtime 可写约束；每个服务还必须使用审批过的
+`@sha256` 镜像，不能直接使用未固定的 tag 或 `build:` 上下文。它不替代实际 namespace、nftables、
 cgroup、DROP 计数和范围外抓包验收；本节 Compose 仍是按环境补全的部署骨架。
 
 ---

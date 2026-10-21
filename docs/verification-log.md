@@ -754,6 +754,6 @@
 ## 2026-10-21：Compose 部署静态安全门禁
 
 - 新增 `scripts/verify_compose_security.py`：通过 `docker compose config --format json` 规范化候选部署文件，随后不启动任何容器，失败即关闭。
-- 校验服务角色、显式命名网络、禁止 `network_mode: host`/`hostNetwork`/`privileged`/危险 capability，限制 Server 仅回环发布端口，禁止 Worker/Updater/PostgreSQL 发布宿主端口，要求 secret 使用 owner-managed file，Updater 非 root，Worker `/vuln-data` 只读且 `/runtime` 可写。
+- 校验服务角色、显式命名网络、禁止 `network_mode: host`/`hostNetwork`/`privileged`/危险 capability，要求每个服务使用 digest 固定镜像并拒绝直接 `build:` 上下文，限制 Server 仅回环发布端口，禁止 Worker/Updater/PostgreSQL 发布宿主端口，要求 secret 使用 owner-managed file，Updater 非 root，Worker `/vuln-data` 只读且 `/runtime` 可写。
 - 新增无网络单元测试，覆盖合法配置、host namespace、特权、规则目录/runtime 权限、明文凭据、危险 capability、端口和 secret/网络缺失路径；`make test` 已纳入该测试文件。该门禁仍不能替代 Linux namespace、nftables、cgroup 和范围外抓包验收，也不声称生产 Compose 已完成。
 

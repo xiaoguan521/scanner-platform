@@ -142,6 +142,6 @@ Server 共享单项校验，在一个事务内固定顺序预读、CAS 更新、
 读取 `docker compose config --format json` 的规范化结果，不启动服务，拒绝
 缺少 Server/Updater/PostgreSQL/Worker 角色、host namespace、特权容器、危险
 capability、Worker/Updater/PostgreSQL 对外端口、明文敏感环境变量、非回环
-Server 端口，以及 Worker 可写规则目录或只读 runtime。它把部署文件的静态
+Server 端口、未固定 digest 的镜像或直接 `build:` 上下文，以及 Worker 可写规则目录或只读 runtime。它把部署文件的静态
 安全约束变成可重复门禁，但生产镜像、secret/证书编排、Linux 运行时围栏和
 范围外流量抓包仍需单独验收。

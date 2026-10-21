@@ -20,11 +20,13 @@ def valid_config():
         },
         "services": {
             "postgres": {
+                "image": "registry.example.invalid/postgres@sha256:" + "1" * 64,
                 "environment": {"POSTGRES_PASSWORD_FILE": "/run/secrets/db_password"},
                 "networks": {"control_net": None},
                 "secrets": [{"source": "db_password", "target": "/run/secrets/db_password"}],
             },
             "sec-server": {
+                "image": "registry.example.invalid/sec-server@sha256:" + "2" * 64,
                 "environment": {
                     "TLS_CERT_FILE": "/run/secrets/server.crt",
                     "TLS_KEY_FILE": "/run/secrets/server.key",
@@ -39,6 +41,7 @@ def valid_config():
                 ],
             },
             "sec-updater": {
+                "image": "registry.example.invalid/sec-updater@sha256:" + "3" * 64,
                 "environment": {"NODE_TOKEN_FILE": "/run/secrets/updater_token"},
                 "networks": {"worker_net": None},
                 "secrets": [{"source": "updater_token", "target": "/run/secrets/updater.token"}],
@@ -46,6 +49,7 @@ def valid_config():
                 "volumes": [{"target": "/vuln-data", "read_only": False}],
             },
             "sec-worker-1": {
+                "image": "registry.example.invalid/sec-worker@sha256:" + "4" * 64,
                 "cap_add": ["NET_ADMIN", "SETUID", "SETGID"],
                 "environment": {"NODE_TOKEN_FILE": "/run/secrets/worker_token"},
                 "networks": {"worker_net": None},
@@ -82,6 +86,13 @@ class ComposeSecurityTest(unittest.TestCase):
         self.assertViolation(config, "network_mode is forbidden")
         self.assertViolation(config, "cap_add is reserved for the Worker supervisor")
         self.assertViolation(config, "TLS_KEY_FILE is required")
+
+    def test_images_must_be_digest_pinned_and_build_is_rejected(self):
+        config = valid_config()
+        config["services"]["sec-worker-1"]["image"] = "registry.example.invalid/sec-worker:latest"
+        config["services"]["sec-server"]["build"] = {"context": "."}
+        self.assertViolation(config, "image must be pinned by a sha256 digest")
+        self.assertViolation(config, "build contexts are not accepted")
 
     def test_worker_rules_must_be_read_only_and_runtime_writable(self):
         config = valid_config()

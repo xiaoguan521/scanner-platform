@@ -29,6 +29,7 @@ FILE_ENV = re.compile(
 PEM_MARKER = re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |ED25519 )?(?:PRIVATE|PUBLIC) KEY-----")
 FORBIDDEN_CAPS = {"SYS_ADMIN", "SYS_PTRACE", "NET_RAW", "SYS_MODULE", "DAC_READ_SEARCH"}
 WORKER_CAPS = {"NET_ADMIN", "SETUID", "SETGID"}
+IMAGE_DIGEST = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
 
 
 def _as_mapping(value: Any) -> dict[str, Any]:
@@ -213,6 +214,11 @@ def validate_config(config: dict[str, Any]) -> list[str]:
 
     for service_name, raw_service in services.items():
         service = _as_mapping(raw_service)
+        image = service.get("image")
+        if not isinstance(image, str) or not IMAGE_DIGEST.fullmatch(image):
+            errors.append(f"{service_name}: image must be pinned by a sha256 digest")
+        if service.get("build") is not None:
+            errors.append(f"{service_name}: build contexts are not accepted by the deployment gate")
         _check_common(service_name, service, errors)
 
         if service_name == "sec-server":

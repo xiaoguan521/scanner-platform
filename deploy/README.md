@@ -139,8 +139,10 @@ is missing the `sec-server`, `sec-updater`, `postgres`, or `sec-worker-*`
 roles, uses a host namespace or privileged container, publishes Worker/Updater/
 PostgreSQL ports, places sensitive values directly in environment variables,
 gives a Worker unsafe capabilities, mounts `/vuln-data` writable in a Worker,
-or leaves the Worker runtime read-only. Server ports must bind loopback, the
-Updater must run non-root, and all secret sources must be owner-managed files.
+or leaves the Worker runtime read-only. It also rejects unpinned image tags and
+direct `build:` contexts; every service must name an approved `@sha256` image.
+Server ports must bind loopback, the Updater must run non-root, and all secret
+sources must be owner-managed files.
 The check is a deployment gate, not proof that the resulting Linux namespace,
 firewall, cgroup, or packet-drop behavior has been accepted; those isolated
 runtime tests remain required.
