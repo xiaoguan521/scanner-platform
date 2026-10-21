@@ -1,5 +1,12 @@
 # Verification log
 
+## 2026-10-21：自动综合扫描阶段进度闭环
+
+- Worker 现在按自动综合扫描阶段持续回报 `tcp_probe`、`service_identification`、`http_scan`、`ssh_collection`、`trivy_scan` 和 `application_scan` 的完成数/总数；单引擎任务统一回报 `engine_scan`。应用分析按成功完成的独立产物计数，SSH 采集失败不会误报完成。
+- Server 继续使用既有 advisory progress 投影，不新增数据库表；SQLite 与 PostgreSQL 的进度边界保持一致，自动服务/HTTP 总数不得超过任务冻结的端口数，SSH/Trivy 为单步，应用分析最多 256 个输入。阶段排名拒绝回退或同阶段倒退。
+- `/tasks` 清册与详情按阶段权重显示进度条和 `完成数/总数`，完成任务仍显示 100%；OpenAPI 阶段枚举已同步新增 `application_scan`。
+- 新增仓储进度边界及 SQLite 实际更新测试；已运行 `go test -race ./internal/repo ./internal/executor ./internal/taskflow`，三包通过。尚未在真实靶机全端口任务中重新执行本轮 UI 进度回归；本轮未修改数据库结构、规则目录、SSH 配置或扫描目标。
+
 ## 2026-10-21：节点材料传输后只读预检
 
 - `sec-node-provision --verify-dir` 新增离线预检入口，不需要 CA 私钥、不连接 Server，也不修改材料目录。它严格校验 manifest、清单外文件、owner-only 目录/私钥/令牌权限、节点令牌注册表、证书链、证书与私钥匹配关系和数字 Server IP SAN。

@@ -11,9 +11,9 @@ import { useAuth } from '../../auth/AuthProvider';
 import type { CustomRule, PortProbeRange, ScanPlan, ScanPlanInput, ScanTask, Schedule, ScheduleRun, TaskInput, ScanPolicy, TaskLog } from '../../types';
 
 import { parsePortRanges, showRanges, coversAllPorts, presetLabels, summarizePorts, compressPorts, previewProbePorts } from './policy';
+import { progressPercent, progressPhases } from './progress';
 import { assertTaskSubmission, isAutoTaskWizard, wizardStepFields } from './wizard';
 const dayOptions=['周日','周一','周二','周三','周四','周五','周六'].map((label,value)=>({label,value}));
-const progressPhases:Record<string,string>={tcp_probe:'TCP 端口探测',service_identification:'服务识别',http_scan:'HTTP 基线扫描',ssh_collection:'SSH 信息采集',trivy_scan:'Trivy 系统包与应用分析',engine_scan:'引擎扫描'};
 const applicationStatuses:Record<string,string>={not_configured:'未配置部署目录',not_started:'尚未开始',port_out_of_scope:'未采集：SSH 端口不在本次范围',collecting:'采集中',collection_failed:'采集未完成',scanning:'分析中',analysis_failed:'分析未完成',completed:'已完成'};
 const ApplicationCoverage:React.FC<{task:ScanTask}>=({task})=><>
   <Typography.Text>Java / Go 应用：{task.applicationScanStatus?applicationStatuses[task.applicationScanStatus]??'状态未知':'等待 Worker 回报（旧任务未记录应用覆盖）'}</Typography.Text>
@@ -178,13 +178,13 @@ export const TasksPage:React.FC=()=>{
   const renderProgress=(task:ScanTask)=>{
     const current=task.progress;
     if(task.status==='COMPLETED')return <div><Typography.Text type="success">扫描完成</Typography.Text><Progress percent={100} size="small" status="success"/></div>;
-    if(current?.phase==='tcp_probe'&&current.total>0){
-      const percent=Math.max(0,Math.min(100,Math.floor(current.completed/current.total*100)));
+    if(current){
+      const percent=progressPercent(current);
       const status=task.status==='FAILED'||task.status==='CANCELED'?'exception':task.status==='RUNNING'?'active':'normal';
-      return <div><Typography.Text>{progressPhases[current.phase]} {current.completed.toLocaleString()} / {current.total.toLocaleString()}</Typography.Text><Progress percent={percent} size="small" status={status}/></div>;
+      const detail=current.total>0?` ${current.completed.toLocaleString()} / ${current.total.toLocaleString()}`:' 进行中';
+      return <div><Typography.Text>{progressPhases[current.phase]??'扫描'}{detail}</Typography.Text><Progress percent={percent} size="small" status={status}/></div>;
     }
-    if(task.status==='RUNNING')return <Space size={6}><Spin size="small"/><Typography.Text>{current?`${progressPhases[current.phase]??'扫描'}进行中`:'Worker 执行中，等待进度上报'}</Typography.Text></Space>;
-    if(current)return <Typography.Text type="secondary">{progressPhases[current.phase]??'扫描'} · {current.completed} / {current.total}</Typography.Text>;
+    if(task.status==='RUNNING')return <Space size={6}><Spin size="small"/><Typography.Text>Worker 执行中，等待进度上报</Typography.Text></Space>;
     return `${task.completedChunks} / ${task.totalChunks}`;
   };
   return <div style={{display:'flex',flexDirection:'column',gap:16}}>

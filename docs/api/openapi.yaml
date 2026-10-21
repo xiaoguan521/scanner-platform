@@ -4562,21 +4562,21 @@ components:
       properties:
         phase:
           type: string
-          enum: [tcp_probe, service_identification, http_scan, ssh_collection, trivy_scan, engine_scan]
+          enum: [tcp_probe, service_identification, http_scan, ssh_collection, trivy_scan, application_scan, engine_scan]
         completed:
           type: integer
           minimum: 0
-          description: For tcp_probe, number of finished connection attempts, including refused or timed-out ports; otherwise zero.
+          description: Number of completed units in the current phase; TCP counts finished connection attempts, service identification and HTTP count checked targets, SSH/Trivy count bounded collection steps, and application_scan counts analyzed artifacts.
         total:
           type: integer
           minimum: 0
-          description: For tcp_probe, exactly the frozen dispatched port count; otherwise zero.
+          description: Frozen dispatched port count for tcp_probe; bounded phase total for other phases.
         updatedAt:
           type: string
           format: date-time
     WorkerProgressUpdate:
       type: object
-      description: Advisory telemetry only; Server validates Worker/task ownership and the frozen TCP port count before persistence.
+      description: Advisory telemetry only; Server validates Worker/task ownership and the frozen phase bounds before persistence.
       required: [taskId, phase, completed, total]
       properties:
         taskId:
@@ -4584,7 +4584,7 @@ components:
           maxLength: 128
         phase:
           type: string
-          enum: [tcp_probe, service_identification, http_scan, ssh_collection, trivy_scan, engine_scan]
+          enum: [tcp_probe, service_identification, http_scan, ssh_collection, trivy_scan, application_scan, engine_scan]
         completed:
           type: integer
           minimum: 0

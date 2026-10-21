@@ -39,7 +39,6 @@ func (r *Runner) AutoScan(ctx context.Context, task taskflow.Task) (taskflow.Aut
 	if err != nil {
 		return taskflow.AutoResult{}, err
 	}
-	taskflow.ReportProgress(ctx, "service_identification", 0, 0)
 	allowed := make(map[int]bool, len(task.VulnerabilityPorts))
 	for _, port := range task.VulnerabilityPorts {
 		allowed[port] = true
@@ -50,7 +49,10 @@ func (r *Runner) AutoScan(ctx context.Context, task taskflow.Task) (taskflow.Aut
 			openApproved = append(openApproved, result.Port)
 		}
 	}
-	services := identifyServices(ctx, task.Chunks[0].Targets[0], openApproved, task.PortProbeConfig)
+	taskflow.ReportProgress(ctx, "service_identification", 0, len(openApproved))
+	services := identifyServicesWithProgress(ctx, task.Chunks[0].Targets[0], openApproved, task.PortProbeConfig, func(completed, total int) {
+		taskflow.ReportProgress(ctx, "service_identification", completed, total)
+	})
 	result := taskflow.AutoResult{Ports: open, Services: services, Findings: []taskflow.Detection{}, SystemStatus: taskflow.SystemScanNotStarted, ApplicationStatus: taskflow.ApplicationScanNotStarted, AssetProfile: inferProfile(services)}
 	markEngine := func(engine string) {
 		for _, existing := range result.ExecutedEngines {
@@ -70,6 +72,11 @@ func (r *Runner) AutoScan(ctx context.Context, task taskflow.Task) (taskflow.Aut
 			byScheme[service.Scheme] = append(byScheme[service.Scheme], target)
 		}
 	}
+	httpTotal := len(byScheme["http"]) + len(byScheme["https"])
+	if httpTotal > 0 {
+		taskflow.ReportProgress(ctx, "http_scan", 0, httpTotal)
+	}
+	httpCompleted := 0
 	for _, scheme := range []string{"http", "https"} {
 		targets := byScheme[scheme]
 		if len(targets) == 0 {
@@ -82,7 +89,6 @@ func (r *Runner) AutoScan(ctx context.Context, task taskflow.Task) (taskflow.Aut
 			subtask.Scheme = scheme
 			subtask.Chunks = append([]taskflow.Chunk(nil), task.Chunks...)
 			subtask.Chunks[0].Targets = targets[start:end]
-			taskflow.ReportProgress(ctx, "http_scan", 0, 0)
 			findings, err := r.Execute(ctx, subtask)
 			if err != nil {
 				return result, err
@@ -90,7 +96,6 @@ func (r *Runner) AutoScan(ctx context.Context, task taskflow.Task) (taskflow.Aut
 			markEngine("nuclei")
 			result.Findings = append(result.Findings, findings...)
 			if r.zapReady() {
-				taskflow.ReportProgress(ctx, "http_scan", 0, 0)
 				subtask.Engines = []string{"zap"}
 				findings, err = r.Execute(ctx, subtask)
 				if err != nil {
@@ -99,12 +104,17 @@ func (r *Runner) AutoScan(ctx context.Context, task taskflow.Task) (taskflow.Aut
 				markEngine("zap")
 				result.Findings = append(result.Findings, findings...)
 			}
+			httpCompleted += end - start
+			taskflow.ReportProgress(ctx, "http_scan", httpCompleted, httpTotal)
 		}
 	}
-	taskflow.ReportProgress(ctx, "ssh_collection", 0, 0)
 	sshPort, configured := r.SSHCollector.ProfilePort(task.Chunks[0].Targets[0])
 	if configured {
+		taskflow.ReportProgress(ctx, "ssh_collection", 0, 1)
 		rootfsPath, runtimeServices, cleanup, status, collectErr := r.SSHCollector.CollectRootfs(ctx, task.Chunks[0].Targets[0], task.VulnerabilityPorts, openPorts(open), r.RuntimeDir, r.InputsDir)
+		if ctx.Err() == nil && collectErr == nil {
+			taskflow.ReportProgress(ctx, "ssh_collection", 1, 1)
+		}
 		result.SystemStatus = status
 		result.AssetProfile.RuntimeServices = runtimeServices
 		if ctx.Err() != nil {
@@ -124,7 +134,7 @@ func (r *Runner) AutoScan(ctx context.Context, task taskflow.Task) (taskflow.Aut
 			if !trivyReady {
 				result.SystemStatus = taskflow.SystemScanTrivyUnavailable
 			} else {
-				taskflow.ReportProgress(ctx, "trivy_scan", 0, 0)
+				taskflow.ReportProgress(ctx, "trivy_scan", 0, 1)
 				subtask := task
 				subtask.Engines = []string{"trivy"}
 				subtask.InputKind = "rootfs"
@@ -141,6 +151,7 @@ func (r *Runner) AutoScan(ctx context.Context, task taskflow.Task) (taskflow.Aut
 						result.SystemStatus = taskflow.SystemScanTrivyFailed
 					}
 				} else {
+					taskflow.ReportProgress(ctx, "trivy_scan", 1, 1)
 					markEngine("trivy")
 					host := task.Chunks[0].Targets[0]
 					for i := range findings {

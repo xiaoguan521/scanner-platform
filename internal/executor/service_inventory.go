@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"scanner-platform/internal/inventory"
@@ -48,6 +49,10 @@ func (b *identificationBudget) take(ctx context.Context) bool {
 }
 
 func identifyServices(ctx context.Context, host string, ports []int, config portprobe.Config) []taskflow.ServiceResult {
+	return identifyServicesWithProgress(ctx, host, ports, config, nil)
+}
+
+func identifyServicesWithProgress(ctx context.Context, host string, ports []int, config portprobe.Config, progress func(completed, total int)) []taskflow.ServiceResult {
 	policy, err := portprobe.PolicyFor(config)
 	if err != nil {
 		return nil
@@ -63,6 +68,7 @@ func identifyServices(ctx context.Context, host string, ports []int, config port
 	}
 	limiter := &identificationBudget{remaining: budget, interval: time.Second / time.Duration(policy.Rate)}
 	results := make([]taskflow.ServiceResult, len(ports))
+	var completed atomic.Int32
 	jobs := make(chan int)
 	var group sync.WaitGroup
 	for range min(policy.Concurrency, autoProbeWorkers, len(ports)) {
@@ -71,6 +77,9 @@ func identifyServices(ctx context.Context, host string, ports []int, config port
 			defer group.Done()
 			for i := range jobs {
 				results[i] = identifyService(ctx, host, ports[i], policy.Timeout, attempts, config.QuarantineThreshold, limiter)
+				if progress != nil {
+					progress(int(completed.Add(1)), len(ports))
+				}
 			}
 		}()
 	}

@@ -23,7 +23,10 @@ func (r *Runner) scanApplications(ctx context.Context, task taskflow.Task, resul
 	for _, app := range apps {
 		result.ApplicationResults = append(result.ApplicationResults, taskflow.ApplicationResult{Alias: app.Alias, Status: taskflow.ApplicationScanNotStarted})
 	}
-	taskflow.ReportProgress(ctx, "ssh_collection", 0, 0)
+	// The number of eligible files is only known after the bounded SSH
+	// collection. Publish the phase transition first so a long collection does
+	// not look like a stalled system-package scan.
+	taskflow.ReportProgress(ctx, "application_scan", 0, 0)
 	inputs, cleanup, status, err := r.SSHCollector.CollectApplications(ctx, host, task.VulnerabilityPorts, openPorts(result.Ports), r.RuntimeDir, r.InputsDir)
 	defer cleanup()
 	if status == taskflow.ApplicationScanPortOutOfScope {
@@ -61,6 +64,7 @@ func scanCollectedApplications(ctx context.Context, task taskflow.Task, result *
 		}
 		result.ApplicationResults[i].SelectedCount++
 	}
+	taskflow.ReportProgress(ctx, "application_scan", 0, len(inputs))
 	result.ApplicationStatus = taskflow.ApplicationScanScanning
 	fail := func(err error) error {
 		result.ApplicationStatus = taskflow.ApplicationScanAnalysisFailed
@@ -71,6 +75,7 @@ func scanCollectedApplications(ctx context.Context, task taskflow.Task, result *
 		}
 		return err
 	}
+	completed := 0
 	for _, input := range inputs {
 		if err := ctx.Err(); err != nil {
 			return fail(err)
@@ -81,7 +86,6 @@ func scanCollectedApplications(ctx context.Context, task taskflow.Task, result *
 		subtask.InputPath = input.InputPath
 		subtask.RequireInputSnapshot = true
 		subtask.ExpectedArtifactType = input.ArtifactType
-		taskflow.ReportProgress(ctx, "trivy_scan", 0, 0)
 		findings, err := execute(ctx, subtask)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -98,6 +102,8 @@ func scanCollectedApplications(ctx context.Context, task taskflow.Task, result *
 		result.Findings = append(result.Findings, findings...)
 		i := byAlias[input.Alias]
 		result.ApplicationResults[i].AnalyzedCount++
+		completed++
+		taskflow.ReportProgress(ctx, "application_scan", completed, len(inputs))
 		if result.ApplicationResults[i].AnalyzedCount == result.ApplicationResults[i].SelectedCount {
 			result.ApplicationResults[i].Status = taskflow.ApplicationScanCompleted
 		}

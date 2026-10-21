@@ -301,10 +301,11 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 		if w.Execute == nil {
 			return fmt.Errorf("scanning engines are not configured")
 		}
-		ReportProgress(execCtx, "engine_scan", 0, 0)
+		ReportProgress(execCtx, "engine_scan", 0, 1)
 		var executeErr error
 		detections, executeErr = w.Execute(execCtx, task)
 		if executeErr == nil {
+			ReportProgress(execCtx, "engine_scan", 1, 1)
 			completedFully = true
 			rulesExecuted = true
 			executedEngines = []string{task.Engines[0]}

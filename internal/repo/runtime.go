@@ -352,7 +352,7 @@ func (s *RuntimeStore) UpdateRuntimeTaskProgress(ctx context.Context, worker str
 		return fmt.Errorf("decode task progress metadata: %w", err)
 	}
 	portTotal := 0
-	if update.Phase == "tcp_probe" {
+	if detail.Input.Engine == "auto" || update.Phase == "tcp_probe" {
 		portTotal, err = countJSONItems(detail.ProbePorts)
 		if err != nil {
 			return fmt.Errorf("count dispatched probe ports: %w", err)
@@ -392,9 +392,19 @@ func validRuntimeTaskProgress(engine string, portTotal int, update taskflow.Prog
 	case "tcp_probe":
 		return (engine == "auto" || engine == "port-probe") && update.Total == portTotal && update.Total > 0
 	case "service_identification", "http_scan", "ssh_collection", "trivy_scan":
-		return engine == "auto" && update.Completed == 0 && update.Total == 0
+		if engine != "auto" {
+			return false
+		}
+		switch update.Phase {
+		case "ssh_collection", "trivy_scan":
+			return update.Total <= 1
+		default:
+			return update.Total <= portTotal
+		}
+	case "application_scan":
+		return engine == "auto" && update.Total <= 256
 	case "engine_scan":
-		return (engine == "nuclei" || engine == "zap" || engine == "trivy") && update.Completed == 0 && update.Total == 0
+		return (engine == "nuclei" || engine == "zap" || engine == "trivy") && update.Total <= 1
 	default:
 		return false
 	}
@@ -403,7 +413,7 @@ func validRuntimeTaskProgress(engine string, portTotal int, update taskflow.Prog
 func runtimeProgressRank(engine, phase string) int {
 	switch engine {
 	case "auto":
-		return map[string]int{"tcp_probe": 1, "service_identification": 2, "http_scan": 3, "ssh_collection": 4, "trivy_scan": 5}[phase]
+		return map[string]int{"tcp_probe": 1, "service_identification": 2, "http_scan": 3, "ssh_collection": 4, "trivy_scan": 5, "application_scan": 6}[phase]
 	case "port-probe":
 		if phase == "tcp_probe" {
 			return 1
