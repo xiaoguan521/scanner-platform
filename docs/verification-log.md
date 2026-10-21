@@ -1,5 +1,10 @@
 # Verification log
 
+## 2026-10-21：隔离引擎回归与可选 ZAP 行为
+
+- `LAB_ENV=isolated make test-engines-local` 已通过：Nuclei 真实进程、Trivy 离线系统包/依赖/镜像归档、Java 归档、Go amd64/arm64 ELF、稳定去重、快照篡改拒绝、麒麟未适配拒绝和缺失输入失败路径均有回归证据。测试只创建本机回环 HTTP 夹具，不连接当前靶机或 PostgreSQL。
+- 发现并修复测试入口问题：ZAP 按项目约定是可选引擎，未安装时默认跳过；设置 `SCANNER_EXPECT_ZAP=1` 才会要求 `make engines-zap` 和 Java 17+。本次环境输出 `SKIP ZAP`，不把可选引擎缺失误报为扫描任务失败。
+
 ## 2026-10-21：部署边界与当前运行契约
 
 - `deploy/README.md` 已从占位说明更新为当前可运行模式和部署边界：SQLite/显式 PostgreSQL、本地节点 HTTPS、Linux `--fence --once` 以及规则目录/运行目录/令牌文件约束。

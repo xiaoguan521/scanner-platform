@@ -27,6 +27,8 @@ make dev       # 启动网页、Server、Worker、Updater
 
 `make engines` 的规则准备也可以单独运行：`dist/sec-updater --prepare-engines`。它只安装数据、切换 CURRENT，不创建扫描任务；运行中的任务仍使用创建时固定的规则版本。随后启动的 Updater 会把实际目录状态同步到网页。`make verify-flags` 检查已安装程序版本和实际帮助输出，不扫描任何目标。Nuclei/Trivy 始终检查；未安装可选 ZAP 时打印 `SKIP` 并通过。需要强制检查 ZAP 时使用 `REQUIRE_ZAP=1 make verify-flags`。
 
+隔离引擎回归 `LAB_ENV=isolated make test-engines-local` 也遵守这个约定：没有 ZAP 时只验证 Nuclei 和 Trivy/SSH 输入链路并明确打印 `SKIP ZAP`；需要把 ZAP 纳入回归时设置 `SCANNER_EXPECT_ZAP=1`，再运行 `make engines-zap` 并确保目标机有 Java 17+。
+
 ## 验证 Web 服务
 
 1. 资产页登记你有权验证的服务器数字 IP 和明确端口；Nginx 四层转发端口填写“跳过端口”。不输入域名或 CIDR。

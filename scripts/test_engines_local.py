@@ -32,6 +32,15 @@ def main():
     java_available = (ROOT / 'vuln-data/releases' / current / 'trivy/java-db/trivy-java.db').is_file()
     if os.environ.get('SCANNER_EXPECT_JAVA_DB') == '1' and not java_available:
         raise SystemExit('Run make engines-java first; Java regression was explicitly requested.')
+    zap_jar = ROOT / 'bin/zap/zap-2.17.0.jar'
+    zap_available = zap_jar.is_file() and shutil.which('java') is not None
+    if os.environ.get('SCANNER_EXPECT_ZAP') == '1' and not zap_available:
+        raise SystemExit('Run make engines-zap and install Java 17+; ZAP regression was explicitly requested.')
+    http_engines = ['nuclei']
+    if zap_available:
+        http_engines.append('zap')
+    else:
+        print('SKIP ZAP: optional passive engine is not installed (set SCANNER_EXPECT_ZAP=1 to require it)', flush=True)
     collector_apps = []
     if java_available:
         java = directory / 'java-fixture'
@@ -163,7 +172,7 @@ def main():
         ops.call('POST',f'/api/v1/port-requests/{asset["id"]}/{fixture.server_port}/review',
                  {'decision':'APPROVE','approvalTicket':'LOCAL-ENGINE-FIXTURE','note':'Isolated loopback fixture','kind':'WEB'})
         counts = {}
-        for engine in ['nuclei', 'zap']:
+        for engine in http_engines:
             before = len(requests)
             task = api.call('POST', '/api/v1/tasks', {'synthetic': False, 'engine': engine, 'scheme': 'http',
                             'targets': [target, '127.0.0.1:1'], 'timeWindows': []}, expect=201)
@@ -251,8 +260,9 @@ def main():
                   'engineFindingCounts': counts, 'imageArchiveFindingCount':len(image_findings), 'linuxOSFindingCount': len(os_findings),
                   'collectedAppFindingCount': len(app_findings), 'ociArchiveFindingCount': len(oci_findings),
                   'javaIndexTested': java_available, 'javaFixtureFindingCount': len(java_findings), 'goFixtureArchitectures': ['amd64', 'arm64'],
+                  'zapTested': zap_available,
                   'unsupportedDistributionRejected': True, 'checks': ['Linux rootfs collector', 'snapshot integrity', 'real process/report/persistence', 'skip ports',
-                  'ZAP offline passive analysis', 'Trivy offline scan', 'stable dedup', 'failure reporting']}
+                  *(['ZAP offline passive analysis'] if zap_available else []), 'Trivy offline scan', 'stable dedup', 'failure reporting']}
         (directory / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
         print('Evidence:', directory, flush=True)
     finally:
