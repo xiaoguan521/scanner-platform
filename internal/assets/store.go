@@ -340,90 +340,16 @@ func (s *Store) List(ctx context.Context) ([]Asset, error) { return ListSnapshot
 
 type SnapshotQuerier interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
 // ListSnapshot reads the complete registry through the caller's transaction.
 func ListSnapshot(ctx context.Context, q SnapshotQuerier) ([]Asset, error) {
-	rows, err := q.QueryContext(ctx, "SELECT "+columns+" FROM assets ORDER BY created_at DESC,id")
+	result, _, err := listAssetRows(ctx, q, ListQuery{Page: 1})
 	if err != nil {
-		return nil, fmt.Errorf("query assets: %w", err)
-	}
-	defer rows.Close()
-	result := []Asset{}
-	for rows.Next() {
-		a, err := decodeAsset(rows)
-		if err != nil {
-			return nil, err
-		}
-		result = append(result, a)
-	}
-	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	for i := range result {
-		ports, err := q.QueryContext(ctx, "SELECT port FROM asset_port_requests WHERE asset_id=? ORDER BY port", result[i].ID)
-		if err != nil {
-			return nil, err
-		}
-		for ports.Next() {
-			var port int
-			if err := ports.Scan(&port); err != nil {
-				ports.Close()
-				return nil, err
-			}
-			result[i].RequestedPorts = append(result[i].RequestedPorts, port)
-		}
-		err = ports.Err()
-		ports.Close()
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	for i := range result {
-		approved, err := q.QueryContext(ctx, `SELECT p.port,p.kind,p.source FROM asset_ports p
-        WHERE p.asset_id=? AND NOT EXISTS(
-          SELECT 1 FROM port_quarantine q
-           WHERE q.asset_id=p.asset_id AND q.port=p.port AND q.status='ACTIVE'
-        ) ORDER BY p.port`, result[i].ID)
-		if err != nil {
-			return nil, err
-		}
-		for approved.Next() {
-			var item Port
-			if err := approved.Scan(&item.Port, &item.Kind, &item.Source); err != nil {
-				approved.Close()
-				return nil, err
-			}
-			result[i].Ports = append(result[i].Ports, item)
-			if item.Kind == "EXCLUDED_PROXY" {
-				result[i].SkippedPorts = append(result[i].SkippedPorts, item.Port)
-			}
-		}
-		err = approved.Err()
-		approved.Close()
-		if err != nil {
-			return nil, err
-		}
-		quarantine, err := q.QueryContext(ctx, "SELECT port FROM port_quarantine WHERE asset_id=? AND status='ACTIVE' ORDER BY port", result[i].ID)
-		if err != nil {
-			return nil, err
-		}
-		for quarantine.Next() {
-			var port int
-			if err := quarantine.Scan(&port); err != nil {
-				quarantine.Close()
-				return nil, err
-			}
-			result[i].QuarantinedPorts = append(result[i].QuarantinedPorts, port)
-		}
-		err = quarantine.Err()
-		quarantine.Close()
-		if err != nil {
-			return nil, err
-		}
-	}
-	if err := loadProfiles(ctx, q, result); err != nil {
+	if err := populateAssetRelations(ctx, q, result); err != nil {
 		return nil, err
 	}
 	return result, nil

@@ -408,9 +408,27 @@ paths:
     get:
       tags:
       - assets
-      summary: Authenticated SQLite asset registry list
+      summary: Authenticated asset registry list
+      description: Without list query parameters the endpoint preserves the complete registry response. When page, page_size, q or sort is supplied, Server performs bounded pagination and returns page/pageSize metadata. Search covers address, name, business group and owner; sort accepts created_at, address, business_group, owner or name with an optional leading '-'.
       security:
       - sessionCookie: []
+      parameters:
+      - in: query
+        name: page
+        required: false
+        schema: {type: integer, minimum: 1, default: 1}
+      - in: query
+        name: page_size
+        required: false
+        schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+      - in: query
+        name: q
+        required: false
+        schema: {type: string, maxLength: 160}
+      - in: query
+        name: sort
+        required: false
+        schema: {type: string, enum: [created_at, -created_at, address, -address, business_group, -business_group, owner, -owner, name, -name]}
       responses:
         '401':
           description: Missing session
@@ -429,6 +447,19 @@ paths:
                       type: array
                       items:
                         "$ref": "#/components/schemas/Asset"
+                    page:
+                      type: integer
+                      minimum: 1
+                    pageSize:
+                      type: integer
+                      minimum: 1
+                      maximum: 100
+              examples:
+                paged:
+                  summary: Server-paginated asset response
+                  value: {items: [], total: 0, page: 1, pageSize: 20}
+        '400':
+          description: Invalid pagination, search or sort query
     post:
       tags:
       - assets
@@ -3079,6 +3110,13 @@ components:
         total:
           type: integer
           minimum: 0
+        page:
+          type: integer
+          minimum: 1
+        pageSize:
+          type: integer
+          minimum: 1
+          maximum: 100
     LoginRequest:
       type: object
       required:

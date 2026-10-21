@@ -326,6 +326,28 @@ func NewDevelopmentHandler(s account.Repository, assetStore assets.Repository, a
 	}))
 
 	mux.HandleFunc("GET /api/v1/assets", auth(s, false, func(w http.ResponseWriter, r *http.Request, _ account.User) {
+		if query, paged, ok := parseAssetListQuery(r); paged {
+			if !ok {
+				bad(w, http.StatusBadRequest, "invalid_asset_list_query")
+				return
+			}
+			reader, supported := assetStore.(assetPageReader)
+			if !supported {
+				bad(w, http.StatusNotImplemented, "asset_pagination_unavailable")
+				return
+			}
+			page, err := reader.ListPage(r.Context(), query)
+			if err != nil {
+				if errors.Is(err, assets.ErrInvalid) {
+					bad(w, http.StatusBadRequest, "invalid_asset_list_query")
+					return
+				}
+				bad(w, http.StatusInternalServerError, "db_error")
+				return
+			}
+			respond(w, http.StatusOK, PageListResponse[assets.Asset]{Items: page.Items, Total: page.Total, Page: page.Page, PageSize: page.PageSize})
+			return
+		}
 		list, err := assetStore.List(r.Context())
 		if err != nil {
 			bad(w, http.StatusInternalServerError, "db_error")

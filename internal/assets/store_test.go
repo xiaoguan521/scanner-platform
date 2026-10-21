@@ -64,6 +64,13 @@ func TestSQLiteAssetRegistry(t *testing.T) {
 	if err != nil || len(list) != 1 || list[0].RequestedPorts[0] != 8080 || len(list[0].Ports) != 0 {
 		t.Fatalf("bad list: %+v / %v", list, err)
 	}
+	page, err := store.ListPage(ctx, ListQuery{Page: 1, PageSize: 1, Search: "New Group", Sort: "address"})
+	if err != nil || page.Total != 1 || len(page.Items) != 1 || page.Page != 1 || page.PageSize != 1 || page.Items[0].BusinessGroup != "New Group" {
+		t.Fatalf("bad paged list: %+v / %v", page, err)
+	}
+	if _, err := store.ListPage(ctx, ListQuery{Page: 1, PageSize: 1, Sort: "drop_table"}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("invalid sort accepted: %v", err)
+	}
 	var auditCount int
 	if err := accounts.SQLDB().QueryRowContext(ctx, "SELECT COUNT(*) FROM audit_logs WHERE object_type='asset'").Scan(&auditCount); err != nil || auditCount != 2 {
 		t.Fatalf("audit missing: %d %v", auditCount, err)

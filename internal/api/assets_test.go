@@ -109,6 +109,16 @@ func TestAssetAPIRequiresLoginAndScopedWrites(t *testing.T) {
 	if got := send("GET", "/api/v1/assets", "", c, false); got.Code != 200 {
 		t.Fatalf("list: %d", got.Code)
 	}
+	paged := send("GET", "/api/v1/assets?page=1&page_size=1&q=192.0.2.20&sort=address", "", c, false)
+	var page PageListResponse[assets.Asset]
+	if err := json.Unmarshal(paged.Body.Bytes(), &page); paged.Code != 200 || err != nil || page.Total != 1 || len(page.Items) != 1 || page.Page != 1 || page.PageSize != 1 {
+		t.Fatalf("paged list: %d %+v %v", paged.Code, page, err)
+	}
+	for _, query := range []string{"?page=0", "?page=1&page=2", "?unknown=1", "?sort=drop_table"} {
+		if got := send("GET", "/api/v1/assets"+query, "", c, false); got.Code != http.StatusBadRequest {
+			t.Fatalf("invalid asset list query %s: %d %s", query, got.Code, got.Body.String())
+		}
+	}
 	updated := send("PATCH", "/api/v1/assets/"+asset.ID, `{"address":"192.0.2.22","businessGroup":"New Group","owner":"Engineer","requestedPorts":[8443]}`, c, true)
 	if updated.Code != 200 {
 		t.Fatalf("update: %d %s", updated.Code, updated.Body.String())

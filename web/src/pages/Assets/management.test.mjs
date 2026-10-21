@@ -28,4 +28,12 @@ test('asset registry exposes scan history and active risk summaries', () => {
   assert.match(assetsPage, /findingError.*未知/);
 });
 
+test('asset registry uses bounded Server pagination', () => {
+  assert.match(client, /assetsPage\(page:number,pageSize:number,search:string/);
+  assert.match(client, /page_size/);
+  assert.match(assetsPage, /assetPageSize/);
+  assert.match(assetsPage, /assetTotal/);
+  assert.match(assetsPage, /showSizeChanger:true/);
+});
+
 console.log('asset management UI contracts passed');

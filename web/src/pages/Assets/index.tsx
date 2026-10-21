@@ -1,5 +1,5 @@
 import { AssetImport } from './AssetImport';
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { DataTable } from '../../components/DataState';
 import { Alert, Button, Card, Form, Input, message, Modal, Select, Space, Tag, Typography, Drawer, Descriptions, Checkbox, Row, Col } from 'antd';
 import type { FormInstance } from 'antd';
@@ -32,7 +32,14 @@ const boolLabel=(v:boolean|null|undefined)=>v===true?'是':v===false?'否':'未�
 export const AssetsPage: React.FC = () => {
   const {user} = useAuth();
   const canEdit = user?.role === 'admin' || user?.role === 'security_engineer';
-  const {data:assets,setData:setAssets,loading,error} = useCollection('assets');
+  const [filter,setFilter] = useState('');
+  const [assetPage,setAssetPage] = useState(1);
+  const [assetPageSize,setAssetPageSize] = useState(10);
+  const [assetTotal,setAssetTotal] = useState(0);
+  const [assets,setAssets] = useState<Asset[]>([]);
+  const [assetLoading,setAssetLoading] = useState(true);
+  const [assetError,setAssetError] = useState<string|null>(null);
+  const [assetRevision,setAssetRevision] = useState(0);
   const {data:quarantines,setData:setQuarantines} = useCollection('port-quarantines');
   const {data:tasks,loading:taskLoading,error:taskError} = useCollection('tasks');
   const {data:findings,loading:findingLoading,error:findingError} = useCollection('findings');
@@ -46,13 +53,24 @@ export const AssetsPage: React.FC = () => {
   const [saving,setSaving] = useState(false);
   const [requestingCandidates,setRequestingCandidates] = useState(false);
   const [checkingAsset,setCheckingAsset] = useState('');
-  const [filter,setFilter] = useState('');
   const [exporting,setExporting] = useState(false);
   const [createForm] = Form.useForm<AssetForm>();
   const [editForm] = Form.useForm<AssetForm>();
   const createKind = Form.useWatch('kind',createForm) ?? 'host';
   const [testingForm,setTestingForm] = useState<'create'|'edit'|''>('');
-  const rows = useMemo(()=>assets.filter(a=>(a.address+' '+(a.name??'')+' '+a.businessGroup+' '+a.owner).toLowerCase().includes(filter.toLowerCase())),[assets,filter]);
+  useEffect(()=>{
+    const controller=new AbortController();
+    setAssetLoading(true);
+    void apiClient.assetsPage(assetPage,assetPageSize,filter,'-created_at',controller.signal).then(result=>{
+      if(controller.signal.aborted)return;
+      setAssets(result.items);setAssetTotal(result.total);setAssetError(null);
+    }).catch(cause=>{
+      if(!controller.signal.aborted){setAssets([]);setAssetTotal(0);setAssetError(cause instanceof Error?cause.message:'资产清册加载失败');}
+    }).finally(()=>{if(!controller.signal.aborted)setAssetLoading(false)});
+    return()=>controller.abort();
+  },[assetPage,assetPageSize,filter,assetRevision]);
+  useEffect(()=>{if(assetPage!==1)setAssetPage(1)},[filter]);
+  const rows = assets;
   const checkReachability = async(asset:Asset) => {
     if(asset.kind!=='host')return;
     setCheckingAsset(asset.id);
@@ -83,7 +101,7 @@ export const AssetsPage: React.FC = () => {
     onOk:async()=>{
       try {
         await apiClient.deleteAsset(asset.id);
-        setAssets(prev=>prev.filter(item=>item.id!==asset.id));
+        setAssetRevision(value=>value+1);
         if(candidateAsset?.id===asset.id)setCandidateAsset(null);
         message.success('资产已删除');
       } catch(cause) {message.error(cause instanceof Error?cause.message:'删除失败');throw cause;}
@@ -155,7 +173,7 @@ export const AssetsPage: React.FC = () => {
       const skippedPorts=expandPortRanges(input.skippedPorts);
       const asset=await apiClient.createAsset({...input,requestedPorts,skippedPorts});
       message.success('资产与明确输入的端口已保存；跳过端口不会下发给 Worker');
-      setAssets(prev=>[asset,...prev]);setCreateOpen(false);createForm.resetFields();
+      setAssetRevision(value=>value+1);setCreateOpen(false);createForm.resetFields();
       if(asset.kind==='host') void checkReachability(asset);
     } catch(e) {message.error(e instanceof Error?e.message:'登记失败');}
     finally {setSaving(false);}
@@ -203,7 +221,7 @@ export const AssetsPage: React.FC = () => {
   };
 
   return <div style={{display:'flex',flexDirection:'column',gap:16}}>
-    <CollectionNotice loading={loading||taskLoading} error={error||taskError}/>
+    <CollectionNotice loading={assetLoading||taskLoading} error={assetError||taskError}/>
     <Alert type="warning" showIcon
       message="端口探测只针对已登记的单台主机"
       description="在任务中心可选择常用 TCP 端口或输入范围（支持 1-65535），Worker 最多并发探测 64 个端口；也可填写排除端口。资产中已标记跳过或隔离的端口会自动排除。开放端口只作候选；提交申请并经运维审批后，才会出现在漏洞扫描目标中。"/>
@@ -220,10 +238,10 @@ export const AssetsPage: React.FC = () => {
     <Card title="资产登记台账" extra={<Space>
       <Input.Search placeholder="搜索地址、组或负责人" allowClear value={filter} onChange={e=>setFilter(e.target.value)} style={{width:220}}/>
       <Button icon={<DownloadOutlined/>} loading={exporting} onClick={()=>void exportAssets()}>导出 CSV</Button>
-      <AssetImport disabled={!canEdit} onImported={async()=>{const result=await apiClient.collection('assets');setAssets(result.items);}}/>
+      <AssetImport disabled={!canEdit} onImported={async()=>{setAssetRevision(value=>value+1)}}/>
       <Button type="primary" icon={<PlusOutlined/>} disabled={!canEdit} onClick={()=>setCreateOpen(true)}>登记资产</Button>
     </Space>}>
-      <DataTable<Asset> rowKey="id" dataSource={rows} loading={loading||taskLoading||findingLoading} tableLayout="fixed" scroll={{x:1900}} pagination={{pageSize:10}}
+      <DataTable<Asset> rowKey="id" dataSource={rows} loading={assetLoading||taskLoading||findingLoading} tableLayout="fixed" scroll={{x:1900}} pagination={{current:assetPage,pageSize:assetPageSize,total:assetTotal,showSizeChanger:true,pageSizeOptions:[10,20,50],showTotal:total=>`共 ${total} 个资产`,onChange:(page,size)=>{if(size!==assetPageSize){setAssetPageSize(size);setAssetPage(1)}else setAssetPage(page)}}}
         columns={[
           {title:'资产地址',dataIndex:'address',width:150,ellipsis:true,render:(value:string,asset:Asset)=><Space direction="vertical" size={0}><Button type="link" style={{padding:0}} onClick={()=>setDetailId(asset.id)}>{value}</Button><Text type="secondary">{asset.name||'未命名'}{asset.isCore?' · 核心':''}</Text></Space>},
           {title:'类型',dataIndex:'kind',width:86,render:(v:string)=><Tag>{v==='host'?'主机':'镜像仓库'}</Tag>},
