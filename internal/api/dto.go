@@ -6,6 +6,7 @@ import (
 	"scanner-platform/internal/assets"
 	"scanner-platform/internal/repo"
 	"scanner-platform/internal/rules"
+	"scanner-platform/internal/scanplans"
 	"scanner-platform/internal/scheduler"
 	"scanner-platform/internal/taskflow"
 	"time"
@@ -39,6 +40,7 @@ type EngineStatusDTO = taskflow.EngineStatus
 type NodeInfoDTO = repo.LocalNode
 type RuleBundleDTO = rules.Bundle
 type RuleJobDTO = rules.Job
+type ScanPlanDTO = scanplans.Plan
 type PortQuarantineDTO struct {
 	AssetID    string     `json:"assetId"`
 	Address    string     `json:"address"`

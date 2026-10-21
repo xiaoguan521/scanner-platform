@@ -6,11 +6,11 @@ import { CollectionNotice } from '../../api/CollectionNotice';
 import { apiClient, isDemoMode } from '../../api/client';
 import { archiveTask, cancelTask, createTask, deleteSchedule, deleteTask, exportTask, fetchScheduleRuns, fetchTask, fetchTaskLogs, pauseTask, restoreTask, resumeTask, saveSchedule, toggleSchedule, updateSchedule } from '../../api/runtime';
 import { useAuth } from '../../auth/AuthProvider';
-import { mockAssets, mockTasks } from '../../mock/data';
-import type { CustomRule, PortProbeRange, ScanTask, Schedule, ScheduleRun, TaskInput, ScanPolicy, TaskLog } from '../../types';
+import { mockAssets, mockScanPlans, mockTasks } from '../../mock/data';
+import type { CustomRule, PortProbeRange, ScanPlan, ScanTask, Schedule, ScheduleRun, TaskInput, ScanPolicy, TaskLog } from '../../types';
 
 import { parsePortRanges, showRanges, coversAllPorts, presetLabels, summarizePorts, compressPorts, previewProbePorts } from './policy';
-import { assertTaskSubmission, getScanPlanDefaults, isAutoTaskWizard, wizardStepFields } from './wizard';
+import { assertTaskSubmission, isAutoTaskWizard, wizardStepFields } from './wizard';
 const dayOptions=['周日','周一','周二','周三','周四','周五','周六'].map((label,value)=>({label,value}));
 const names:Record<string,string>={PENDING:'待领取',RUNNING:'执行中',WAITING_WINDOW:'等待时间窗',PAUSED:'已暂停',PAUSED_WINDOW:'窗口结束，等待恢复',COMPLETED:'已完成',CANCELED:'已取消',FAILED:'失败'};
 const scheduleRunNames:Record<string,string>={...names,DELETED:'任务记录已删除'};
@@ -21,10 +21,6 @@ const ApplicationCoverage:React.FC<{task:ScanTask}>=({task})=><>
   {task.applicationResults?.map(app=><Typography.Text key={app.alias} type={['collection_failed','analysis_failed'].includes(app.status)?'danger':undefined}>应用 {app.alias}：{applicationStatuses[app.status]??'状态未知'}；已分析 {app.analyzedCount} / 选中 {app.selectedCount} 个文件</Typography.Text>)}
 </>;
 type Values={engine:'auto'|'synthetic'|'nuclei'|'trivy'|'zap'|'port-probe';scheme:'http'|'https';inputPath:string;inputKind:'filesystem'|'image-archive'|'rootfs'|'artifact';targets:string[];assetId:string;scanPlan:'quick'|'standard';portPreset:'common'|'custom'|'common-and-custom'|'registered'|'full';intensity:'gentle'|'standard'|'aggressive';portRanges:string;portExclusions:string;opsApproved:boolean;customRuleIds:string[];mode:'now'|'schedule';name:string;nextRun:string;intervalMinutes:number;window:boolean;weekdays:number[];start:string;end:string;timeZone:string};
-const scanPlans=[
-  {id:'quick' as const,title:'快速检测',summary:'常见端口、温和速率、只读 HTTP 基线',detail:'适合首次确认资产暴露面，连接数和目标负载较低。',defaults:getScanPlanDefaults('quick')},
-  {id:'standard' as const,title:'标准检测',summary:'常见端口加可选自定义范围、标准速率',detail:'适合日常例检；仍只处理本次明确授权的端口。',defaults:getScanPlanDefaults('standard')},
-];
 function validateProbeRanges(text?:string):void{
   const ranges=parsePortRanges(text);
   if(ranges.length===0) throw new Error('此模式至少填写一个端口或端口范围');
@@ -34,6 +30,7 @@ export const TasksPage:React.FC=()=>{
   const [showArchived,setShowArchived]=useState(false);
   const {data:tasks,setData:setTasks,loading,error}=useCollection('tasks',mockTasks,showArchived?'?archived=true':'?archived=false');
   const {data:assets}=useCollection('assets',mockAssets);
+  const {data:scanPlans,loading:scanPlansLoading,error:scanPlansError}=useCollection('scan-plans',mockScanPlans);
   const {data:customRules}=useCollection('custom-rules',[] as CustomRule[]);
   const {data:schedules,setData:setSchedules,loading:scheduleLoading,error:scheduleError}=useCollection('schedules',[]);
   const [policy,setPolicy]=useState<ScanPolicy|null>(null);const [policyError,setPolicyError]=useState('');
@@ -94,7 +91,7 @@ export const TasksPage:React.FC=()=>{
     return()=>controller.abort();
   },[detailTask?.id]);
   const confirmFull=()=>new Promise<boolean>(resolve=>Modal.confirm({title:'确认全端口探测',content:'将对这台主机的 TCP 1–65535 端口发起连接（排除项会跳过）。按每次连接超时 1 秒、并发 16 粗略估算约 69 分钟；实际时间取决于速率、超时和响应，服务识别与漏洞检测会额外耗时。可能增加目标连接数及日志量，请确认维护窗口和授权范围。',okText:'确认全端口范围',cancelText:'返回修改',onOk:()=>resolve(true),onCancel:()=>resolve(false)}));
-  const choosePlan=(plan:'quick'|'standard')=>{form.setFieldsValue({scanPlan:plan,...getScanPlanDefaults(plan)});};
+  const choosePlan=(plan:ScanPlan)=>{if(plan.id!=='quick'&&plan.id!=='standard')return;form.setFieldsValue({scanPlan:plan.id,...plan.defaults});};
   const create=async(values:Values)=>{
     if(busy)return;
     setBusy(true);
@@ -170,7 +167,7 @@ export const TasksPage:React.FC=()=>{
     return `${task.completedChunks} / ${task.totalChunks}`;
   };
   return <div style={{display:'flex',flexDirection:'column',gap:16}}>
-    <CollectionNotice loading={loading||scheduleLoading} error={error||scheduleError}/>
+    <CollectionNotice loading={loading||scheduleLoading||scanPlansLoading} error={error||scheduleError||scanPlansError}/>
     <Alert type="info" showIcon message="自动综合扫描" description="选择一台已登记主机并填写端口范围或排除端口，平台会并发探测范围内的 TCP 端口，再对开放的 HTTP(S) 服务自动执行只读基线和选中的自定义规则。Worker 配置了该主机的 SSH 只读档案、known_hosts 和密钥文件或 SSH Agent，且 SSH 端口包含在本次范围时，还会临时采集 Linux 软件包快照并用本地 Trivy 漏洞库分析。如还配置了 Java/Go 应用的具体部署目录，将逐个采集支持的产物并分析其依赖。SSH 凭据和部署目录只留在 Worker。"/>
     <Card title="扫描任务" extra={<Space wrap>
       <Button type="primary" icon={<PlusOutlined/>} disabled={!canWrite} onClick={()=>openCreate('now')}>创建扫描任务</Button>
@@ -268,7 +265,7 @@ export const TasksPage:React.FC=()=>{
         {(engine==='nuclei'||engine==='zap')&&<Form.Item name="scheme" label="Web 协议" rules={[{required:true}]}><Select options={[{value:'http',label:'HTTP'},{value:'https',label:'HTTPS（允许自签名证书）'}]}/></Form.Item>}
         {engine==='trivy'?<><Form.Item name="inputKind" label="输入类型"><Select options={[{value:'rootfs',label:'Linux 系统包快照（rootfs）'},{value:'filesystem',label:'应用依赖清单（lock 文件）'},{value:'artifact',label:'已部署应用 / 中间件（JAR / Go 文件）'},{value:'image-archive',label:'Docker 镜像归档（docker save / OCI tar）'}]}/></Form.Item><Form.Item name="inputPath" label="Worker 本机输入路径（只填相对路径）" rules={[{required:true,message:'请填写已复制到 Worker 的输入目录'}]} extra="系统包示例：将已授权采集的输入目录（含隐藏校验文件）复制到 Worker 的 runtime/inputs/，此处填相对路径。"><Input placeholder="例如 lab-a/os" maxLength={240}/></Form.Item><Alert style={{marginBottom:16}} type="info" showIcon message="Trivy 读取 Worker 上的离线快照，不会自行联网或连接目标。"/></>:engine==='port-probe'||engine==='auto'?<>
           <div hidden={wizard&&wizardStep!==0}><Form.Item name="assetId" label="已登记主机" rules={[{required:true,message:'请选择一台已登记的主机'}]}><Select showSearch optionFilterProp="label" options={assets.filter(a=>a.kind==='host').map(a=>({value:a.id,label:`${a.address} · ${a.businessGroup}`}))} placeholder="只选择一台主机"/></Form.Item></div>
-          <div hidden={wizard&&wizardStep!==1}><Form.Item name="scanPlan" hidden><Input /></Form.Item><Form.Item label="预置扫描方案"><Space wrap align="start">{scanPlans.map(plan=><Card key={plan.id} size="small" hoverable onClick={()=>choosePlan(plan.id)} style={{width:250,cursor:'pointer',borderColor:selectedPlan===plan.id?'#1677ff':undefined,boxShadow:selectedPlan===plan.id?'0 0 0 1px #1677ff':undefined}}><Typography.Text strong>{plan.title}</Typography.Text><Typography.Paragraph style={{margin:'6px 0 2px'}}>{plan.summary}</Typography.Paragraph><Typography.Text type="secondary">{plan.detail}</Typography.Text></Card>)}</Space></Form.Item><Form.Item name="portPreset" label="探测范围"><Select onChange={v=>{if(v==='full')form.setFieldValue('intensity','gentle');}} options={Object.entries(presetLabels).map(([value,label])=>({value,label}))}/></Form.Item>
+          <div hidden={wizard&&wizardStep!==1}><Form.Item name="scanPlan" hidden><Input /></Form.Item><Form.Item label="预置扫描方案"><Space wrap align="start">{scanPlans.map(plan=><Card key={plan.id} size="small" hoverable onClick={()=>choosePlan(plan)} style={{width:250,cursor:'pointer',borderColor:selectedPlan===plan.id?'#1677ff':undefined,boxShadow:selectedPlan===plan.id?'0 0 0 1px #1677ff':undefined}}><Typography.Text strong>{plan.title}</Typography.Text><Typography.Paragraph style={{margin:'6px 0 2px'}}>{plan.summary}</Typography.Paragraph><Typography.Text type="secondary">{plan.detail}</Typography.Text></Card>)}</Space></Form.Item><Form.Item name="portPreset" label="探测范围"><Select onChange={v=>{if(v==='full')form.setFieldValue('intensity','gentle');}} options={Object.entries(presetLabels).map(([value,label])=>({value,label}))}/></Form.Item>
           {(portPreset==='common'||portPreset==='common-and-custom')&&<Alert style={{marginBottom:16}} showIcon type={policyError?'error':'info'} message={policyError?'常见端口策略读取失败':`常见端口来自系统策略：${policy?.commonPorts?.length??'—'} 个`} description={(policy?summarizePorts(policy.commonPorts):null)||policyError||'由 Server 统一确定，创建任务时冻结策略。'}/>}
           {portPreset==='full'&&<Alert style={{marginBottom:16}} showIcon type="warning" message="全端口探测耗时较长，请预留维护窗口" description="最多 65535 个 TCP 端口，默认使用温和强度；提交时需要再次确认。排除和隔离端口始终跳过。"/>}
           <Form.Item name="intensity" label="扫描强度"><Select options={[{value:'gentle',label:'温和 · 较低并发和请求速率'},{value:'standard',label:'标准'},{value:'aggressive',label:'积极 · 连接数和目标负载较高'}]}/></Form.Item>

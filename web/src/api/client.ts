@@ -1,5 +1,5 @@
 import type { AssetImportPreview } from '../pages/Assets/import';
-import type { Asset, AuthorizedScope, Finding, NodeInfo, PortQuarantine, RuleBundle, ScanTask, User, UserRole, PortRequest, TimeWindow, ApprovalDecision, Schedule, RuleJob, CustomRule, AssetProfile, KnowledgeEntry, DetectionCapability, VulnerabilityCategory, ScanPolicy } from '../types';
+import type { Asset, AuthorizedScope, Finding, NodeInfo, PortQuarantine, RuleBundle, ScanTask, User, UserRole, PortRequest, TimeWindow, ApprovalDecision, Schedule, RuleJob, CustomRule, AssetProfile, KnowledgeEntry, DetectionCapability, VulnerabilityCategory, ScanPolicy, ScanPlan } from '../types';
 
 export const dataMode: 'demo' | 'server' = import.meta.env.VITE_DATA_MODE === 'server' ? 'server' : 'demo';
 export const isDemoMode = dataMode === 'demo';
@@ -51,6 +51,7 @@ export interface Resources {
   knowledge: KnowledgeEntry;
   'detection-capabilities': DetectionCapability;
   'vulnerability-categories': VulnerabilityCategory;
+  'scan-plans': ScanPlan;
 }
 export class ApiRequestError extends Error {
   constructor(public readonly status: number, message: string) {

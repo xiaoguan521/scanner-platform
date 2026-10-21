@@ -56,6 +56,22 @@ export interface TimeWindow {
   timeZone: string;
 }
 
+export interface ScanPlan {
+  id: 'quick' | 'standard';
+  title: string;
+  summary: string;
+  detail: string;
+  kind: 'PRESET';
+  readOnly: boolean;
+  defaults: {
+    portPreset: 'common' | 'common-and-custom';
+    intensity: 'gentle' | 'standard' | 'aggressive';
+    portRanges: string;
+    portExclusions: string;
+    customRuleIds: string[];
+  };
+}
+
 export type ReviewDecision = 'APPROVE' | 'REJECT';
 export type ReviewStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
 export interface ApprovalDecision {

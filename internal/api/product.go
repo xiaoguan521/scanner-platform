@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"scanner-platform/internal/findings"
 	"scanner-platform/internal/repo"
+	"scanner-platform/internal/scanplans"
 	"scanner-platform/internal/taskflow"
 )
 
@@ -24,6 +25,10 @@ func registerProductHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui fu
 	mux.HandleFunc("GET /api/v1/detection-capabilities", ui(false, func(w http.ResponseWriter, r *http.Request) {
 		items := findings.Capabilities()
 		runtimeJSON(w, 200, ListResponse[findings.Capability]{Items: items, Total: len(items)})
+	}))
+	mux.HandleFunc("GET /api/v1/scan-plans", ui(false, func(w http.ResponseWriter, r *http.Request) {
+		items := scanplans.Catalog()
+		runtimeJSON(w, http.StatusOK, ListResponse[scanplans.Plan]{Items: items, Total: len(items)})
 	}))
 	mux.HandleFunc("GET /api/v1/vulnerability-categories", ui(false, func(w http.ResponseWriter, r *http.Request) {
 		items := findings.Categories()

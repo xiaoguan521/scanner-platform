@@ -2149,6 +2149,25 @@ paths:
               schema: {"$ref": "#/components/schemas/ScanPolicy"}
         "400": {description: Invalid input}
         "403": {description: Insufficient role or invalid same-origin mutation header}
+  "/api/v1/scan-plans":
+    get:
+      summary: "List read-only product scan presets"
+      description: "Returns product-language presets. The defaults do not expose engine command-line flags; selecting one still sends the final bounded plan through normal Server validation."
+      security: [{sessionCookie: []}]
+      responses:
+        "200":
+          description: "Read-only scan presets"
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, total]
+                properties:
+                  items:
+                    type: array
+                    items: {"$ref": "#/components/schemas/ScanPlan"}
+                  total: {type: integer}
+        "401": {description: Unauthenticated}
   "/api/v1/knowledge":
     get:
       summary: "List normalized imported vulnerability knowledge"
@@ -4183,6 +4202,26 @@ components:
         quarantineThreshold: {"type": "integer", "minimum": 1, "maximum": 3}
         discoveryAttempts: {"type": "integer", "minimum": 1, "maximum": 3}
         fixedThreshold: {"type": "integer", "minimum": 1, "maximum": 3}
+    ScanPlanDefaults:
+      type: object
+      required: [portPreset, intensity, portRanges, portExclusions, customRuleIds]
+      properties:
+        portPreset: {type: string, enum: [common, common-and-custom]}
+        intensity: {type: string, enum: [gentle, standard, aggressive]}
+        portRanges: {type: string}
+        portExclusions: {type: string}
+        customRuleIds: {type: array, items: {type: string}}
+    ScanPlan:
+      type: object
+      required: [id, title, summary, detail, kind, readOnly, defaults]
+      properties:
+        id: {type: string, enum: [quick, standard]}
+        title: {type: string}
+        summary: {type: string}
+        detail: {type: string}
+        kind: {type: string, enum: [PRESET]}
+        readOnly: {type: boolean}
+        defaults: {"$ref": "#/components/schemas/ScanPlanDefaults"}
     VersionRange:
       type: object
       properties:

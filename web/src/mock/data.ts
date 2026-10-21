@@ -5,6 +5,7 @@ import {
   NodeInfo,
   PortQuarantine,
   RuleBundle,
+  ScanPlan,
   ScanTask,
 } from '../types';
 
@@ -111,6 +112,11 @@ export const mockScopes: AuthorizedScope[] = [
     expiresAt: '2026-11-30T23:59:59+08:00',
     isActive: true,
   },
+];
+
+export const mockScanPlans: ScanPlan[] = [
+  { id: 'quick', title: '快速检测', summary: '常见端口、温和速率、只读 HTTP 基线', detail: '适合首次确认资产暴露面，连接数和目标负载较低。', kind: 'PRESET', readOnly: true, defaults: { portPreset: 'common', intensity: 'gentle', portRanges: '', portExclusions: '', customRuleIds: [] } },
+  { id: 'standard', title: '标准检测', summary: '常见端口加可选自定义范围、标准速率', detail: '适合日常例检；仍只处理本次明确授权的端口。', kind: 'PRESET', readOnly: true, defaults: { portPreset: 'common-and-custom', intensity: 'standard', portRanges: '', portExclusions: '', customRuleIds: [] } },
 ];
 
 export const mockTasks: ScanTask[] = [
