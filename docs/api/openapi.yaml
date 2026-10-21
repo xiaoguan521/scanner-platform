@@ -1676,6 +1676,56 @@ paths:
           type: string
           enum:
           - XMLHttpRequest
+  "/api/v1/findings/batch-assignment":
+    post:
+      summary: Atomically assign explicitly selected findings
+      description: Admin/security_engineer with CSRF guard. All 1–100 selected IDs and expected assignee snapshots must match; a stale selection, duplicate/missing ID, inactive assignee or audit failure aborts the entire batch. Empty assigneeId clears assignment. The operation does not change lifecycle status, asset owner, notes or fingerprints.
+      security:
+      - sessionCookie: []
+      parameters:
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema: {type: string, enum: [XMLHttpRequest]}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [items, assigneeId]
+              properties:
+                items:
+                  type: array
+                  minItems: 1
+                  maxItems: 100
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [id, expectedAssigneeId]
+                    properties:
+                      id: {type: string, minLength: 1, maxLength: 256}
+                      expectedAssigneeId: {type: string, maxLength: 128}
+                assigneeId: {type: string, maxLength: 128}
+      responses:
+        '200':
+          description: All selected findings assigned
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [updated, items]
+                properties:
+                  updated: {type: integer, minimum: 1}
+                  items:
+                    type: array
+                    items: {"$ref": "#/components/schemas/Finding"}
+        '400': {description: Invalid input, inactive writer or no-op assignment}
+        '401': {description: Authentication required}
+        '403': {description: Forbidden or CSRF guard missing}
+        '409': {description: Missing finding, stale assignee or concurrent conflict; batch unchanged}
+        '500': {description: Storage or audit failure; batch unchanged}
   "/api/v1/findings/assignees":
     get:
       summary: Read minimal active finding assignee candidates
@@ -1747,6 +1797,32 @@ paths:
           description: Finding missing
         '409':
           description: Concurrent update conflict
+  "/api/v1/findings/{id}/assignments":
+    get:
+      summary: Read finding assignment history
+      description: Authenticated read access. Returns only assignee IDs, actor ID and timestamps; names and account metadata are not copied into the history projection.
+      security:
+      - sessionCookie: []
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema: {type: string}
+      responses:
+        '200':
+          description: Chronological assignment history
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, total]
+                properties:
+                  items:
+                    type: array
+                    items: {"$ref": "#/components/schemas/FindingAssignmentEvent"}
+                  total: {type: integer, minimum: 0}
+        '401': {description: Authentication required}
+        '404': {description: Finding missing}
   "/api/v1/findings/{id}/notes":
     parameters:
     - in: path
@@ -3793,6 +3869,24 @@ components:
           type: string
         name:
           type: string
+    FindingAssignmentEvent:
+      type: object
+      description: Immutable assignment transition projection; only IDs, actor and timestamp are retained.
+      required: [id, findingId, actor, createdAt]
+      properties:
+        id:
+          type: string
+        findingId:
+          type: string
+        fromAssigneeId:
+          type: string
+        toAssigneeId:
+          type: string
+        actor:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
     FindingNote:
       type: object
       required: [id, findingId, actor, actorName, body, createdAt]

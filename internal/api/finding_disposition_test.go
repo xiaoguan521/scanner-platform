@@ -187,6 +187,32 @@ func TestFindingDispositionAPIAuthValidationAndEvents(t *testing.T) {
 			t.Fatalf("work %s %s %s: %d %s", tc.method, tc.suffix, tc.role, res.Code, res.Body.String())
 		}
 	}
+	assignmentBatchPath := "/api/v1/findings/batch-assignment"
+	assignmentBatchBody := `{"items":[{"id":"` + id + `","expectedAssigneeId":""}],"assigneeId":"` + admin.ID + `"}`
+	for _, tc := range []struct {
+		body, role string
+		guard      bool
+		want       int
+	}{
+		{assignmentBatchBody, "", true, 401},
+		{assignmentBatchBody, "viewer", true, 403},
+		{assignmentBatchBody, "admin", false, 403},
+		{`{"items":[],"assigneeId":"` + admin.ID + `"}`, "admin", true, 400},
+		{`{"items":[{"id":"` + id + `","expectedAssigneeId":"","extra":true}],"assigneeId":"` + admin.ID + `"}`, "admin", true, 400},
+	} {
+		res := send("POST", assignmentBatchPath, tc.body, cookies[tc.role], tc.guard)
+		if res.Code != tc.want {
+			t.Fatalf("batch assignment %s: %d %s", tc.role, res.Code, res.Body.String())
+		}
+	}
+	if res := send("POST", assignmentBatchPath, assignmentBatchBody, cookies["security_engineer"], true); res.Code != 200 {
+		t.Fatalf("batch assignment: %d %s", res.Code, res.Body.String())
+	}
+	assignmentHistory := send("GET", path+"/assignments", "", cookies["viewer"], false)
+	var assignmentEvents ListResponse[repo.FindingAssignmentEvent]
+	if err := json.Unmarshal(assignmentHistory.Body.Bytes(), &assignmentEvents); assignmentHistory.Code != 200 || err != nil || assignmentEvents.Total != 1 || assignmentEvents.Items[0].ToAssigneeID != admin.ID {
+		t.Fatalf("assignment history: %d %+v %v", assignmentHistory.Code, assignmentEvents, err)
+	}
 	if res := send("GET", "/api/v1/findings/assignees", "", nil, false); res.Code != 401 {
 		t.Fatal(res.Code)
 	}
@@ -202,6 +228,9 @@ func TestFindingDispositionAPIAuthValidationAndEvents(t *testing.T) {
 	}
 	if strings.Contains(candidatesResponse.Body.String(), "password") || strings.Contains(candidatesResponse.Body.String(), "isActive") {
 		t.Fatal("account metadata exposed")
+	}
+	if res := send("PUT", path+"/assignee", `{"assigneeId":""}`, cookies["admin"], true); res.Code != 200 {
+		t.Fatal("clear batch assignment", res.Code, res.Body.String())
 	}
 	assignment, _ := json.Marshal(map[string]string{"assigneeId": admin.ID})
 	if res := send("PUT", path+"/assignee", string(assignment), cookies["security_engineer"], true); res.Code != 200 {

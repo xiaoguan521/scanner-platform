@@ -104,6 +104,50 @@ func TestFindingNotesAppendValidationConcurrencyAndAudit(t *testing.T) {
 	}
 }
 
+func TestFindingBatchAssignmentIsAtomicAndExposesHistory(t *testing.T) {
+	store, actor, first := dispositionFixture(t)
+	ctx := context.Background()
+	if _, err := store.db.Exec(`INSERT INTO users(id,username,role,is_active,password_hash) VALUES(?,?,?,?,?)`, "engineer", "engineer", "security_engineer", 1, "fixture-unused"); err != nil {
+		t.Fatal(err)
+	}
+	second := first
+	second.ID = "batch-assignment-second"
+	second.Fingerprint = "batch-assignment-second-fingerprint"
+	secondTask, err := store.CreateSyntheticTask(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second.TaskID = secondTask.ID
+	secondRaw, err := json.Marshal(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`INSERT INTO security_findings(id,task_id,data) VALUES(?,?,?)`, second.ID, second.TaskID, string(secondRaw)); err != nil {
+		t.Fatal(err)
+	}
+	in := FindingBatchAssignment{AssigneeID: "engineer", Items: []FindingBatchAssignmentItem{
+		{ID: first.ID, ExpectedAssigneeID: ""},
+		{ID: second.ID, ExpectedAssigneeID: ""},
+	}}
+	updated, err := store.BatchAssignFindings(ctx, in, actor)
+	if err != nil || len(updated) != 2 || updated[0].AssigneeID != "engineer" || updated[1].AssigneeID != "engineer" {
+		t.Fatalf("updated=%+v err=%v", updated, err)
+	}
+	events, err := store.ListFindingAssignmentEvents(ctx, first.ID)
+	if err != nil || len(events) != 1 || events[0].ToAssigneeID != "engineer" || events[0].FromAssigneeID != "" {
+		t.Fatalf("events=%+v err=%v", events, err)
+	}
+	stale := in
+	stale.Items = []FindingBatchAssignmentItem{{ID: first.ID, ExpectedAssigneeID: ""}, {ID: second.ID, ExpectedAssigneeID: "engineer"}}
+	if _, err := store.BatchAssignFindings(ctx, stale, actor); !errors.Is(err, ErrTaskConflict) {
+		t.Fatalf("stale batch err=%v", err)
+	}
+	var count int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM finding_assignment_events`).Scan(&count); err != nil || count != 2 {
+		t.Fatalf("partial assignment events=%d err=%v", count, err)
+	}
+}
+
 func TestFindingWorkAuditFailureRollsBack(t *testing.T) {
 	store, actor, f := dispositionFixture(t)
 	ctx := context.Background()

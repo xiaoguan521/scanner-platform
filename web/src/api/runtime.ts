@@ -1,5 +1,5 @@
 import { requestBlob, requestJSON } from './client';
-import type { ScanPlan, ScanPlanInput, ScanTask, TaskInput, Schedule, ScheduleRun, Finding, FindingEvent, FindingAssignee, FindingNote, FindingRetest, RuleJob, CustomRule, KnowledgeEntry, TaskLog } from '../types';
+import type { ScanPlan, ScanPlanInput, ScanTask, TaskInput, Schedule, ScheduleRun, Finding, FindingEvent, FindingAssignee, FindingAssignmentEvent, FindingNote, FindingRetest, RuleJob, CustomRule, KnowledgeEntry, TaskLog } from '../types';
 
 export const createTask = (input:TaskInput) => requestJSON<ScanTask>('/api/v1/tasks','POST',input);
 export const createScanPlan = (input:ScanPlanInput) => requestJSON<ScanPlan>('/api/v1/scan-plans','POST',input);
@@ -42,6 +42,8 @@ export const importKnowledge = (items:KnowledgeEntry[]) => requestJSON<{imported
 
 export const fetchFindingAssignees = (signal?:AbortSignal) => requestJSON<{items:FindingAssignee[];total:number}>('/api/v1/findings/assignees','GET',undefined,signal);
 export const assignFinding = (id:string,assigneeId:string) => requestJSON<Finding>('/api/v1/findings/'+encodeURIComponent(id)+'/assignee','PUT',{assigneeId});
+export const fetchFindingAssignments = (id:string,signal?:AbortSignal) => requestJSON<{items:FindingAssignmentEvent[];total:number}>('/api/v1/findings/'+encodeURIComponent(id)+'/assignments','GET',undefined,signal);
+export const batchAssignFindings = (items:{id:string;expectedAssigneeId:string}[],assigneeId:string) => requestJSON<{updated:number;items:Finding[]}>('/api/v1/findings/batch-assignment','POST',{items,assigneeId});
 export const fetchFindingNotes = (id:string,signal?:AbortSignal) => requestJSON<{items:FindingNote[];total:number}>('/api/v1/findings/'+encodeURIComponent(id)+'/notes','GET',undefined,signal);
 export const addFindingNote = (id:string,body:string) => requestJSON<FindingNote>('/api/v1/findings/'+encodeURIComponent(id)+'/notes','POST',{body});
 export const createFindingRetest = (id:string) => requestJSON<{task:ScanTask;retest:FindingRetest}>('/api/v1/findings/'+encodeURIComponent(id)+'/retest','POST',{});

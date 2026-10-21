@@ -47,6 +47,22 @@ func registerFindingWorkHandlers(mux *http.ServeMux, store *repo.RuntimeStore, u
 			runtimeJSON(w, 200, item)
 		}
 	}))
+	mux.HandleFunc("GET /api/v1/findings/{id}/assignments", guarded(false, func(w http.ResponseWriter, r *http.Request) {
+		items, err := store.ListFindingAssignmentEvents(r.Context(), r.PathValue("id"))
+		if !runtimeStoreError(w, err) {
+			runtimeJSON(w, 200, ListResponse[repo.FindingAssignmentEvent]{Items: items, Total: len(items)})
+		}
+	}))
+	mux.HandleFunc("POST /api/v1/findings/batch-assignment", guarded(true, func(w http.ResponseWriter, r *http.Request) {
+		var body repo.FindingBatchAssignment
+		if !runtimeDecode(w, r, &body) {
+			return
+		}
+		items, err := store.BatchAssignFindings(r.Context(), body, actor(r))
+		if !runtimeStoreError(w, err) {
+			runtimeJSON(w, http.StatusOK, map[string]any{"updated": len(items), "items": items})
+		}
+	}))
 	mux.HandleFunc("GET /api/v1/findings/{id}/notes", guarded(false, func(w http.ResponseWriter, r *http.Request) {
 		items, err := store.ListFindingNotes(r.Context(), r.PathValue("id"))
 		if !runtimeStoreError(w, err) {

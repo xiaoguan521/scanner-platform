@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -26,6 +27,25 @@ type FindingNote struct {
 	ActorName string    `json:"actorName"`
 	Body      string    `json:"body"`
 	CreatedAt time.Time `json:"createdAt"`
+}
+
+type FindingAssignmentEvent struct {
+	ID             string    `json:"id"`
+	FindingID      string    `json:"findingId"`
+	FromAssigneeID string    `json:"fromAssigneeId,omitempty"`
+	ToAssigneeID   string    `json:"toAssigneeId,omitempty"`
+	Actor          string    `json:"actor"`
+	CreatedAt      time.Time `json:"createdAt"`
+}
+
+type FindingBatchAssignmentItem struct {
+	ID                 string `json:"id"`
+	ExpectedAssigneeID string `json:"expectedAssigneeId"`
+}
+
+type FindingBatchAssignment struct {
+	Items      []FindingBatchAssignmentItem `json:"items"`
+	AssigneeID string                       `json:"assigneeId"`
 }
 
 func (s *RuntimeStore) initFindingWork(ctx context.Context) error {
@@ -191,4 +211,108 @@ func (s *RuntimeStore) ListFindingNotes(ctx context.Context, id string) ([]Findi
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+func (s *RuntimeStore) ListFindingAssignmentEvents(ctx context.Context, id string) ([]FindingAssignmentEvent, error) {
+	var exists int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM security_findings WHERE id=?`, id).Scan(&exists); err != nil {
+		return nil, err
+	}
+	if exists == 0 {
+		return nil, ErrTaskNotFound
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id,finding_id,from_assignee,to_assignee,actor,created_at
+FROM finding_assignment_events WHERE finding_id=? ORDER BY created_at,id`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []FindingAssignmentEvent{}
+	for rows.Next() {
+		var item FindingAssignmentEvent
+		var timestamp string
+		if err := rows.Scan(&item.ID, &item.FindingID, &item.FromAssigneeID, &item.ToAssigneeID, &item.Actor, &timestamp); err != nil {
+			return nil, err
+		}
+		item.CreatedAt, err = time.Parse(time.RFC3339Nano, timestamp)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+// BatchAssignFindings updates only the explicitly selected findings. The
+// expected assignee snapshot makes stale UI selections fail closed, while the
+// single transaction prevents a partial assignment batch.
+func (s *RuntimeStore) BatchAssignFindings(ctx context.Context, in FindingBatchAssignment, actor string) ([]taskflow.Finding, error) {
+	if actor == "" || len(in.Items) == 0 || len(in.Items) > 100 || len(in.AssigneeID) > 128 || strings.ContainsFunc(in.AssigneeID, unicode.IsControl) {
+		return nil, ErrInvalidTask
+	}
+	items := append([]FindingBatchAssignmentItem(nil), in.Items...)
+	seen := make(map[string]bool, len(items))
+	for _, item := range items {
+		if strings.TrimSpace(item.ID) == "" || len(item.ID) > 256 || seen[item.ID] || len(item.ExpectedAssigneeID) > 128 || strings.ContainsFunc(item.ExpectedAssigneeID, unicode.IsControl) {
+			return nil, ErrInvalidTask
+		}
+		seen[item.ID] = true
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].ID < items[j].ID })
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	if _, err := findingWorkUser(ctx, tx, actor); err != nil {
+		return nil, err
+	}
+	var assignee FindingAssignee
+	if in.AssigneeID != "" {
+		assignee, err = findingWorkUser(ctx, tx, in.AssigneeID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	updated := make(map[string]taskflow.Finding, len(items))
+	for _, item := range items {
+		finding, raw, err := findingWorkRecord(ctx, tx, item.ID)
+		if err != nil {
+			return nil, err
+		}
+		if finding.AssigneeID != item.ExpectedAssigneeID || (finding.AssigneeID == assignee.ID && finding.AssigneeName == assignee.Name) {
+			return nil, ErrTaskConflict
+		}
+		previous := finding.AssigneeID
+		finding.AssigneeID, finding.AssigneeName = assignee.ID, assignee.Name
+		data, err := json.Marshal(finding)
+		if err != nil {
+			return nil, err
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE security_findings SET data=? WHERE id=? AND data=?`, string(data), item.ID, raw)
+		if err != nil {
+			return nil, err
+		}
+		if n, _ := result.RowsAffected(); n != 1 {
+			return nil, ErrTaskConflict
+		}
+		eventID := "assignment-" + randomLocalID()
+		createdAt := time.Now().UTC().Format(time.RFC3339Nano)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO finding_assignment_events(id,finding_id,from_assignee,to_assignee,actor,created_at) VALUES(?,?,?,?,?,?)`, eventID, item.ID, previous, assignee.ID, actor, createdAt); err != nil {
+			return nil, err
+		}
+		detail, _ := json.Marshal(map[string]string{"eventId": eventID, "fromAssigneeId": previous, "toAssigneeId": assignee.ID})
+		if err := logLocal(ctx, tx, actor, "finding_assignee_changed", "finding", item.ID, string(detail)); err != nil {
+			return nil, err
+		}
+		updated[item.ID] = finding
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	result := make([]taskflow.Finding, 0, len(items))
+	for _, item := range in.Items {
+		result = append(result, updated[item.ID])
+	}
+	return result, nil
 }

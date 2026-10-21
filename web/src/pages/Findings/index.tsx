@@ -20,10 +20,10 @@ import {
   message,
 } from 'antd';
 import { SafetyCertificateOutlined } from '@ant-design/icons';
-import { Finding, FindingEvent, FindingAssignee, FindingNote, FindingRetest, FindingSeverity, FindingStatus } from '../../types';
+import { Finding, FindingAssignmentEvent, FindingEvent, FindingAssignee, FindingNote, FindingRetest, FindingSeverity, FindingStatus } from '../../types';
 import { FindingStatusTag, SeverityTag } from '../../components/Semantic';
 import { useAuth } from '../../auth/AuthProvider';
-import { batchFindingDisposition, updateFinding, fetchFindingEvents, fetchFindingAssignees, assignFinding, fetchFindingNotes, addFindingNote, createFindingRetest, fetchFindingRetests } from '../../api/runtime';
+import { batchAssignFindings, batchFindingDisposition, updateFinding, fetchFindingEvents, fetchFindingAssignees, fetchFindingAssignments, assignFinding, fetchFindingNotes, addFindingNote, createFindingRetest, fetchFindingRetests } from '../../api/runtime';
 import { useCollection } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
 
@@ -32,7 +32,7 @@ import { FindingFilters, readFindingFilters, writeFindingFilters } from './filte
 import { detailText, detailList, detailIdentifiers, selectedFindingForDrawer } from './drawer';
 import { canAcceptRisk, acceptanceInput } from './disposition';
 import { findingNoteInput } from './work';
-import { FindingSelection, batchSelectionChanged, batchTransitionAllowed, updateBatchSelection } from './batch';
+import { FindingSelection, batchAssignmentSelectionChanged, batchSelectionChanged, batchTransitionAllowed, updateBatchSelection } from './batch';
 import { retestIsActive, retestStatusLabel } from './retest';
 const { Text } = Typography;
 
@@ -87,6 +87,7 @@ export const FindingsPage: React.FC = () => {
   },[selectedFindingId,retestRevision]);
 
   const [assignees,setAssignees]=useState<FindingAssignee[]>([]);
+  const [assignmentEvents,setAssignmentEvents]=useState<FindingAssignmentEvent[]>([]);
   const [assigneeId,setAssigneeId]=useState('');
   const [notes,setNotes]=useState<FindingNote[]>([]);
   const [noteBody,setNoteBody]=useState('');
@@ -94,14 +95,23 @@ export const FindingsPage: React.FC = () => {
   const [workSaving,setWorkSaving]=useState(false);
   const [workRevision,setWorkRevision]=useState(0);
   useEffect(()=>{
-    setNotes([]);setNoteBody('');setAssignees([]);setWorkError('');
+    setNotes([]);setNoteBody('');setAssignees([]);setAssignmentEvents([]);setWorkError('');
     if(!selectedFindingId)return;
     const controller=new AbortController();
-    void Promise.all([canWrite?fetchFindingAssignees(controller.signal):Promise.resolve({items:[] as FindingAssignee[],total:0}),fetchFindingNotes(selectedFindingId,controller.signal)]).then(([users,result])=>{
-      if(!controller.signal.aborted){setAssignees(users.items);setNotes(result.items)}
+    void Promise.all([canWrite?fetchFindingAssignees(controller.signal):Promise.resolve({items:[] as FindingAssignee[],total:0}),fetchFindingNotes(selectedFindingId,controller.signal),fetchFindingAssignments(selectedFindingId,controller.signal)]).then(([users,result,history])=>{
+      if(!controller.signal.aborted){setAssignees(users.items);setNotes(result.items);setAssignmentEvents(history.items)}
     }).catch(()=>{if(!controller.signal.aborted)setWorkError('指派候选或备注加载失败，请关闭详情后重试')});
     return()=>controller.abort();
   },[selectedFindingId,workRevision,canWrite]);
+
+  const [batchAssignees,setBatchAssignees]=useState<FindingAssignee[]>([]);
+  const [batchAssigneeError,setBatchAssigneeError]=useState('');
+  useEffect(()=>{
+    if(!canWrite){setBatchAssignees([]);setBatchAssigneeError('');return}
+    const controller=new AbortController();
+    void fetchFindingAssignees(controller.signal).then(result=>{if(!controller.signal.aborted){setBatchAssignees(result.items);setBatchAssigneeError('')}}).catch(()=>{if(!controller.signal.aborted)setBatchAssigneeError('批量指派候选加载失败')});
+    return()=>controller.abort();
+  },[canWrite]);
   const saveAssignment=async(id:string)=>{
     setWorkSaving(true);
     try{const item=await assignFinding(id,assigneeId);setFindings(previous=>previous.map(f=>f.id===id?item:f));message.success('指派已保存并记录审计')}
@@ -132,8 +142,13 @@ export const FindingsPage: React.FC = () => {
   const [batchReason,setBatchReason]=useState('');
   const [batchUntil,setBatchUntil]=useState('');
   const [batchSaving,setBatchSaving]=useState(false);
+  const [batchAssignOpen,setBatchAssignOpen]=useState(false);
+  const [batchAssigneeId,setBatchAssigneeId]=useState('');
+  const [batchAssignSaving,setBatchAssignSaving]=useState(false);
   const selectionChanged=batchSelectionChanged(batchSelection,findings);
   const batchAllowed=batchSelection.length>0&&batchSelection.length<=100&&!selectionChanged&&batchSelection.every(item=>batchTransitionAllowed(item.expectedStatus,batchStatus));
+  const assignmentSelectionChanged=batchAssignmentSelectionChanged(batchSelection,findings);
+  const batchAssignmentAllowed=canWrite&&batchSelection.length>0&&batchSelection.length<=100&&!assignmentSelectionChanged&&!batchAssigneeError&&batchAssigneeId!=='';
   const saveBatch=async()=>{
     if(!canWrite||!batchAllowed)return;
     try{
@@ -145,6 +160,17 @@ export const FindingsPage: React.FC = () => {
       setBatchSelection([]);setBatchOpen(false);setBatchReason('');setBatchUntil('');setEventRevision(n=>n+1);
       message.success(`已更新 ${result.updated} 项并记录审计`);
     }catch(e){message.error(`${e instanceof Error?e.message:String(e)}；整批未保存，请核对当前状态后重新选择`)}finally{setBatchSaving(false)}
+  };
+  const saveBatchAssignment=async()=>{
+    if(!batchAssignmentAllowed)return;
+    setBatchAssignSaving(true);
+    try{
+      const result=await batchAssignFindings(batchSelection.map(item=>({id:item.id,expectedAssigneeId:item.expectedAssigneeId??''})),batchAssigneeId);
+      const updated=new Map(result.items.map(item=>[item.id,item]));
+      setFindings(previous=>previous.map(item=>updated.get(item.id)??item));
+      setBatchSelection([]);setBatchAssignOpen(false);setBatchAssigneeId('');
+      message.success(`已批量指派 ${result.updated} 项并记录审计`);
+    }catch(e){message.error(`${e instanceof Error?e.message:String(e)}；整批未保存，请核对当前指派状态后重试`)}finally{setBatchAssignSaving(false)}
   };
 
   const filteredFindings = findings.filter((f) => {
@@ -251,8 +277,12 @@ export const FindingsPage: React.FC = () => {
             {value:'IN_PROGRESS',label:'标记修复中'}, {value:'FALSE_POSITIVE',label:'标记误报'}, {value:'ACCEPTED_RISK',label:'接受风险'}, {value:'OPEN',label:'恢复待处理'},
           ]}/>
           <Button type="primary" disabled={!canWrite||!batchAllowed||batchSaving} onClick={()=>{setBatchReason('');setBatchUntil('');setBatchOpen(true)}}>批量处置</Button>
+          <Select aria-label="批量指派对象" allowClear placeholder="批量指派给" value={batchAssigneeId||undefined} onChange={value=>setBatchAssigneeId(value??'')} disabled={!canWrite||batchAssignSaving||Boolean(batchAssigneeError)} style={{width:180}} options={batchAssignees.map(item=>({value:item.id,label:item.name}))}/>
+          <Button disabled={!batchAssignmentAllowed||batchAssignSaving} onClick={()=>setBatchAssignOpen(true)}>批量指派</Button>
           <Button disabled={!batchSelection.length||batchSaving} onClick={()=>setBatchSelection([])}>清空选择</Button>
           {batchSelection.length>0&&!batchAllowed&&<Text type="warning">{selectionChanged?'已选记录状态已变化，请清空后重新选择':'选中记录包含不允许的状态流转，请调整选择或目标状态'}</Text>}
+          {batchSelection.length>0&&assignmentSelectionChanged&&<Text type="warning">已选记录的指派状态已变化，请清空后重新选择</Text>}
+          {batchAssigneeError&&<Text type="warning">{batchAssigneeError}</Text>}
         </Space>
         <DataTable
           dataSource={filteredFindings}
@@ -390,6 +420,12 @@ export const FindingsPage: React.FC = () => {
           </>}
         </Space>
       </Modal>
+      <Modal title="确认批量指派" open={batchAssignOpen} onCancel={()=>{if(!batchAssignSaving)setBatchAssignOpen(false)}} onOk={()=>void saveBatchAssignment()} confirmLoading={batchAssignSaving} okText="确认指派" cancelText="取消" okButtonProps={{disabled:!batchAssignmentAllowed}} cancelButtonProps={{disabled:batchAssignSaving}} closable={!batchAssignSaving} maskClosable={!batchAssignSaving}>
+        <Space direction="vertical" style={{width:'100%'}}>
+          <Text>将以下 {batchSelection.length} 项统一指派给 {batchAssignees.find(item=>item.id===batchAssigneeId)?.name??batchAssigneeId}。任一记录指派状态发生变化时，整批不保存。</Text>
+          <div style={{maxHeight:180,overflowY:'auto',overflowWrap:'anywhere'}}>{batchSelection.map(item=><div key={item.id}><Text code>{item.id}</Text> · 当前 {item.expectedAssigneeId||'未指派'}</div>)}</div>
+        </Space>
+      </Modal>
       <Drawer
         title="发现项详情"
         open={Boolean(selectedFinding)}
@@ -485,6 +521,7 @@ export const FindingsPage: React.FC = () => {
                 <label htmlFor="finding-assignee">处置人（可清除指派）</label>
                 <Select id="finding-assignee" aria-label="漏洞处置人" allowClear style={{width:'100%'}} value={assigneeId||undefined} onChange={value=>setAssigneeId(value??'')} options={assignees.map(item=>({value:item.id,label:item.name}))} disabled={workSaving||!canWrite||Boolean(workError)} placeholder="未指派" />
                 <Button loading={workSaving} disabled={!canWrite||Boolean(workError)||assigneeId===(selectedFinding.assigneeId??'')} onClick={()=>void saveAssignment(selectedFinding.id)}>保存指派</Button>
+                {assignmentEvents.length?<Timeline items={assignmentEvents.map(event=>({key:event.id,children:<Space direction="vertical" size={2}><Text>指派：{event.fromAssigneeId||'未指派'} → {event.toAssigneeId||'未指派'}</Text><Text type="secondary">{event.createdAt} · 操作者 {event.actor}</Text></Space>}))}/>:<Text type="secondary">暂无指派历史</Text>}
                 <label htmlFor="finding-note">追加备注（最多 2000 UTF-8 字节，单行纯文本）</label>
                 <Input id="finding-note" value={noteBody} onChange={event=>setNoteBody(event.target.value)} disabled={workSaving||!canWrite} />
                 <Button loading={workSaving} disabled={!canWrite||!noteBody.trim()} onClick={()=>void saveNote(selectedFinding.id)}>追加备注</Button>
