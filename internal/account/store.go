@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -50,6 +51,35 @@ var usernamePattern = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_.-]{2,39}$`)
 var roles = map[string]bool{"admin": true, "security_engineer": true, "ops_approver": true, "viewer": true}
 
 const sessionDuration = 8 * time.Hour
+
+// DefaultSessionDuration is used when the product settings row has not been
+// created yet (for example while the account database is being bootstrapped).
+func DefaultSessionDuration() time.Duration { return sessionDuration }
+
+// SessionDuration reads the Server-owned product setting without importing the
+// repository package. The account store is also used by the setup-only API,
+// where product_settings may not exist yet, so a missing table/row uses the
+// documented eight-hour default.
+func (s *Store) SessionDuration(ctx context.Context) (time.Duration, error) {
+	var raw string
+	err := s.db.QueryRowContext(ctx, "SELECT data FROM product_settings WHERE id=?", "system-settings").Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) || (err != nil && strings.Contains(strings.ToLower(err.Error()), "no such table")) {
+		return sessionDuration, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("read session settings: %w", err)
+	}
+	var settings struct {
+		SessionDurationMinutes int `json:"sessionDurationMinutes"`
+	}
+	if err := json.Unmarshal([]byte(raw), &settings); err != nil {
+		return 0, fmt.Errorf("decode session settings: %w", err)
+	}
+	if settings.SessionDurationMinutes < 30 || settings.SessionDurationMinutes > 1440 {
+		return 0, fmt.Errorf("invalid session duration: %d minutes", settings.SessionDurationMinutes)
+	}
+	return time.Duration(settings.SessionDurationMinutes) * time.Minute, nil
+}
 
 func validate(username, password, role string) error {
 	if !usernamePattern.MatchString(username) || !roles[role] || len(password) < 12 || len(password) > 72 {
@@ -162,7 +192,11 @@ func (s *Store) Authenticate(ctx context.Context, username, password string) (Us
 	if err != nil {
 		return User{}, "", err
 	}
-	_, err = s.db.ExecContext(ctx, "INSERT INTO user_sessions(token_hash,user_id,expires_at) VALUES (?,?,?)", digest(token), u.ID, time.Now().Add(sessionDuration).Unix())
+	duration, err := s.SessionDuration(ctx)
+	if err != nil {
+		return User{}, "", err
+	}
+	_, err = s.db.ExecContext(ctx, "INSERT INTO user_sessions(token_hash,user_id,expires_at) VALUES (?,?,?)", digest(token), u.ID, time.Now().Add(duration).Unix())
 	if err != nil {
 		return User{}, "", fmt.Errorf("create session: %w", err)
 	}

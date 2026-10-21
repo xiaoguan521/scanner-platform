@@ -73,6 +73,51 @@ paths:
             application/json:
               schema:
                 "$ref": "#/components/schemas/Capabilities"
+  "/api/v1/system-settings":
+    get:
+      tags:
+      - system
+      summary: Read administrator system settings
+      security:
+      - sessionCookie: []
+      responses:
+        '200':
+          description: Current system settings
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/SystemSettings"
+        '401': {description: Unauthenticated}
+        '403': {description: Admin role required}
+    put:
+      tags:
+      - system
+      summary: Update administrator system settings
+      security:
+      - sessionCookie: []
+      parameters:
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema:
+          type: string
+          enum: [XMLHttpRequest]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/SystemSettings"
+      responses:
+        '200':
+          description: Saved system settings
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/SystemSettings"
+        '400': {description: Invalid timezone or session duration}
+        '401': {description: Unauthenticated}
+        '403': {description: Admin role or mutation header required}
   "/api/v1/dashboard/summary":
     get:
       tags:
@@ -4313,6 +4358,17 @@ components:
         quarantineThreshold: {"type": "integer", "minimum": 1, "maximum": 3}
         discoveryAttempts: {"type": "integer", "minimum": 1, "maximum": 3}
         fixedThreshold: {"type": "integer", "minimum": 1, "maximum": 3}
+    SystemSettings:
+      type: object
+      required: [timeZone, sessionDurationMinutes]
+      properties:
+        timeZone:
+          type: string
+          enum: [UTC, Asia/Shanghai, America/New_York]
+        sessionDurationMinutes:
+          type: integer
+          minimum: 30
+          maximum: 1440
     ScanPlanDefaults:
       type: object
       required: [portPreset, intensity, portRanges, portExclusions, customRuleIds]

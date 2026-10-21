@@ -9,6 +9,11 @@ export interface User {
   isActive: boolean;
 }
 
+export interface SystemSettings {
+  timeZone: 'UTC' | 'Asia/Shanghai' | 'America/New_York';
+  sessionDurationMinutes: number;
+}
+
 export type PortKind = 'WEB' | 'NON_WEB' | 'EXCLUDED_PROXY';
 
 export interface AssetPort {

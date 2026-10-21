@@ -3,6 +3,7 @@ package repo
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"scanner-platform/internal/assets"
 	"scanner-platform/internal/findings"
 	"scanner-platform/internal/inventory"
@@ -11,6 +12,40 @@ import (
 	"scanner-platform/internal/taskflow"
 	"testing"
 )
+
+func TestSystemSettingsDefaultsValidationPersistenceAndAudit(t *testing.T) {
+	store, actor := localFixture(t)
+	ctx := context.Background()
+
+	settings, err := store.GetSystemSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings != (SystemSettings{TimeZone: "Asia/Shanghai", SessionDurationMinutes: 480}) {
+		t.Fatalf("unexpected defaults: %+v", settings)
+	}
+	if _, err := store.SaveSystemSettings(ctx, SystemSettings{TimeZone: "Mars/Phobos", SessionDurationMinutes: 480}, actor); !errors.Is(err, ErrInvalidTask) {
+		t.Fatalf("invalid timezone accepted: %v", err)
+	}
+	if _, err := store.SaveSystemSettings(ctx, SystemSettings{TimeZone: "UTC", SessionDurationMinutes: 29}, actor); !errors.Is(err, ErrInvalidTask) {
+		t.Fatalf("invalid session duration accepted: %v", err)
+	}
+	saved, err := store.SaveSystemSettings(ctx, SystemSettings{TimeZone: "UTC", SessionDurationMinutes: 90}, actor)
+	if err != nil || saved.TimeZone != "UTC" || saved.SessionDurationMinutes != 90 {
+		t.Fatalf("save settings: %+v %v", saved, err)
+	}
+	loaded, err := store.GetSystemSettings(ctx)
+	if err != nil || loaded != saved {
+		t.Fatalf("load settings: %+v %v", loaded, err)
+	}
+	var count int
+	if err := store.db.QueryRowContext(ctx, "SELECT count(*) FROM audit_logs WHERE actor=? AND action='update_system_settings'", actor).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("settings audit count=%d", count)
+	}
+}
 
 func TestProductInventoryKnowledgeAndTaskObservationRemainHistorical(t *testing.T) {
 	store, actor := localFixture(t)

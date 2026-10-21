@@ -89,6 +89,26 @@ func registerProductHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui fu
 			runtimeJSON(w, 200, saved)
 		}
 	}))
+	mux.HandleFunc("GET /api/v1/system-settings", adminRead(func(w http.ResponseWriter, r *http.Request) {
+		settings, err := store.GetSystemSettings(r.Context())
+		if !runtimeStoreError(w, err) {
+			runtimeJSON(w, http.StatusOK, settings)
+		}
+	}))
+	mux.HandleFunc("PUT /api/v1/system-settings", admin(func(w http.ResponseWriter, r *http.Request) {
+		var settings repo.SystemSettings
+		if !runtimeDecode(w, r, &settings) {
+			return
+		}
+		saved, err := store.SaveSystemSettings(r.Context(), settings, actor(r))
+		if errors.Is(err, repo.ErrInvalidTask) {
+			bad(w, http.StatusBadRequest, "invalid_system_settings")
+			return
+		}
+		if !runtimeStoreError(w, err) {
+			runtimeJSON(w, http.StatusOK, saved)
+		}
+	}))
 	mux.HandleFunc("GET /api/v1/knowledge", ui(false, func(w http.ResponseWriter, r *http.Request) {
 		items, err := store.ListKnowledge(r.Context())
 		if !runtimeStoreError(w, err) {

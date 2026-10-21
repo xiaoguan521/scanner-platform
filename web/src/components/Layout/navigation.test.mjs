@@ -12,7 +12,7 @@ test('navigation defines the six product domains in order', () => {
   assert.match(source, /roles\.includes\(role\)/);
 });
 
-test('unfinished settings and notification modules are not exposed as menu routes', () => {
-  assert.doesNotMatch(source, /key: '\/settings'/);
+test('system settings is exposed only to administrators while notifications stay hidden', () => {
+  assert.match(source, /key: '\/settings', label: '系统设置', roles: \['admin'\]/);
   assert.doesNotMatch(source, /key: '\/notifications'/);
 });

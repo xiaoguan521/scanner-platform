@@ -26,6 +26,77 @@ type ScanPolicy struct {
 	FixedThreshold      int               `json:"fixedThreshold"`
 }
 
+// SystemSettings contains the small set of control-plane preferences that are
+// persisted by the local Server. Notification delivery is deliberately not
+// part of this contract yet; the notification center is a later roadmap item.
+type SystemSettings struct {
+	TimeZone               string `json:"timeZone"`
+	SessionDurationMinutes int    `json:"sessionDurationMinutes"`
+}
+
+const systemSettingsID = "system-settings"
+
+func defaultSystemSettings() SystemSettings {
+	return SystemSettings{TimeZone: "Asia/Shanghai", SessionDurationMinutes: 480}
+}
+
+func validateSystemSettings(settings SystemSettings) (SystemSettings, error) {
+	settings.TimeZone = strings.TrimSpace(settings.TimeZone)
+	if settings.TimeZone != "UTC" && settings.TimeZone != "Asia/Shanghai" && settings.TimeZone != "America/New_York" {
+		return settings, fmt.Errorf("%w: 时区必须为 UTC、Asia/Shanghai 或 America/New_York", ErrInvalidTask)
+	}
+	if settings.SessionDurationMinutes < 30 || settings.SessionDurationMinutes > 1440 {
+		return settings, fmt.Errorf("%w: 会话时长必须为 30–1440 分钟", ErrInvalidTask)
+	}
+	return settings, nil
+}
+
+func systemSettingsIn(ctx context.Context, q productQueryer) (SystemSettings, error) {
+	settings := defaultSystemSettings()
+	var raw string
+	err := q.QueryRowContext(ctx, "SELECT data FROM product_settings WHERE id=?", systemSettingsID).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return settings, nil
+	}
+	if err != nil {
+		return settings, err
+	}
+	if err := json.Unmarshal([]byte(raw), &settings); err != nil {
+		return defaultSystemSettings(), fmt.Errorf("decode system settings: %w", err)
+	}
+	return validateSystemSettings(settings)
+}
+
+func (s *RuntimeStore) GetSystemSettings(ctx context.Context) (SystemSettings, error) {
+	return systemSettingsIn(ctx, s.db)
+}
+
+func (s *RuntimeStore) SaveSystemSettings(ctx context.Context, settings SystemSettings, actor string) (SystemSettings, error) {
+	settings, err := validateSystemSettings(settings)
+	if err != nil {
+		return settings, err
+	}
+	data, err := json.Marshal(settings)
+	if err != nil {
+		return settings, fmt.Errorf("encode system settings: %w", err)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return settings, err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `INSERT INTO product_settings(id,data) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data`, systemSettingsID, string(data)); err != nil {
+		return settings, err
+	}
+	if err = logLocal(ctx, tx, actor, "update_system_settings", "settings", systemSettingsID, string(data)); err != nil {
+		return settings, err
+	}
+	if err = tx.Commit(); err != nil {
+		return settings, err
+	}
+	return settings, nil
+}
+
 func defaultPolicy() ScanPolicy {
 	return ScanPolicy{CommonPorts: portprobe.CommonPorts(), Exclusions: []portprobe.Range{}, QuarantineThreshold: 2, DiscoveryAttempts: 3, FixedThreshold: 1}
 }

@@ -106,6 +106,17 @@ func sessionToken(r *http.Request) string {
 	}
 	return c.Value
 }
+
+func sessionCookieDuration(ctx context.Context, s account.Repository) time.Duration {
+	if provider, ok := s.(interface {
+		SessionDuration(context.Context) (time.Duration, error)
+	}); ok {
+		if duration, err := provider.SessionDuration(ctx); err == nil && duration > 0 {
+			return duration
+		}
+	}
+	return account.DefaultSessionDuration()
+}
 func auth(s account.Repository, adminOnly bool, next func(http.ResponseWriter, *http.Request, account.User)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user, err := s.Session(r.Context(), sessionToken(r))
@@ -201,10 +212,11 @@ func NewDevelopmentHandler(s account.Repository, assetStore assets.Repository, a
 			return
 		}
 		limiter.success(r.RemoteAddr)
+		duration := sessionCookieDuration(r.Context(), s)
 		http.SetCookie(w, &http.Cookie{
 			Name: sessionCookie, Value: token, Path: "/api/v1", HttpOnly: true,
 			SameSite: http.SameSiteStrictMode, Secure: r.TLS != nil,
-			Expires: time.Now().Add(8 * time.Hour), MaxAge: int((8 * time.Hour).Seconds()),
+			Expires: time.Now().Add(duration), MaxAge: int(duration.Seconds()),
 		})
 		respond(w, http.StatusOK, user)
 	})

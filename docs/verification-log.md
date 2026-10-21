@@ -2,6 +2,12 @@
 
 记录待核对项的来源、锁定版本、验证日期、结果和未决风险。未经实际验证的项目不得标记为已确认。
 
+## 2026-10-21：管理员系统设置与会话策略
+
+- 新增 `/settings` 管理员页面和 `GET/PUT /api/v1/system-settings`。时区限定为 `UTC`、`Asia/Shanghai`、`America/New_York`；会话时长限定为 30–1440 分钟；保存写入 `product_settings` 并记录 `update_system_settings` 审计动作。
+- 登录时服务端会话到期时间和 HttpOnly Cookie 的 `Max-Age` 同时读取该设置；系统设置表或记录尚未初始化时安全回退到 8 小时默认值。已有会话不会因设置变更提前失效。
+- `go test -race ./internal/account ./internal/repo ./internal/api`、`node --test web/src/pages/Settings/settings.test.mjs` 和前端生产构建用于本批回归；真实浏览器页面交互和 PostgreSQL 运行时仍待验收。通知中心与通知投递没有在本批提前实现。
+
 ## 2026-10-21：移除演示种子与浏览器 mock 通道
 
 - 根据隔离靶机真实 SSH/自动综合扫描结果，移除 `cmd/seed-demo`、`make seed-demo` 和 Server 的 `--seed-demo` 启动参数；本地启动不再自动写入合成资产、任务或发现项。`scripts/test_local.py` 改为从空数据库开始验证登录、资产、任务和 Worker API。

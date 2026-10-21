@@ -5,7 +5,29 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 )
+
+func TestSessionDurationUsesDefaultUntilProductSettingsExist(t *testing.T) {
+	ctx := context.Background()
+	store, err := New(filepath.Join(t.TempDir(), "accounts.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if got, err := store.SessionDuration(ctx); err != nil || got != DefaultSessionDuration() {
+		t.Fatalf("default duration: %v %v", got, err)
+	}
+	if _, err := store.db.ExecContext(ctx, `CREATE TABLE product_settings(id TEXT PRIMARY KEY,data TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO product_settings(id,data) VALUES('system-settings',?)`, `{"timeZone":"UTC","sessionDurationMinutes":30}`); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := store.SessionDuration(ctx); err != nil || got != 30*time.Minute {
+		t.Fatalf("configured duration: %v %v", got, err)
+	}
+}
 
 func TestSQLiteAccountLifecycle(t *testing.T) {
 	ctx := context.Background()

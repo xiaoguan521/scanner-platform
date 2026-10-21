@@ -12,6 +12,7 @@ import { NodesPage } from './pages/Nodes';
 import { UsersPage } from './pages/Users';
 import { AuditPage } from './pages/Audit';
 import { ReportsPage } from './pages/Reports';
+import { SettingsPage } from './pages/Settings';
 import { AuthProvider, useAuth } from './auth/AuthProvider';
 
 const AuthenticatedRoutes: React.FC = () => {
@@ -31,6 +32,7 @@ const AuthenticatedRoutes: React.FC = () => {
             <Route path="/nodes" element={<NodesPage />} />
             <Route path="/users" element={user?.role === "admin" ? <UsersPage /> : <Navigate to="/" replace />} />
             <Route path="/audit" element={user?.role === "admin" ? <AuditPage /> : <Navigate to="/" replace />} />
+            <Route path="/settings" element={user?.role === "admin" ? <SettingsPage /> : <Navigate to="/" replace />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </AppLayout>
