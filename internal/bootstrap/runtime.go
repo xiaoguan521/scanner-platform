@@ -45,6 +45,7 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 	nodeListen := flags.String("node-listen", "", "Separate HTTPS node API address (numeric IP:port)")
 	nodeTLSCert := flags.String("node-tls-cert", "", "PEM certificate for the separate node API listener")
 	nodeTLSKey := flags.String("node-tls-key", "", "Owner-only PEM private key for the separate node API listener")
+	nodeTLSClientCA := flags.String("node-tls-client-ca", "", "Optional PEM CA bundle that requires verified node client certificates")
 	devUI := flags.Bool("dev-ui", false, "Compatibility alias for the unified local Server")
 	status := flags.Bool("status", false, "Show local runtime capabilities")
 	if err := flags.Parse(args); err != nil {
@@ -66,7 +67,7 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if *status {
-		if *storage != "sqlite" || *migratePostgres || *postgresDSNFile != "" || *initAdmin != "" || *passwordFile != "" || *nodeTokenFile != "" || *nodeListen != "" || *nodeTLSCert != "" || *nodeTLSKey != "" {
+		if *storage != "sqlite" || *migratePostgres || *postgresDSNFile != "" || *initAdmin != "" || *passwordFile != "" || *nodeTokenFile != "" || *nodeListen != "" || *nodeTLSCert != "" || *nodeTLSKey != "" || *nodeTLSClientCA != "" {
 			fmt.Fprintln(stderr, "--status cannot be combined with runtime configuration flags")
 			return 2
 		}
@@ -74,7 +75,7 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	if *initAdmin != "" {
-		if flags.NArg() != 0 || *nodeTokenFile != "" || *nodeListen != "" || *nodeTLSCert != "" || *nodeTLSKey != "" || *devUI || *reportDir != "" {
+		if flags.NArg() != 0 || *nodeTokenFile != "" || *nodeListen != "" || *nodeTLSCert != "" || *nodeTLSKey != "" || *nodeTLSClientCA != "" || *devUI || *reportDir != "" {
 			fmt.Fprintln(stderr, "--init-admin cannot be combined with server runtime flags")
 			return 2
 		}
@@ -109,7 +110,7 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	if *migratePostgres {
-		if *postgresDSNFile == "" || *nodeTokenFile != "" || *nodeListen != "" || *nodeTLSCert != "" || *nodeTLSKey != "" || *devUI || *reportDir != "" || flags.NArg() != 0 {
+		if *postgresDSNFile == "" || *nodeTokenFile != "" || *nodeListen != "" || *nodeTLSCert != "" || *nodeTLSKey != "" || *nodeTLSClientCA != "" || *devUI || *reportDir != "" || flags.NArg() != 0 {
 			fmt.Fprintln(stderr, "--migrate-postgres requires only --postgres-dsn-file")
 			return 2
 		}
@@ -149,6 +150,10 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "--node-listen requires --node-tls-cert and --node-tls-key, and those flags require --node-listen")
 		return 2
 	}
+	if *nodeListen == "" && *nodeTLSClientCA != "" {
+		fmt.Fprintln(stderr, "--node-tls-client-ca requires --node-listen")
+		return 2
+	}
 	if *nodeListen != "" {
 		if *nodeTokenFile == "" {
 			fmt.Fprintln(stderr, "--node-listen requires --node-token-file")
@@ -168,13 +173,15 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	var nodeTLSConfig *tls.Config
+	var nodeTLSReloader *nodeTLSReloader
 	if *nodeListen != "" {
 		var err error
-		nodeTLSConfig, err = loadNodeTLSConfig(*nodeTLSCert, *nodeTLSKey)
+		nodeTLSReloader, err = newNodeTLSReloader(*nodeTLSCert, *nodeTLSKey, *nodeTLSClientCA)
 		if err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
+		nodeTLSConfig = nodeTLSReloader.TLSConfig()
 	}
 	var (
 		accounts        account.Repository
@@ -337,15 +344,15 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 	}
 	baseHandler := api.NewRuntimeHandler(store, api.NewDevelopmentHandler(accounts, assetStore, approvalsStore), *uiDir, accounts)
 	handler := http.Handler(baseHandler)
-	var nodeTokens api.NodeTokenSet
+	var nodeTokenRegistry *api.NodeTokenRegistry
 	if *nodeTokenFile != "" {
 		tokens, err := api.ReadNodeTokenSetFile(*nodeTokenFile)
 		if err != nil {
 			fmt.Fprintln(stderr, "read node token registry:", err)
 			return 1
 		}
-		nodeTokens = tokens
-		handler = api.NodeAuthMiddleware(handler, tokens)
+		nodeTokenRegistry = api.NewNodeTokenRegistry(tokens)
+		handler = api.NodeAuthMiddlewareWithRegistry(handler, nodeTokenRegistry)
 	}
 	server := &http.Server{Addr: *addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 	var nodeServer *http.Server
@@ -357,7 +364,7 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		nodeListener = tls.NewListener(listener, nodeTLSConfig)
-		nodeHandler := api.NodeProtocolHandler(api.NodeAuthMiddleware(baseHandler, nodeTokens))
+		nodeHandler := api.NodeProtocolHandler(api.NodeAuthMiddlewareWithRegistry(baseHandler, nodeTokenRegistry))
 		nodeServer = &http.Server{Addr: *nodeListen, Handler: nodeHandler, ReadHeaderTimeout: 5 * time.Second, TLSConfig: nodeTLSConfig}
 		go func() {
 			if err := nodeServer.Serve(nodeListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -366,6 +373,36 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 		}()
 		fmt.Fprintf(stdout, "Node API: https://%s\n", *nodeListen)
 		slog.Info("node API started", "address", *nodeListen, "tls", true)
+	}
+	reloadSignals := make(chan os.Signal, 1)
+	if *nodeTokenFile != "" || nodeTLSReloader != nil {
+		signal.Notify(reloadSignals, syscall.SIGHUP)
+		defer signal.Stop(reloadSignals)
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-reloadSignals:
+					if *nodeTokenFile != "" {
+						tokens, err := api.ReadNodeTokenSetFile(*nodeTokenFile)
+						if err != nil {
+							slog.Error("node token rotation rejected", "error", err)
+						} else {
+							nodeTokenRegistry.Replace(tokens)
+							slog.Info("node token registry reloaded")
+						}
+					}
+					if nodeTLSReloader != nil {
+						if err := nodeTLSReloader.Reload(); err != nil {
+							slog.Error("node TLS rotation rejected", "error", err)
+						} else {
+							slog.Info("node TLS configuration reloaded")
+						}
+					}
+				}
+			}
+		}()
 	}
 	go func() {
 		<-ctx.Done()

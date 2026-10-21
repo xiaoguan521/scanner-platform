@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
@@ -22,6 +23,9 @@ func RunUpdater(args []string, stdout, stderr io.Writer) int {
 	flags.SetOutput(stderr)
 	server := flags.String("server", "http://127.0.0.1:8080", "Local Server URL")
 	nodeTokenFile := flags.String("node-token-file", "", "Owner-only bearer token file for the Updater node API")
+	nodeCACert := flags.String("node-ca-cert", "", "PEM CA bundle used to verify an HTTPS Server node API")
+	nodeClientCert := flags.String("node-client-cert", "", "Optional PEM client certificate for mTLS")
+	nodeClientKey := flags.String("node-client-key", "", "Owner-only PEM client private key for mTLS")
 	id := flags.String("id", "updater-local", "Updater identifier")
 	root := flags.String("rules-dir", "vuln-data", "Updater-owned rule directory")
 	trustedKey := flags.String("trusted-rule-public-key", "", "External Ed25519 PUBLIC KEY PEM file for rule import and activation")
@@ -53,6 +57,10 @@ func RunUpdater(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "HTTPS Server URL requires --node-token-file")
 		return 2
 	}
+	if endpoint.Scheme == "http" && (*nodeCACert != "" || *nodeClientCert != "" || *nodeClientKey != "") {
+		fmt.Fprintln(stderr, "node TLS client flags require an HTTPS Server URL")
+		return 2
+	}
 	nodeToken := ""
 	if *nodeTokenFile != "" {
 		nodeToken, err = api.ReadNodeTokenFile(*nodeTokenFile)
@@ -61,6 +69,12 @@ func RunUpdater(args []string, stdout, stderr io.Writer) int {
 			return 2
 		}
 	}
+	clientTLS, err := loadNodeClientTLSConfig(*nodeCACert, *nodeClientCert, *nodeClientKey)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	client := &http.Client{Timeout: 2 * time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }, Transport: &http.Transport{Proxy: nil, TLSClientConfig: clientTLS}}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	manager := &rules.Manager{Root: *root}
@@ -95,7 +109,7 @@ func RunUpdater(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, "--sync-state-only cannot be combined with preparation or --once")
 			return 2
 		}
-		agent := rules.Agent{ServerURL: *server, ID: *id, NodeToken: nodeToken, Manager: manager}
+		agent := rules.Agent{ServerURL: *server, ID: *id, NodeToken: nodeToken, Manager: manager, Client: client}
 		if err := agent.SyncState(ctx); err != nil {
 			fmt.Fprintln(stderr, "sync rule state:", err)
 			return 1
@@ -135,7 +149,7 @@ func RunUpdater(args []string, stdout, stderr io.Writer) int {
 		}
 		return 0
 	}
-	agent := rules.Agent{ServerURL: *server, ID: *id, NodeToken: nodeToken, Manager: manager}
+	agent := rules.Agent{ServerURL: *server, ID: *id, NodeToken: nodeToken, Manager: manager, Client: client}
 	if err := agent.Run(ctx, *once); err != nil && !errors.Is(err, context.Canceled) {
 		fmt.Fprintf(stderr, "updater stopped: %v\n", err)
 		return 1

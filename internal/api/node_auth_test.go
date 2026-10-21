@@ -61,6 +61,32 @@ func TestNodeAuthMiddlewareBindsTokenToNodeIdentity(t *testing.T) {
 	}
 }
 
+func TestNodeAuthMiddlewareRegistryCanRotateWithoutRaces(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	oldToken := nodeAuthFixtureToken
+	newToken := "fedcba9876543210fedcba9876543210"
+	registry := NewNodeTokenRegistry(NodeTokenSet{"worker-a": oldToken})
+	handler := NodeAuthMiddlewareWithRegistry(next, registry)
+	request := func(token string) int {
+		req := httptest.NewRequest(http.MethodPost, "http://example.test/api/v1/worker/claim", nil)
+		req.Header.Set("X-Node-ID", "worker-a")
+		req.Header.Set("Authorization", "Bearer "+token)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, req)
+		return response.Code
+	}
+	if got := request(oldToken); got != http.StatusNoContent {
+		t.Fatalf("old token status = %d, want 204", got)
+	}
+	registry.Replace(NodeTokenSet{"worker-a": newToken})
+	if got := request(oldToken); got != http.StatusUnauthorized {
+		t.Fatalf("rotated old token status = %d, want 401", got)
+	}
+	if got := request(newToken); got != http.StatusNoContent {
+		t.Fatalf("rotated new token status = %d, want 204", got)
+	}
+}
+
 func TestNodeProtocolHandlerRejectsHumanAndUnknownPaths(t *testing.T) {
 	called := false
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

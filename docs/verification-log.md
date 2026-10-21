@@ -653,3 +653,12 @@
 - PostgreSQL 复测在同一事务中重新校验已登记资产、当前授权范围、端口排除/隔离、时间窗、规则目录和父任务冻结端口集合；活动复测重复提交返回冲突。批量处置和指派使用固定 ID 顺序及当前快照校验，任一冲突或写入失败整批回滚；审计不复制备注正文。
 - 隔离夹具回归通过：`POSTGRES_DSN_FILE="$PWD/runtime/postgres/dsn" go test -tags=lab -count=1 ./internal/repo`，并单独复核 `TestPostgresFindingWorkLab`、`TestPostgresFindingRetestLab`；`make migrate-postgres` 已应用 0015/0016，公共 schema 只读清点为 43 张业务表加 `schema_migrations`，共 44 张表、16 条迁移。
 - 本批仍未完成真实浏览器跨后端旅程、mTLS/证书轮换、真实服务器/国产系统覆盖以及性能、无障碍和国际化验收；这些是路线图后续工作，不能据此宣称整体产品已经完成。
+
+## 2026-10-21：节点 mTLS 与证书/令牌轮换
+
+- Server 独立节点监听新增可选 `--node-tls-client-ca`。配置客户端 CA 后，节点端口强制 TLS 1.3 和 `RequireAndVerifyClientCert`；现有 owner-only Bearer 令牌和 `X-Node-ID` 绑定继续生效，未配置客户端 CA 时保持单向 TLS 兼容模式。
+- Worker/Updater 新增 `--node-ca-cert`、`--node-client-cert` 和 `--node-client-key`，分别用于自建 CA 信任和 mTLS 客户端身份；证书与私钥必须成对提供，私钥继续要求 owner-only 普通文件，HTTP 回环模式拒绝这些 TLS 参数。
+- Server 在收到 `SIGHUP` 时原子重载节点证书、客户端 CA 和节点令牌注册表。替换文件缺失、不是普通文件、签名/PEM 无效或权限不合规时保留最后一份有效配置；客户端证书轮换需重启对应 Worker/Updater。
+- 新增 bootstrap/API 失败路径测试，覆盖客户端 CA 无证书、客户端证书成对校验、无效轮换保留旧配置、令牌轮换立即生效和旧令牌失效；`go test -race ./internal/bootstrap ./internal/api ./internal/taskflow ./internal/rules` 通过。
+- 使用临时自签 CA、Server 证书、Worker 客户端证书和 owner-only 令牌文件启动独立节点监听器，实际验证无客户端证书握手失败、带 mTLS 的心跳返回 200、替换 Server 证书后 SIGHUP 仍返回 200、SIGHUP 后旧令牌返回 401、新令牌返回 200；测试材料在临时目录结束时删除。
+- 真实多节点证书部署、自动签发/完整节点生命周期和跨后端浏览器旅程仍待隔离环境验收；本批没有连接外部节点或写入真实证书、令牌。

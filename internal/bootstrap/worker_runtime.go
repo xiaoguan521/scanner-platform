@@ -26,6 +26,9 @@ func RunWorker(args []string, stdout, stderr io.Writer) int {
 	flags.SetOutput(stderr)
 	server := flags.String("server", "http://127.0.0.1:8080", "Local Server URL")
 	nodeTokenFile := flags.String("node-token-file", "", "Owner-only bearer token file for the Worker node API")
+	nodeCACert := flags.String("node-ca-cert", "", "PEM CA bundle used to verify an HTTPS Server node API")
+	nodeClientCert := flags.String("node-client-cert", "", "Optional PEM client certificate for mTLS")
+	nodeClientKey := flags.String("node-client-key", "", "Owner-only PEM client private key for mTLS")
 	id := flags.String("id", "worker-local", "Worker identifier")
 	once := flags.Bool("once", false, "Process at most one queued task and exit")
 	interval := flags.Duration("interval", time.Second, "Queue polling interval")
@@ -72,6 +75,10 @@ func RunWorker(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "HTTPS Server URL requires --node-token-file")
 		return 2
 	}
+	if endpoint.Scheme == "http" && (*nodeCACert != "" || *nodeClientCert != "" || *nodeClientKey != "") {
+		fmt.Fprintln(stderr, "node TLS client flags require an HTTPS Server URL")
+		return 2
+	}
 	nodeToken := ""
 	if *nodeTokenFile != "" {
 		nodeToken, err = api.ReadNodeTokenFile(*nodeTokenFile)
@@ -79,6 +86,11 @@ func RunWorker(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, "read node token file:", err)
 			return 2
 		}
+	}
+	clientTLS, err := loadNodeClientTLSConfig(*nodeCACert, *nodeClientCert, *nodeClientKey)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -89,7 +101,7 @@ func RunWorker(args []string, stdout, stderr io.Writer) int {
 		RequireLeases:      true,
 		Client: &http.Client{
 			Timeout:       5 * time.Second,
-			Transport:     &http.Transport{Proxy: nil},
+			Transport:     &http.Transport{Proxy: nil, TLSClientConfig: clientTLS},
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		},
 	}

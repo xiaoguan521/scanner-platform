@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -72,6 +73,79 @@ func TestLoadNodeTLSConfigRequiresOwnerOnlyPrivateKey(t *testing.T) {
 	}
 	if _, err := loadNodeTLSConfig(certPath, linkPath); err == nil || !strings.Contains(err.Error(), "non-symlink") {
 		t.Fatalf("symlink key error = %v, want symlink rejection", err)
+	}
+}
+
+func TestLoadNodeTLSConfigWithClientCARequiresVerifiedCertificates(t *testing.T) {
+	dir := t.TempDir()
+	certPEM, keyPEM := tlsFixturePEM(t)
+	certPath := filepath.Join(dir, "node.crt")
+	keyPath := filepath.Join(dir, "node.key")
+	caPath := filepath.Join(dir, "client-ca.pem")
+	if err := os.WriteFile(certPath, certPEM, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyPath, keyPEM, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(caPath, certPEM, 0644); err != nil {
+		t.Fatal(err)
+	}
+	config, err := loadNodeTLSConfigWithClientCA(certPath, keyPath, caPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.ClientAuth != tls.RequireAndVerifyClientCert || config.ClientCAs == nil {
+		t.Fatalf("client auth = %v, client CAs nil=%v", config.ClientAuth, config.ClientCAs == nil)
+	}
+	badCA := filepath.Join(dir, "bad-ca.pem")
+	if err := os.WriteFile(badCA, []byte("not a certificate"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadNodeTLSConfigWithClientCA(certPath, keyPath, badCA); err == nil || !strings.Contains(err.Error(), "no certificate") {
+		t.Fatalf("invalid client CA error = %v", err)
+	}
+}
+
+func TestNodeTLSReloaderKeepsLastKnownGoodConfig(t *testing.T) {
+	dir := t.TempDir()
+	certPEM, keyPEM := tlsFixturePEM(t)
+	certPath := filepath.Join(dir, "node.crt")
+	keyPath := filepath.Join(dir, "node.key")
+	if err := os.WriteFile(certPath, certPEM, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyPath, keyPEM, 0600); err != nil {
+		t.Fatal(err)
+	}
+	reloader, err := newNodeTLSReloader(certPath, keyPath, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	outer := reloader.TLSConfig()
+	if outer.GetConfigForClient == nil {
+		t.Fatal("reloader did not install config callback")
+	}
+	if _, err := outer.GetConfigForClient(&tls.ClientHelloInfo{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyPath, []byte("invalid"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := reloader.Reload(); err == nil {
+		t.Fatal("invalid replacement certificate was accepted")
+	}
+	if _, err := outer.GetConfigForClient(&tls.ClientHelloInfo{}); err != nil {
+		t.Fatalf("last known-good config was lost: %v", err)
+	}
+}
+
+func TestLoadNodeClientTLSConfigRequiresCompletePair(t *testing.T) {
+	if _, err := loadNodeClientTLSConfig("", "client.crt", ""); err == nil || !strings.Contains(err.Error(), "provided together") {
+		t.Fatalf("incomplete client pair error = %v", err)
+	}
+	if _, err := loadNodeClientTLSConfig("", "", ""); err != nil {
+		t.Fatalf("empty optional client TLS config: %v", err)
 	}
 }
 

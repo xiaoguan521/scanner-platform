@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync/atomic"
 )
 
 const (
@@ -18,9 +19,44 @@ const (
 )
 
 // NodeTokenSet is the Server-side mapping from a node identifier to its
-// bearer token. The map is copied when middleware is created and is never
-// mutated by request handling.
+// bearer token. Values are copied before they are exposed to request
+// handling, so an operator can replace a registry without a data race.
 type NodeTokenSet map[string]string
+
+// NodeTokenRegistry is an atomically replaceable node token registry. It is
+// deliberately separate from the file reader so SIGHUP rotation can keep the
+// last known-good credentials when a replacement file is malformed.
+type NodeTokenRegistry struct {
+	value atomic.Value // stores NodeTokenSet
+}
+
+func NewNodeTokenRegistry(tokens NodeTokenSet) *NodeTokenRegistry {
+	registry := &NodeTokenRegistry{}
+	registry.Replace(tokens)
+	return registry
+}
+
+func (r *NodeTokenRegistry) Replace(tokens NodeTokenSet) {
+	copySet := make(NodeTokenSet, len(tokens))
+	for id, token := range tokens {
+		copySet[id] = token
+	}
+	if len(copySet) == 0 {
+		copySet = NodeTokenSet{}
+	}
+	r.value.Store(copySet)
+}
+
+func (r *NodeTokenRegistry) snapshot() NodeTokenSet {
+	if r == nil {
+		return NodeTokenSet{}
+	}
+	value := r.value.Load()
+	if value == nil {
+		return NodeTokenSet{}
+	}
+	return value.(NodeTokenSet)
+}
 
 var (
 	ErrInvalidNodeTokenFile = errors.New("invalid node token file")
@@ -167,16 +203,20 @@ func NodeProtocolHandler(next http.Handler) http.Handler {
 // token. The caller must provide a non-empty set loaded from a protected file;
 // local development without this middleware remains intentionally compatible.
 func NodeAuthMiddleware(next http.Handler, tokens NodeTokenSet) http.Handler {
-	copySet := make(NodeTokenSet, len(tokens))
-	for id, token := range tokens {
-		copySet[id] = token
-	}
+	return NodeAuthMiddlewareWithRegistry(next, NewNodeTokenRegistry(tokens))
+}
+
+// NodeAuthMiddlewareWithRegistry is the rotating form used by the Server.
+// Human paths remain untouched; node paths read one immutable token snapshot
+// for each request.
+func NodeAuthMiddlewareWithRegistry(next http.Handler, registry *NodeTokenRegistry) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !IsNodeAPIPath(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
 		nodeID := r.Header.Get("X-Node-ID")
+		copySet := registry.snapshot()
 		expected, ok := copySet[nodeID]
 		provided := r.Header.Get("Authorization")
 		if !ok || subtle.ConstantTimeCompare([]byte(provided), []byte("Bearer "+expected)) != 1 {
