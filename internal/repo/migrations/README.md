@@ -16,8 +16,9 @@ These files implement the schema in [architecture-v3.2.md §7](../../../docs/arc
 | `postgres/0008_task_projection.sql` | task UI projection and Worker progress | 2 |
 | `postgres/0009_finding_projection.sql` | finding UI projection | 1 |
 | `postgres/0010_rule_catalog_projection.sql` | rule catalog metadata projection | 0 new tables |
+| `postgres/0011_rule_jobs.sql` | rule import/fetch/activation queue | 1 |
 
-There are **33 business tables** plus the internal `schema_migrations` journal. All SQL scripts use a transaction, include constraints/indexes and record their version. No users, tokens, rules, targets or example data are seeded.
+There are **34 business tables** plus the internal `schema_migrations` journal. All SQL scripts use a transaction, include constraints/indexes and record their version. No users, tokens, rules, targets or example data are seeded.
 
 ## How to initialize a NEW dedicated database (after review)
 
@@ -46,7 +47,7 @@ unknown or gapped journal entries, and prints only the applied version names.
 It does not create a database, seed users/assets/rules, or switch the running
 SQLite Server to PostgreSQL.
 
-The runner refuses a non-empty public schema with no migration journal, applies versions in order, skips already-recorded versions and aborts on the first SQL error. It does **not** create the PostgreSQL database itself. To run manually, apply migrations `0001_core.sql` through `0010_rule_catalog_projection.sql` in order. Run one migrator at a time. Never edit an applied migration: add a higher-numbered file. After applying, use the read-only inventory script `bash scripts/check-postgres-schema.sh` to check all 34 tables including the journal, the ten recorded migrations, and the task archive/projection columns. The ten migrations were executed and journal-checked against the isolated PostgreSQL fixture on 2026-10-21. The Server-side runtime now wires the account, asset, approval, task queue/projection, finding, report and rule-catalog adapters when explicitly selected; scheduling, notifications and rule import/activation job endpoints remain capability-gated until their PostgreSQL adapters land.
+The runner refuses a non-empty public schema with no migration journal, applies versions in order, skips already-recorded versions and aborts on the first SQL error. It does **not** create the PostgreSQL database itself. To run manually, apply migrations `0001_core.sql` through `0011_rule_jobs.sql` in order. Run one migrator at a time. Never edit an applied migration: add a higher-numbered file. After applying, use the read-only inventory script `bash scripts/check-postgres-schema.sh` to check all 35 tables including the journal, the eleven recorded migrations, and the task archive/projection columns. The eleven migrations were executed and journal-checked against the isolated PostgreSQL fixture on 2026-10-21. The Server-side runtime now wires the account, asset, approval, task queue/projection, finding, report, rule-catalog and rule-job adapters when explicitly selected; scheduling and notifications remain capability-gated until their PostgreSQL adapters land.
 
 ## Important schema differences and boundaries
 
@@ -65,7 +66,7 @@ The runner refuses a non-empty public schema with no migration journal, applies 
 - Inventory, service, login, policy, knowledge and report records in 0004 use TEXT JSON. Report snapshots are versioned; task observations are separate from current finding lifecycle rows. Migration 0009 stores the complete finding UI/lifecycle projection while `security_findings` remains authoritative for stable identity and status; `task_finding_observations` remains the immutable per-task view. The SQLite RuntimeStore stores archive state in task details JSON; the PostgreSQL schema uses `scan_tasks.archived_at`. Migration 0008 stores the remaining task UI fields as a bounded JSON projection and progress as a separate advisory row; queue state and leases remain authoritative in normalized tables.
 - Rule pinning and SBOM historical version fields have no cascading rule-version foreign key because GC and retention are explicit Server/Updater decisions.
 
-The embedded runner and protected-file checks have unit coverage, and the ten
+The embedded runner and protected-file checks have unit coverage, and the eleven
  migrations were executed against an isolated PostgreSQL instance on
  2026-10-21. The queue, task projection, finding and report adapters' `lab`
  regressions cover their transaction, lifecycle, snapshot and worker behavior

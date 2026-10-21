@@ -616,5 +616,10 @@
 
 ## 2026-10-21：PostgreSQL 开发启动回归
 
-- 使用 `POSTGRES_DSN_FILE=... make dev-postgres` 启动 Web、Worker 和规则目录同步流程，`/readyz` 返回 `mode: postgres`，Updater 完成一次本地规则目录元数据同步后正常退出，未再请求未实现的规则作业接口。
-- Worker 进程和 PostgreSQL Server 在启动检查期间保持运行；退出开发命令后子进程均被清理。该启动路径不会切换或读取 SQLite 数据库。
+- 使用 `POSTGRES_DSN_FILE=... make dev-postgres` 启动 Web、Worker 和 Updater，`/readyz` 返回 `mode: postgres`；Updater 完成本地规则目录同步并保持规则作业轮询，未再因 PostgreSQL 能力缺失退出。
+- Worker、Updater 进程和 PostgreSQL Server 在启动检查期间保持运行；退出开发命令后子进程均被清理。该启动路径不会切换或读取 SQLite 数据库。
+
+## 2026-10-21：PostgreSQL 规则作业队列回归
+
+- 新增迁移 `0011_rule_jobs.sql` 和 PostgreSQL 规则作业适配，覆盖 IMPORT/FETCH/ACTIVATE 校验、队列上限、`FOR UPDATE SKIP LOCKED` 领取、节点绑定、完成/失败回报、规则目录原子同步和分页清册。
+- PostgreSQL lab 测试实际创建、领取、完成并清理一条 ACTIVATE 作业；Updater 可继续使用常规运行模式。规则 ZIP 的签名和文件完整性仍由 Updater 本地规则 Manager 验证，Server 只保存受限作业数据与目录元数据。

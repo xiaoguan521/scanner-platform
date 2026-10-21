@@ -72,25 +72,14 @@ else
     --runtime-dir "$SCANNER_LOG_DIR/worker" >"$SCANNER_LOG_DIR/worker.log" 2>&1 &
 fi
 worker_pid=$!
-if [[ "$SCANNER_STORAGE" == postgres ]]; then
-  if [[ -n "$SCANNER_RULE_PUBLIC_KEY_FILE" ]]; then
-    ./dist/sec-updater --server "http://127.0.0.1:$SCANNER_PORT" --rules-dir "$SCANNER_RULES" \
-      --trusted-rule-public-key "$SCANNER_RULE_PUBLIC_KEY_FILE" --sync-state-only >"$SCANNER_LOG_DIR/updater.log" 2>&1
-  else
-    ./dist/sec-updater --server "http://127.0.0.1:$SCANNER_PORT" --rules-dir "$SCANNER_RULES" \
-      --sync-state-only >"$SCANNER_LOG_DIR/updater.log" 2>&1
-  fi
-  updater_pid=''
+if [[ -n "$SCANNER_RULE_PUBLIC_KEY_FILE" ]]; then
+  ./dist/sec-updater --server "http://127.0.0.1:$SCANNER_PORT" --rules-dir "$SCANNER_RULES" \
+    --trusted-rule-public-key "$SCANNER_RULE_PUBLIC_KEY_FILE" >"$SCANNER_LOG_DIR/updater.log" 2>&1 &
 else
-  if [[ -n "$SCANNER_RULE_PUBLIC_KEY_FILE" ]]; then
-    ./dist/sec-updater --server "http://127.0.0.1:$SCANNER_PORT" --rules-dir "$SCANNER_RULES" \
-      --trusted-rule-public-key "$SCANNER_RULE_PUBLIC_KEY_FILE" >"$SCANNER_LOG_DIR/updater.log" 2>&1 &
-  else
-    ./dist/sec-updater --server "http://127.0.0.1:$SCANNER_PORT" --rules-dir "$SCANNER_RULES" \
-      >"$SCANNER_LOG_DIR/updater.log" 2>&1 &
-  fi
-  updater_pid=$!
+  ./dist/sec-updater --server "http://127.0.0.1:$SCANNER_PORT" --rules-dir "$SCANNER_RULES" \
+    >"$SCANNER_LOG_DIR/updater.log" 2>&1 &
 fi
+updater_pid=$!
 if [[ "$SCANNER_STORAGE" == postgres ]]; then
   printf '\n打开：http://127.0.0.1:%s\nPostgreSQL 运行时已启用；首次使用请先用 sec-server --storage postgres --postgres-dsn-file <DSN文件> --init-admin 初始化管理员。\n扫描只在网页明确选择引擎并创建任务后执行。\n按 Ctrl+C 停止。\n' "$SCANNER_PORT"
 else

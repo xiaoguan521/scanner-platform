@@ -78,7 +78,7 @@ func (s *PostgresRuntimeStore) RuntimeMode() string { return "postgres" }
 // advertise SQLite-only scheduling, notifications or rule administration when
 // the Server is connected to PostgreSQL.
 func (s *PostgresRuntimeStore) UnavailableRuntimeCapabilities() []string {
-	return []string{"synthetic-worker", "schedules", "rule-import", "rule-activation", "notifications"}
+	return []string{"synthetic-worker", "schedules", "notifications"}
 }
 
 // Close is intentionally a no-op. The bootstrap owns the shared pool used by
