@@ -112,6 +112,8 @@ SAST、密钥扫描、重型 DAST 爬虫、AI 自动研判、任何自动利用�
 - 令牌通过 Docker secrets 或文件挂载传入,不放在环境变量里。
 - Worker 横向扩容时,每个副本拥有独立令牌和独立私有 runtime 目录(用脚本生成,避免手工复制)。
 
+节点材料分发采用角色最小权限包。完整离线材料只能留在受信部署机；Server 包含 CA 证书、Server 证书/私钥和节点令牌注册表，Worker/Updater 包只包含 CA 证书、对应节点的客户端证书/私钥和令牌。`sec-node-provision` 在拆包前重新验证完整材料，使用版本化 manifest 和目录级原子发布；传输后的 `--verify-dir` 按角色执行精确文件集、证书用途、节点身份和 owner-only 权限校验。`sec-node-deploy` 默认只生成计划，显式执行时才允许对用户指定的数字 IP 通过固定 known-hosts 的 SSH/SCP 完成暂存、远端预检、首次目录发布和固定服务重启；不做主机发现，不接受域名/CIDR，不自动轮换或覆盖已有目录。
+
 ### 4.3 进程权限
 
 - Worker 入口为 supervisor(root,仅用于设置网络围栏),设置完成后以 `uid=10001`、无任何 capabilities 的身份拉起 `nuclei` / `trivy`。
