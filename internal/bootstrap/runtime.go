@@ -46,7 +46,6 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 	addr := flags.String("listen", "127.0.0.1:8080", "Local web and API address")
 	dbPath := flags.String("db", filepath.Join("runtime", "platform.db"), "SQLite database path")
 	uiDir := flags.String("ui-dir", filepath.Join("web", "dist"), "Built web UI directory")
-	seed := flags.Bool("seed-demo", false, "Create a single synthetic startup task")
 	reportDir := flags.String("report-dir", "", "Private generated report directory (defaults beside the SQLite database)")
 	flags.Bool("dev-ui", false, "Compatibility alias for the unified local Server")
 	status := flags.Bool("status", false, "Show local runtime capabilities")
@@ -115,12 +114,7 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 			}
 		}
 	}()
-	// Synthetic tasks have no external side effects and may safely restart after a local restart.
-	if _, err := accounts.SQLDB().ExecContext(ctx, `UPDATE scan_tasks SET status='PENDING',worker_id='' WHERE status='RUNNING' AND COALESCE(json_extract(details,'$.input.engine'),'') IN ('','synthetic')`); err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
-	if _, err := accounts.SQLDB().ExecContext(ctx, `UPDATE scan_tasks SET status='FAILED',details=json_set(details,'$.error','Server restarted during real scan; create a new task') WHERE status='RUNNING'`); err != nil {
+	if _, err := accounts.SQLDB().ExecContext(ctx, `UPDATE scan_tasks SET status='FAILED',details=json_set(details,'$.error','Server restarted during scan; create a new task') WHERE status='RUNNING'`); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
@@ -142,12 +136,6 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 			}
 		}
 	}()
-	if *seed {
-		if err := store.SeedSyntheticTask(ctx); err != nil {
-			fmt.Fprintf(stderr, "create startup task: %v\n", err)
-			return 1
-		}
-	}
 	handler := api.NewRuntimeHandler(store, api.NewDevelopmentHandler(accounts, assetStore, approvalsStore), *uiDir, accounts)
 	server := &http.Server{Addr: *addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 	go func() {

@@ -24,7 +24,6 @@ import {
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAppTheme } from '../../context/ThemeContext';
-import { isDemoMode } from '../../api/client';
 import { useSystemStatus } from '../../api/hooks';
 import { useAuth } from '../../auth/AuthProvider';
 import { navigationLabel, visibleNavigation } from './navigation';
@@ -39,7 +38,7 @@ export const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children })
   const { token } = theme.useToken();
   const { status, error } = useSystemStatus();
   const { user, logout } = useAuth();
-  const groups = visibleNavigation(isDemoMode, user?.role);
+  const groups = visibleNavigation(user?.role);
   const icons: Record<string, React.ReactNode> = {
     overview: <DashboardOutlined />,
     assets: <ApartmentOutlined />,
@@ -130,12 +129,12 @@ export const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children })
           </div>
 
           <Space size="middle" wrap>
-            {!isDemoMode && user && <Space size={8}><span>{user.username} · {user.role}</span><Button size="small" onClick={() => { void logout(); }}>退出</Button></Space>}
-            <Tooltip title={isDemoMode ? '演示数据，不代表真实运行状态' : error ?? '来自 Server 的控制面状态（不是扫描器状态）'}>
+            {user && <Space size={8}><span>{user.username} · {user.role}</span><Button size="small" onClick={() => { void logout(); }}>退出</Button></Space>}
+            <Tooltip title={error ?? '来自 Server 的控制面状态（不是扫描器状态）'}>
               <Space size={6}>
                 <Badge status={status?.ready ? 'success' : 'default'} />
                 <span style={{ fontSize: 13, color: '#94a3b8' }}>
-                  {isDemoMode ? '演示模式 · 非实时' : error ? 'Server 连接失败' : status ? `Server: ${status.state}（${status.ready ? "就绪" : "未就绪"}）` : '读取 Server 状态…'}
+                  {error ? 'Server 连接失败' : status ? `Server: ${status.state}（${status.ready ? "就绪" : "未就绪"}）` : '读取 Server 状态…'}
                 </span>
               </Space>
             </Tooltip>
@@ -162,11 +161,11 @@ export const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children })
           }}
         >
           <Alert
-            type={isDemoMode ? 'info' : 'warning'}
+            type="warning"
             showIcon
             style={{ marginBottom: 16 }}
-            message={isDemoMode ? '演示模式：所有资产、任务、漏洞及节点信息均为模拟数据' : status?.enabled.includes('synthetic-worker') ? '本地框架运行中：任务和结果已接入 SQLite' : '账号管理已连接 Server；扫描业务仍未开放'}
-            description={status?.enabled.includes('synthetic-worker') ? '可选择模拟任务或已接入的扫描引擎；只有明确创建的真实任务才连接指定目标，跳过标记和时间窗仍生效。' : isDemoMode ? '演示操作仅影响当前浏览器内的页面；不会发起扫描、写数据库、解除隔离或生成审计。' : error ? `Server 状态接口不可用：${error}` : '本地业务已接 SQLite；引擎就绪状态见节点页面。'}
+            message={status?.enabled.includes('synthetic-worker') ? '本地框架运行中：任务和结果已接入 SQLite' : '账号管理已连接 Server；扫描业务仍未开放'}
+            description={status?.enabled.includes('synthetic-worker') ? '只有明确创建的真实任务才连接指定目标，跳过标记和时间窗仍生效。' : error ? `Server 状态接口不可用：${error}` : '本地业务已接 SQLite；引擎就绪状态见节点页面。'}
           />
           {children}
         </Content>

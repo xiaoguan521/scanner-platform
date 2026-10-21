@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Button, Card, DatePicker, Empty, Input, Space, Table, Typography } from 'antd';
 import type { Dayjs } from 'dayjs';
 import { ReloadOutlined, SearchOutlined } from '@ant-design/icons';
-import { isDemoMode, requestJSON } from '../../api/client';
+import { requestJSON } from '../../api/client';
 import type { AuditLog } from '../../types';
 import { buildAuditQuery, defaultAuditFilters, type AuditFilters } from './filters';
 
@@ -18,7 +18,6 @@ export const AuditPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(async (signal?: AbortSignal) => {
-    if (isDemoMode) return;
     setLoading(true);
     try {
       const response = await requestJSON<{ items: AuditLog[]; total: number }>(`/api/v1/audit-logs${buildAuditQuery(filters, pageSize)}`, 'GET', undefined, signal);
@@ -60,8 +59,7 @@ export const AuditPage: React.FC = () => {
 
   return <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
     <Alert showIcon type="info" message="只读审计查询" description="仅管理员可查看谁在何时执行了什么操作及关联对象。敏感详情、目标地址和凭据不会通过此查询接口返回。" />
-    {isDemoMode && <Alert showIcon type="warning" message="演示模式不读取审计日志" description="连接 Server 并使用管理员账号后可查询 SQLite 中的审计记录。" />}
-    {!isDemoMode && error && <Alert showIcon type="error" message="审计日志加载失败" description={error} />}
+    {error && <Alert showIcon type="error" message="审计日志加载失败" description={error} />}
     <Card title="筛选审计记录" extra={<Space><Button onClick={clear}>清空</Button><Button icon={<SearchOutlined />} type="primary" onClick={apply}>查询</Button><Button icon={<ReloadOutlined />} onClick={() => void reload()} loading={loading}>刷新</Button></Space>}>
       <Space wrap>
         <Input value={draft.actor} onChange={event => setDraft(current => ({ ...current, actor: event.target.value }))} placeholder="操作者" allowClear style={{ width: 180 }} />

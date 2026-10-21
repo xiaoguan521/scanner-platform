@@ -38,11 +38,11 @@ export const navigationGroups: readonly NavigationGroup[] = [
   },
 ];
 
-export function visibleNavigation(isDemoMode: boolean, role?: NavigationRole): NavigationGroup[] {
+export function visibleNavigation(role?: NavigationRole): NavigationGroup[] {
   return navigationGroups
     .map(group => ({
       ...group,
-      children: group.children.filter(item => !item.roles || isDemoMode || (role !== undefined && item.roles.includes(role))),
+      children: group.children.filter(item => !item.roles || (role !== undefined && item.roles.includes(role))),
     }))
     .filter(group => group.children.length > 0);
 }

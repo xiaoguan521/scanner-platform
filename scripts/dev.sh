@@ -13,7 +13,7 @@ mkdir -p "$SCANNER_INPUTS"
 mkdir -p "$SCANNER_LOG_DIR" dist
 if [ "${SCANNER_SKIP_BUILD:-0}" != 1 ]; then
   npm --prefix web ci --ignore-scripts
-  VITE_DATA_MODE=server npm --prefix web run build
+  npm --prefix web run build
   go build -o dist/sec-server ./cmd/server
   go build -o dist/sec-worker ./cmd/worker
   go build -o dist/sec-updater ./cmd/updater
@@ -36,7 +36,7 @@ cleanup() {
 }
 trap cleanup EXIT
 trap 'exit 0' INT TERM
-./dist/sec-server --listen "127.0.0.1:$SCANNER_PORT" --db "$SCANNER_DB" --ui-dir web/dist --seed-demo >"$SCANNER_LOG_DIR/server.log" 2>&1 &
+./dist/sec-server --listen "127.0.0.1:$SCANNER_PORT" --db "$SCANNER_DB" --ui-dir web/dist >"$SCANNER_LOG_DIR/server.log" 2>&1 &
 server_pid=$!
 attempt=0
 until curl --fail --silent "http://127.0.0.1:$SCANNER_PORT/readyz" >/dev/null; do
@@ -64,7 +64,7 @@ else
     >"$SCANNER_LOG_DIR/updater.log" 2>&1 &
 fi
 updater_pid=$!
-printf '\n打开：http://127.0.0.1:%s\n首次使用在网页设置管理员；已有账号直接登录。\n模拟任务不连接目标；真实扫描只在网页明确选择引擎并创建任务后执行。\n按 Ctrl+C 停止，SQLite 保留在 %s\n' "$SCANNER_PORT" "$SCANNER_DB"
+printf '\n打开：http://127.0.0.1:%s\n首次使用在网页设置管理员；已有账号直接登录。\n扫描只在网页明确选择引擎并创建任务后执行。\n按 Ctrl+C 停止，SQLite 保留在 %s\n' "$SCANNER_PORT" "$SCANNER_DB"
 while :; do
   for process in "$server_pid" "$worker_pid" "$updater_pid"; do
     if ! kill -0 "$process" 2>/dev/null; then printf '本地服务退出，请查看 %s 下的日志。\n' "$SCANNER_LOG_DIR" >&2; exit 1; fi

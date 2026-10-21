@@ -3,10 +3,9 @@ import { Alert, Button, Card, Checkbox, DatePicker, Drawer, Dropdown, Empty, For
 import type { Dayjs } from 'dayjs';
 import { DownloadOutlined, FileTextOutlined, SettingOutlined, UploadOutlined } from '@ant-design/icons';
 import { useCollection } from '../../api/hooks';
-import { isDemoMode, requestJSON } from '../../api/client';
+import { requestJSON } from '../../api/client';
 import { CollectionNotice } from '../../api/CollectionNotice';
 import { useAuth } from '../../auth/AuthProvider';
-import { mockAssets, mockTasks } from '../../mock/data';
 import type { ReportJob, ReportScope, ReportTemplate } from './types';
 
 const sections = { cover: '封面', overview: '综述', assets: '资产统计', 'asset-risks': '资产风险信息', 'asset-details': '资产详情', 'risk-statistics': '风险统计', 'risk-details': '风险详情', appendix: '附录' };
@@ -32,9 +31,9 @@ function reportTargetHost(raw: string): string {
 
 export const ReportsPage: React.FC = () => {
   const { user } = useAuth();
-  const canWrite = !isDemoMode && (user?.role === 'admin' || user?.role === 'security_engineer');
-  const { data: assets, loading: assetsLoading, error: assetsError } = useCollection('assets', mockAssets);
-  const { data: tasks, loading: tasksLoading, error: tasksError } = useCollection('tasks', mockTasks);
+  const canWrite = user?.role === 'admin' || user?.role === 'security_engineer';
+  const { data: assets, loading: assetsLoading, error: assetsError } = useCollection('assets');
+  const { data: tasks, loading: tasksLoading, error: tasksError } = useCollection('tasks');
   const [templates, setTemplates] = useState<ReportTemplate[]>([]);
   const [jobs, setJobs] = useState<ReportJob[]>([]);
   const [templateId, setTemplateId] = useState('default');
@@ -63,7 +62,6 @@ export const ReportsPage: React.FC = () => {
   }, [tasks, scopedAssets, businessGroup, assetId]);
   const selectedTemplate = templates.find(t => t.id === templateId);
   const reload = useCallback(async (signal?: AbortSignal) => {
-    if (isDemoMode) return;
     try {
       const [reports, nextTemplates] = await Promise.all([
         requestJSON<{ items: ReportJob[] }>(endpoint, 'GET', undefined, signal),
@@ -90,7 +88,6 @@ export const ReportsPage: React.FC = () => {
   return <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
     <CollectionNotice loading={assetsLoading || tasksLoading} error={assetsError || tasksError || error} />
     <Alert showIcon type="info" message="后台生成与历史记录" description="每次生成冻结一份带版本的数据快照，HTML、Excel、Word、CSV 与 JSON 使用相同数据与统计规则。CSV 为漏洞明细平面文件，JSON 为完整快照。弱口令本次未启用，登录入口单独统计。报告上限 64 MiB，失败可用原快照重试。" />
-    {isDemoMode && <Alert showIcon type="warning" message="演示模式不创建报告作业；请连接 Server 后生成和下载报告。" />}
     <Card title={<Space><FileTextOutlined />生成安全报告</Space>} extra={<Button icon={<SettingOutlined />} disabled={!canWrite || !selectedTemplate} onClick={editTemplate}>配置模板</Button>}>
       <Space wrap align="end">
         <div><Text type="secondary">报告模板</Text><Select value={templateId} onChange={setTemplateId} style={{ display: 'block', width: 190 }} options={templates.map(t => ({ value: t.id, label: t.name }))} /></div>
@@ -103,7 +100,7 @@ export const ReportsPage: React.FC = () => {
       </Space>
       <Typography.Paragraph type="secondary" style={{ marginTop: 14, marginBottom: 0 }}>任务范围使用该任务的历史观察记录；失败、取消或尚未完成的任务会保留状态说明。未知字段显示“未采集”或“未知”。</Typography.Paragraph>
     </Card>
-    <Card title="报告历史" extra={<Button onClick={() => void reload()} disabled={isDemoMode}>刷新</Button>}>
+    <Card title="报告历史" extra={<Button onClick={() => void reload()}>刷新</Button>}>
       <Table<ReportJob> rowKey="id" dataSource={jobs} scroll={{ x: 1300 }} pagination={{ pageSize: 10 }} locale={{ emptyText: <Empty description="暂无报告，选择范围后生成" /> }} columns={[
         { title: '报告名称', dataIndex: 'name', width: 330, ellipsis: true, render: (value: string, job) => <span title={`${value}\n快照 ${job.snapshotId}`}>{value}</span> },
         { title: '格式', dataIndex: 'format', width: 85, render: (value: ReportJob['format']) => formatNames[value] },

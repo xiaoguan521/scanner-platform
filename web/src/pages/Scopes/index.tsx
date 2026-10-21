@@ -1,11 +1,10 @@
 import React, { useMemo, useState } from 'react';
 import { Alert, Button, Card, Form, Input, message, Modal, Select, Space, Table, Tag, Typography } from 'antd';
 import { PlusOutlined } from '@ant-design/icons';
-import { apiClient, isDemoMode } from '../../api/client';
+import { apiClient } from '../../api/client';
 import { useCollection } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
 import { useAuth } from '../../auth/AuthProvider';
-import { mockAssets, mockScopes } from '../../mock/data';
 import type { ApprovalDecision, AuthorizedScope, PortRequest, ReviewStatus, TimeWindow } from '../../types';
 import { filterScopesByExpiry, scopeExpiryLabel, scopeExpiryState, type ScopeExpiryFilter } from './expiry';
 
@@ -31,12 +30,12 @@ type ReviewTarget = { kind: 'scope'; id: string; requestedBy?: string } |
 
 export const ScopesPage: React.FC = () => {
   const { user } = useAuth();
-  const { data: scopes, setData: setScopes, loading, error } = useCollection('scopes', mockScopes);
-  const { data: assets } = useCollection('assets', mockAssets);
+  const { data: scopes, setData: setScopes, loading, error } = useCollection('scopes');
+  const { data: assets } = useCollection('assets');
   const { data: ports, setData: setPorts, loading: portsLoading, error: portsError } =
-    useCollection('port-requests', []);
-  const canRequest = !isDemoMode && (user?.role === 'admin' || user?.role === 'security_engineer');
-  const canReview = !isDemoMode && (user?.role === 'admin' || user?.role === 'ops_approver');
+    useCollection('port-requests');
+  const canRequest = user?.role === 'admin' || user?.role === 'security_engineer';
+  const canReview = user?.role === 'admin' || user?.role === 'ops_approver';
   const [requestOpen, setRequestOpen] = useState(false);
   const [editingScope, setEditingScope] = useState<AuthorizedScope|null>(null);
   const [reviewTarget, setReviewTarget] = useState<ReviewTarget | null>(null);
@@ -151,7 +150,7 @@ export const ScopesPage: React.FC = () => {
         ? <Alert showIcon type="warning" message={`有 ${expiryCounts.expiring} 条授权将在 7 天内到期`} description="请提前续期并重新完成审批，避免任务因授权失效而无法领取。" />
         : null}
     <Alert showIcon type="warning" message="审批记录不等于扫描执行许可"
-      description="当前只保存已登记主机 IP 的授权申请及端口人工审核结果。审批记录用于管理台账；早期开发模式中，任务按明确登记的端口和任务时间窗执行，跳过端口不会下发。当前仅模拟执行。" />
+      description="当前只保存已登记主机 IP 的授权申请及端口人工审核结果。审批记录用于管理台账；任务按明确登记的端口和任务时间窗执行，跳过端口不会下发。" />
     <Card title="扫描授权范围与执行时间窗" extra={
       <Space>
         <Select aria-label="授权期限筛选" value={expiryFilter} onChange={setExpiryFilter} style={{width:150}}

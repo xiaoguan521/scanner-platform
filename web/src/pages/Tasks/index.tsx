@@ -3,10 +3,9 @@ import { Alert, Button, Card, Checkbox, Descriptions, Drawer, Form, Input, Input
 import { DownloadOutlined, PlusOutlined } from '@ant-design/icons';
 import { useCollection } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
-import { apiClient, isDemoMode } from '../../api/client';
+import { apiClient } from '../../api/client';
 import { archiveTask, cancelTask, createScanPlan, createTask, deleteScanPlan, deleteSchedule, deleteTask, exportTask, fetchScheduleRuns, fetchTask, fetchTaskLogs, pauseTask, restoreTask, resumeTask, saveSchedule, toggleSchedule, updateScanPlan, updateSchedule } from '../../api/runtime';
 import { useAuth } from '../../auth/AuthProvider';
-import { mockAssets, mockScanPlans, mockTasks } from '../../mock/data';
 import type { CustomRule, PortProbeRange, ScanPlan, ScanPlanInput, ScanTask, Schedule, ScheduleRun, TaskInput, ScanPolicy, TaskLog } from '../../types';
 
 import { parsePortRanges, showRanges, coversAllPorts, presetLabels, summarizePorts, compressPorts, previewProbePorts } from './policy';
@@ -27,15 +26,15 @@ function validateProbeRanges(text?:string):void{
   if(ranges.length===0) throw new Error('此模式至少填写一个端口或端口范围');
 }
 export const TasksPage:React.FC=()=>{
-  const {user}=useAuth();const canWrite=!isDemoMode&&(user?.role==='admin'||user?.role==='security_engineer');const canDelete=!isDemoMode&&user?.role==='admin';
+  const {user}=useAuth();const canWrite=user?.role==='admin'||user?.role==='security_engineer';const canDelete=user?.role==='admin';
   const [showArchived,setShowArchived]=useState(false);
-  const {data:tasks,setData:setTasks,loading,error}=useCollection('tasks',mockTasks,showArchived?'?archived=true':'?archived=false');
-  const {data:assets}=useCollection('assets',mockAssets);
-  const {data:scanPlans,setData:setScanPlans,loading:scanPlansLoading,error:scanPlansError}=useCollection('scan-plans',mockScanPlans);
-  const {data:customRules}=useCollection('custom-rules',[] as CustomRule[]);
-  const {data:schedules,setData:setSchedules,loading:scheduleLoading,error:scheduleError}=useCollection('schedules',[]);
+  const {data:tasks,setData:setTasks,loading,error}=useCollection('tasks', showArchived?'?archived=true':'?archived=false');
+  const {data:assets}=useCollection('assets');
+  const {data:scanPlans,setData:setScanPlans,loading:scanPlansLoading,error:scanPlansError}=useCollection('scan-plans');
+  const {data:customRules}=useCollection('custom-rules');
+  const {data:schedules,setData:setSchedules,loading:scheduleLoading,error:scheduleError}=useCollection('schedules');
   const [policy,setPolicy]=useState<ScanPolicy|null>(null);const [policyError,setPolicyError]=useState('');
-  useEffect(()=>{if(isDemoMode)return;const controller=new AbortController();apiClient.scanPolicy().then(setPolicy).catch(e=>setPolicyError(String(e)));return()=>controller.abort();},[]);
+  useEffect(()=>{const controller=new AbortController();apiClient.scanPolicy().then(setPolicy).catch(e=>setPolicyError(String(e)));return()=>controller.abort();},[]);
   const [open,setOpen]=useState(false);const [busy,setBusy]=useState(false);const [form]=Form.useForm<Values>();
   const [planEditorOpen,setPlanEditorOpen]=useState(false);const [planEditorBusy,setPlanEditorBusy]=useState(false);const [editingPlan,setEditingPlan]=useState<ScanPlan|null>(null);const [planForm]=Form.useForm<PlanEditorValues>();
   const [wizardStep,setWizardStep]=useState(0);
@@ -78,13 +77,13 @@ export const TasksPage:React.FC=()=>{
   useEffect(()=>{if(engine==='port-probe'&&mode==='schedule')form.setFieldValue('mode','now');},[engine,mode,form]);
   useEffect(()=>{
     const controller=new AbortController();
-    if(!historySchedule||isDemoMode)return()=>controller.abort();
+    if(!historySchedule)return()=>controller.abort();
     setScheduleRunLoading(true);setScheduleRunError('');
     fetchScheduleRuns(historySchedule.id,scheduleRunPage,controller.signal).then(response=>{if(!controller.signal.aborted){setScheduleRuns(response.items);setScheduleRunTotal(response.total);}}).catch(cause=>{if(!controller.signal.aborted)setScheduleRunError(cause instanceof Error?cause.message:'历史运行记录加载失败');}).finally(()=>{if(!controller.signal.aborted)setScheduleRunLoading(false);});
     return()=>controller.abort();
   },[historySchedule,scheduleRunPage]);
   useEffect(()=>{
-    if(!detailTask||isDemoMode)return;
+    if(!detailTask)return;
     const controller=new AbortController();
     setDetailLoading(true);setDetailError('');
     Promise.all([fetchTask(detailTask.id,controller.signal),fetchTaskLogs(detailTask.id,controller.signal)]).then(([task,logs])=>{
@@ -239,16 +238,16 @@ export const TasksPage:React.FC=()=>{
           {detailTask.error&&<Alert type="error" showIcon message={detailTask.error} style={{marginTop:12}}/>}
         </Card>
         <Card size="small" title="只读任务日志" extra={<Typography.Text type="secondary">不显示原始引擎输出、凭据或请求响应</Typography.Text>}>
-          {isDemoMode?<Alert type="info" showIcon message="演示模式不读取服务端日志"/>:<Table<TaskLog> size="small" rowKey="id" loading={detailLoading} dataSource={detailLogs} pagination={{pageSize:8,hideOnSinglePage:true}} locale={{emptyText:'暂无任务日志'}} columns={[
+          <Table<TaskLog> size="small" rowKey="id" loading={detailLoading} dataSource={detailLogs} pagination={{pageSize:8,hideOnSinglePage:true}} locale={{emptyText:'暂无任务日志'}} columns={[
             {title:'时间',dataIndex:'createdAt',width:190,render:(value:string)=>new Date(value).toLocaleString()},
             {title:'事件',dataIndex:'message'},
             {title:'操作者',dataIndex:'actor',width:150},
-          ]}/>}
+          ]}/>
         </Card>
         <Space wrap>
-          {!['COMPLETED','CANCELED','FAILED'].includes(detailTask.status)&&detailTask.status!=='PAUSED'&&<Button disabled={!canWrite||isDemoMode} onClick={()=>void pause(detailTask)}>暂停任务</Button>}
-          {detailTask.status==='PAUSED'&&<Button type="primary" disabled={!canWrite||isDemoMode} onClick={()=>void resume(detailTask)}>恢复任务</Button>}
-          {!['COMPLETED','CANCELED','FAILED'].includes(detailTask.status)&&<Button danger disabled={!canWrite||isDemoMode} onClick={()=>void stop(detailTask.id)}>取消任务</Button>}
+          {!['COMPLETED','CANCELED','FAILED'].includes(detailTask.status)&&detailTask.status!=='PAUSED'&&<Button disabled={!canWrite} onClick={()=>void pause(detailTask)}>暂停任务</Button>}
+          {detailTask.status==='PAUSED'&&<Button type="primary" disabled={!canWrite} onClick={()=>void resume(detailTask)}>恢复任务</Button>}
+          {!['COMPLETED','CANCELED','FAILED'].includes(detailTask.status)&&<Button danger disabled={!canWrite} onClick={()=>void stop(detailTask.id)}>取消任务</Button>}
           <Button icon={<DownloadOutlined/>} loading={detailExporting==='json'} onClick={()=>void downloadTaskResult('json')}>导出 JSON 结果</Button>
           <Button icon={<DownloadOutlined/>} loading={detailExporting==='csv'} onClick={()=>void downloadTaskResult('csv')}>导出 CSV 结果</Button>
           <Typography.Text type="secondary">导出包含稳定的任务与发现字段，不包含证据、凭据和原始引擎输出。</Typography.Text>
@@ -336,8 +335,7 @@ export const TasksPage:React.FC=()=>{
       </Form>
     </Modal>
     <Modal title={`定时任务历史运行${historySchedule?`：${historySchedule.name}`:''}`} open={Boolean(historySchedule)} onCancel={()=>setHistorySchedule(null)} footer={<Button onClick={()=>setHistorySchedule(null)}>关闭</Button>} width={780}>
-      {isDemoMode&&<Alert type="warning" showIcon message="演示模式不读取历史运行记录"/>}
-      {!isDemoMode&&scheduleRunError&&<Alert type="error" showIcon message="历史运行记录加载失败" description={scheduleRunError}/>}
+      {scheduleRunError&&<Alert type="error" showIcon message="历史运行记录加载失败" description={scheduleRunError}/>}
       <Table<ScheduleRun> rowKey="id" loading={scheduleRunLoading} dataSource={scheduleRuns} locale={{emptyText:'暂无运行记录'}} pagination={{current:scheduleRunPage,pageSize:50,total:scheduleRunTotal,hideOnSinglePage:true,showSizeChanger:false,onChange:page=>setScheduleRunPage(page)}} columns={[
         {title:'触发时间',dataIndex:'triggeredAt',width:190,render:(value:string)=>new Date(value).toLocaleString()},
         {title:'状态',dataIndex:'status',width:150,render:(value:string)=><Tag color={value==='COMPLETED'?'success':value==='FAILED'?'error':value==='RUNNING'?'processing':'default'}>{scheduleRunNames[value]??value}</Tag>},

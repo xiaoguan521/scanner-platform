@@ -1,11 +1,10 @@
 import React, { useMemo, useState } from 'react';
 import { Alert, Button, Card, Form, Input, message, Modal, Select, Space, Table, Tag, Typography } from 'antd';
 import { PlusOutlined, UserOutlined } from '@ant-design/icons';
-import { isDemoMode, apiClient } from '../../api/client';
+import { apiClient } from '../../api/client';
 import { useCollection } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
 import { useAuth } from '../../auth/AuthProvider';
-import { mockUsers } from '../../mock/users';
 import type { User, UserRole } from '../../types';
 
 const roleNames: Record<UserRole, string> = {
@@ -18,7 +17,7 @@ const roleOptions = Object.entries(roleNames).map(([value,label])=>({value,label
 
 export const UsersPage: React.FC = () => {
   const {user:currentUser} = useAuth();
-  const {data: users, setData: setUsers, loading, error} = useCollection('users', mockUsers);
+  const {data: users, setData: setUsers, loading, error} = useCollection('users');
   const [query,setQuery] = useState('');
   const [creating,setCreating] = useState(false);
   const [editing,setEditing] = useState<User|null>(null);
@@ -28,7 +27,7 @@ export const UsersPage: React.FC = () => {
   const [editForm] = Form.useForm();
   const [resetForm] = Form.useForm<{password:string;confirmPassword:string}>();
   const rows = useMemo(()=>users.filter(u=>u.username.toLowerCase().includes(query.trim().toLowerCase())),[users,query]);
-  const canManage = !isDemoMode && currentUser?.role==='admin';
+  const canManage = currentUser?.role==='admin';
 
   const createUser = async (values:{username:string,password:string,role:UserRole}) => {
     setBusy(true);
@@ -61,9 +60,7 @@ export const UsersPage: React.FC = () => {
   };
   return <div style={{display:'flex',flexDirection:'column',gap:20}}>
     <CollectionNotice loading={loading} error={error}/>
-    <Alert showIcon type={isDemoMode?'info':'success'}
-      message={isDemoMode?'用户管理演示：数据未连接数据库':'用户管理：已连接 SQLite'}
-      description={isDemoMode?'请使用 VITE_DATA_MODE=server 启动前端，并初始化管理员后登录。':'管理员可以创建、修改角色及启停用户。其余扫描业务仍未启用。'}/>
+    <Alert showIcon type="success" message="用户管理：已连接 SQLite" description="管理员可以创建、修改角色及启停用户。其余扫描业务仍未启用。"/>
     <Card title={<Space><UserOutlined/> 用户与角色管理</Space>}
       extra={<Space><Input.Search value={query} onChange={e=>setQuery(e.target.value)} allowClear placeholder="搜索用户名" style={{width:180}}/>
         <Button type="primary" icon={<PlusOutlined/>} disabled={!canManage} onClick={()=>setCreating(true)}>新建用户</Button>

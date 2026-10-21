@@ -3,9 +3,8 @@ import React, { useMemo, useState } from 'react';
 import { Alert, Button, Card, Form, Input, message, Modal, Select, Space, Table, Tag, Typography, Drawer, Descriptions, Checkbox, Row, Col } from 'antd';
 import type { FormInstance } from 'antd';
 import { DownloadOutlined, PlusOutlined } from '@ant-design/icons';
-import { mockAssets, mockPortQuarantines, mockTasks } from '../../mock/data';
 import type { Asset, AssetProfile, ScanTask } from '../../types';
-import { apiClient, isDemoMode } from '../../api/client';
+import { apiClient } from '../../api/client';
 import { useCollection } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
 import { useAuth } from '../../auth/AuthProvider';
@@ -30,10 +29,10 @@ const profileInput=(input:AssetProfile):AssetProfile=>Object.fromEntries([...pro
 const boolLabel=(v:boolean|null|undefined)=>v===true?'是':v===false?'否':'未知';
 export const AssetsPage: React.FC = () => {
   const {user} = useAuth();
-  const canEdit = isDemoMode || user?.role === 'admin' || user?.role === 'security_engineer';
-  const {data:assets,setData:setAssets,loading,error} = useCollection('assets',mockAssets);
-  const {data:quarantines,setData:setQuarantines} = useCollection('port-quarantines',mockPortQuarantines);
-  const {data:tasks,loading:taskLoading,error:taskError} = useCollection('tasks',mockTasks);
+  const canEdit = user?.role === 'admin' || user?.role === 'security_engineer';
+  const {data:assets,setData:setAssets,loading,error} = useCollection('assets');
+  const {data:quarantines,setData:setQuarantines} = useCollection('port-quarantines');
+  const {data:tasks,loading:taskLoading,error:taskError} = useCollection('tasks');
   const [detailId,setDetailId]=useState('');const detailAsset=assets.find(a=>a.id===detailId);
   const [releaseTarget,setReleaseTarget]=useState<{assetId:string;port:number}|null>(null);const [releaseReason,setReleaseReason]=useState('');
   const [createOpen,setCreateOpen] = useState(false);
@@ -53,7 +52,6 @@ export const AssetsPage: React.FC = () => {
   const rows = useMemo(()=>assets.filter(a=>(a.address+' '+(a.name??'')+' '+a.businessGroup+' '+a.owner).toLowerCase().includes(filter.toLowerCase())),[assets,filter]);
   const checkReachability = async(asset:Asset) => {
     if(asset.kind!=='host')return;
-    if(isDemoMode){message.info('演示模式不会向目标发送 Ping');return;}
     setCheckingAsset(asset.id);
     try {
       const result=await apiClient.checkAssetReachability(asset.id);
@@ -67,7 +65,6 @@ export const AssetsPage: React.FC = () => {
     const address=String(form.getFieldValue('address')??'').trim();
     if(!address){message.warning('请先填写资产地址');return;}
     if(kind!=='host'){message.info('镜像仓库不支持 ICMP Ping');return;}
-    if(isDemoMode){message.info('演示模式不会向目标发送 Ping');return;}
     setTestingForm(source);
     try {
       const result=await apiClient.testAssetAddress(address);
@@ -82,10 +79,10 @@ export const AssetsPage: React.FC = () => {
     okText:'删除',okButtonProps:{danger:true},cancelText:'取消',
     onOk:async()=>{
       try {
-        if(!isDemoMode) await apiClient.deleteAsset(asset.id);
+        await apiClient.deleteAsset(asset.id);
         setAssets(prev=>prev.filter(item=>item.id!==asset.id));
         if(candidateAsset?.id===asset.id)setCandidateAsset(null);
-        message.success(isDemoMode?'演示资产已移除':'资产已删除');
+        message.success('资产已删除');
       } catch(cause) {message.error(cause instanceof Error?cause.message:'删除失败');throw cause;}
     },
   });
@@ -113,7 +110,6 @@ export const AssetsPage: React.FC = () => {
   },[candidateAsset,latestProbes]);
   const filteredCandidateRows = useMemo(()=>candidateRows.filter(row=>!candidateFilter||String(row.port).includes(candidateFilter.trim())),[candidateRows,candidateFilter]);
   const exportAssets = async() => {
-    if(isDemoMode){message.info('演示模式没有服务端资产导出，请切换到 Server 模式');return;}
     setExporting(true);
     try {
       const blob=await apiClient.exportAssets(filter);
@@ -135,17 +131,10 @@ export const AssetsPage: React.FC = () => {
     try {
       const requestedPorts=parsePorts(input.requestedPorts);
       const skippedPorts=expandPortRanges(input.skippedPorts);
-      let asset: Asset;
-      if (isDemoMode) {
-        asset={...profileInput(input),skippedPorts,id:'demo-'+Date.now(),kind:input.kind,address:input.address,businessGroup:input.businessGroup,
-          owner:input.owner,createdAt:new Date().toISOString(),ports:[],requestedPorts,quarantinedPorts:[]};
-        message.info('仅演示：添加本地草稿，端口尚未获扫描授权');
-      } else {
-        asset=await apiClient.createAsset({...input,requestedPorts,skippedPorts});
-        message.success('资产与明确输入的端口已保存；跳过端口不会下发给 Worker');
-      }
+      const asset=await apiClient.createAsset({...input,requestedPorts,skippedPorts});
+      message.success('资产与明确输入的端口已保存；跳过端口不会下发给 Worker');
       setAssets(prev=>[asset,...prev]);setCreateOpen(false);createForm.resetFields();
-      if(asset.kind==='host'&&!isDemoMode) void checkReachability(asset);
+      if(asset.kind==='host') void checkReachability(asset);
     } catch(e) {message.error(e instanceof Error?e.message:'登记失败');}
     finally {setSaving(false);}
   };
@@ -156,11 +145,11 @@ export const AssetsPage: React.FC = () => {
       const address=input.address!.trim();
       const addressChanged=address!==editing.address;
       const patch={...profileInput(input),address,businessGroup:input.businessGroup!,owner:input.owner!,requestedPorts:parsePorts(input.requestedPorts),skippedPorts:expandPortRanges(input.skippedPorts)};
-      const result=isDemoMode?{...editing,...patch}:await apiClient.updateAsset(editing.id,patch);
+      const result=await apiClient.updateAsset(editing.id,patch);
       setAssets(prev=>prev.map(a=>a.id===editing.id?result:a));
       setEditing(null);
-      message[isDemoMode?'info':'success'](isDemoMode?'仅演示：更新本地数据':addressChanged?'资产 IP 已更新；旧授权已撤销，需重新申请审批':'资产信息已保存；原有端口审批已重置');
-      if(addressChanged&&result.kind==='host'&&!isDemoMode) void checkReachability(result);
+      message.success(addressChanged?'资产 IP 已更新；旧授权已撤销，需重新申请审批':'资产信息已保存；原有端口审批已重置');
+      if(addressChanged&&result.kind==='host') void checkReachability(result);
     }catch(e){message.error(e instanceof Error?e.message:'更新失败');}
     finally{setSaving(false);}
   };
@@ -168,10 +157,10 @@ export const AssetsPage: React.FC = () => {
     if(!releaseTarget||!releaseReason.trim())return;
     setSaving(true);
     try {
-      if(!isDemoMode)await apiClient.releaseQuarantine(releaseTarget.assetId,releaseTarget.port,releaseReason.trim());
+      await apiClient.releaseQuarantine(releaseTarget.assetId,releaseTarget.port,releaseReason.trim());
       setQuarantines(prev=>prev.map(q=>q.assetId===releaseTarget.assetId&&q.port===releaseTarget.port?{...q,status:'RELEASED'}:q));
       setAssets(prev=>prev.map(a=>a.id===releaseTarget.assetId?{...a,quarantinedPorts:a.quarantinedPorts?.filter(p=>p!==releaseTarget.port),services:a.services?.map(s=>s.port===releaseTarget.port?{...s,quarantined:false}:s)}:a));
-      setReleaseTarget(null);setReleaseReason('');message.success(isDemoMode?'仅演示：解除本地隔离标记':'隔离已解除并记录审计；排除和扫描授权仍独立生效');
+      setReleaseTarget(null);setReleaseReason('');message.success('隔离已解除并记录审计；排除和扫描授权仍独立生效');
     }catch(e){message.error(e instanceof Error?e.message:'解除失败');}finally{setSaving(false);}
   };
   const requestSelectedCandidates = async() => {
@@ -202,14 +191,14 @@ export const AssetsPage: React.FC = () => {
       <Table rowKey={q=>q.assetId+'-'+q.port} dataSource={quarantines.filter(q=>q.status==='ACTIVE')} size="small" pagination={false}
         columns={[
           {title:'地址',dataIndex:'address'},{title:'端口',dataIndex:'port'},{title:'原因',dataIndex:'reason'},
-          {title:'操作',render:(_:unknown,q:typeof quarantines[number])=><Button type="link" disabled={!isDemoMode&&user?.role!=='admin'}
+          {title:'操作',render:(_:unknown,q:typeof quarantines[number])=><Button type="link" disabled={user?.role!=='admin'}
             onClick={()=>{setReleaseTarget({assetId:q.assetId,port:q.port});setReleaseReason('');}}>人工解除</Button>}
         ]}/>
     </Card>}
     <Card title="资产登记台账" extra={<Space>
       <Input.Search placeholder="搜索地址、组或负责人" allowClear value={filter} onChange={e=>setFilter(e.target.value)} style={{width:220}}/>
-      <Button icon={<DownloadOutlined/>} loading={exporting} disabled={isDemoMode} onClick={()=>void exportAssets()}>导出 CSV</Button>
-      <AssetImport disabled={!canEdit||isDemoMode} onImported={async()=>{const result=await apiClient.collection('assets');setAssets(result.items);}}/>
+      <Button icon={<DownloadOutlined/>} loading={exporting} onClick={()=>void exportAssets()}>导出 CSV</Button>
+      <AssetImport disabled={!canEdit} onImported={async()=>{const result=await apiClient.collection('assets');setAssets(result.items);}}/>
       <Button type="primary" icon={<PlusOutlined/>} disabled={!canEdit} onClick={()=>setCreateOpen(true)}>登记资产</Button>
     </Space>}>
       <Table<Asset> rowKey="id" dataSource={rows} loading={loading||taskLoading} tableLayout="fixed" scroll={{x:1600}} pagination={{pageSize:10}}
@@ -269,14 +258,14 @@ export const AssetsPage: React.FC = () => {
       <Alert type="warning" showIcon message={`解除端口 ${releaseTarget?.port??''} 的疑似转发隔离前，请确认已人工核查服务与转发配置。`} style={{marginBottom:16}}/>
       <Input.TextArea aria-label="解除原因" value={releaseReason} onChange={e=>setReleaseReason(e.target.value)} maxLength={1000} rows={3} placeholder="必填：人工核查依据和解除原因"/>
     </Modal>
-    <Modal title={isDemoMode?'演示：登记资产':'登记新资产'} open={createOpen} width={720}
+    <Modal title="登记新资产" open={createOpen} width={720}
       onCancel={()=>setCreateOpen(false)} onOk={()=>createForm.submit()} okButtonProps={{loading:saving||testingForm==='create'}}>
       <Form form={createForm} layout="vertical" onFinish={create} autoComplete="off">
         <Form.Item name="kind" label="资产类型" initialValue="host" rules={[{required:true}]}>
           <Select options={[{label:'主机（纯数字 IPv4/IPv6）',value:'host'},{label:'镜像仓库',value:'image_repo'}]}/>
         </Form.Item>
         <Form.Item name="address" label="资产地址" rules={[{required:true}]} extra="主机只接受数字 IP，不展开 CIDR 或域名；测试只检查当前输入，不会保存资产或测试状态。">
-          <Input placeholder="例如 192.0.2.18" addonAfter={createKind==='host'&&<Button type="link" size="small" disabled={!canEdit||isDemoMode} loading={testingForm==='create'} onClick={()=>void testFormAddress(createForm,createKind,'create')}>测试连接</Button>}/>
+          <Input placeholder="例如 192.0.2.18" addonAfter={createKind==='host'&&<Button type="link" size="small" disabled={!canEdit} loading={testingForm==='create'} onClick={()=>void testFormAddress(createForm,createKind,'create')}>测试连接</Button>}/>
         </Form.Item>
         <ProfileFields/><Form.Item name="businessGroup" label="所属业务组" rules={[{required:true}]}><Input maxLength={100}/></Form.Item>
         <Form.Item name="owner" label="责任人" rules={[{required:true}]}><Input maxLength={100}/></Form.Item>
@@ -290,7 +279,7 @@ export const AssetsPage: React.FC = () => {
       onCancel={()=>setEditing(null)} onOk={()=>editForm.submit()} okButtonProps={{loading:saving||testingForm==='edit'}}>
       <Alert type="warning" showIcon style={{marginBottom:16}} message="保存会重置已有端口审批；修改主机 IP 会撤销该资产的授权范围，并重新检查 Ping。" />
       <Form form={editForm} layout="vertical" onFinish={update}>
-        <Form.Item name="address" label="资产地址" rules={[{required:true,message:'请输入资产地址'}]} extra={editing?.kind==='host'?'主机仅接受数字 IP，不支持 CIDR 或域名；修改后需重新申请授权。测试只检查当前输入，不保存测试状态。':'镜像仓库地址按仓库格式校验。'}><Input maxLength={255} addonAfter={editing?.kind==='host'&&<Button type="link" size="small" disabled={!canEdit||isDemoMode} loading={testingForm==='edit'} onClick={()=>void testFormAddress(editForm,'host','edit')}>测试连接</Button>}/></Form.Item>
+        <Form.Item name="address" label="资产地址" rules={[{required:true,message:'请输入资产地址'}]} extra={editing?.kind==='host'?'主机仅接受数字 IP，不支持 CIDR 或域名；修改后需重新申请授权。测试只检查当前输入，不保存测试状态。':'镜像仓库地址按仓库格式校验。'}><Input maxLength={255} addonAfter={editing?.kind==='host'&&<Button type="link" size="small" disabled={!canEdit} loading={testingForm==='edit'} onClick={()=>void testFormAddress(editForm,'host','edit')}>测试连接</Button>}/></Form.Item>
         <ProfileFields/><Form.Item name="businessGroup" label="业务组" rules={[{required:true}]}><Input maxLength={100}/></Form.Item>
         <Form.Item name="owner" label="责任人" rules={[{required:true}]}><Input maxLength={100}/></Form.Item>
         <Form.Item name="requestedPorts" label="拟申请端口" extra="只是申请记录，不是扫描授权"><Input/></Form.Item>
@@ -299,16 +288,15 @@ export const AssetsPage: React.FC = () => {
     </Modal>
     <Modal title={`开放端口候选${candidateAsset?` · ${candidateAsset.address}`:''}`} open={!!candidateAsset} width={720}
       onCancel={()=>{setCandidateAsset(null);setSelectedCandidatePorts([]);setCandidateFilter('');}}
-      footer={<Space style={{width:'100%',justifyContent:'space-between'}}><Text type="secondary">已选 {selectedCandidatePorts.length} 个 · 每次最多申请 1024 个</Text><Space><Button onClick={()=>{setCandidateAsset(null);setSelectedCandidatePorts([]);setCandidateFilter('');}}>关闭</Button><Button type="primary" disabled={!canEdit||isDemoMode||selectedCandidatePorts.length===0} loading={requestingCandidates} onClick={()=>void requestSelectedCandidates()}>申请选中端口</Button></Space></Space>}>
+      footer={<Space style={{width:'100%',justifyContent:'space-between'}}><Text type="secondary">已选 {selectedCandidatePorts.length} 个 · 每次最多申请 1024 个</Text><Space><Button onClick={()=>{setCandidateAsset(null);setSelectedCandidatePorts([]);setCandidateFilter('');}}>关闭</Button><Button type="primary" disabled={!canEdit||selectedCandidatePorts.length===0} loading={requestingCandidates} onClick={()=>void requestSelectedCandidates()}>申请选中端口</Button></Space></Space>}>
       <Alert type="info" showIcon style={{marginBottom:12}} message={`本次探测发现 ${candidateRows.length} 个开放候选。开放结果只是候选；所选端口会逐个提交给运维审批。`} />
       <Input.Search allowClear placeholder="按端口号筛选" value={candidateFilter} onChange={event=>setCandidateFilter(event.target.value)} style={{marginBottom:12,maxWidth:280}}/>
       <Table<CandidateRow> rowKey="port" size="small" dataSource={filteredCandidateRows} pagination={{pageSize:25,showSizeChanger:true,pageSizeOptions:[25,50,100],showTotal:(total)=>`共 ${total} 个候选`}} scroll={{y:420}}
-        rowSelection={{selectedRowKeys:selectedCandidatePorts,preserveSelectedRowKeys:true,getCheckboxProps:row=>({disabled:!row.requestable||!canEdit||isDemoMode}),onChange:keys=>{
+        rowSelection={{selectedRowKeys:selectedCandidatePorts,preserveSelectedRowKeys:true,getCheckboxProps:row=>({disabled:!row.requestable||!canEdit}),onChange:keys=>{
           if(keys.length>1024){message.warning('一次最多选择 1024 个端口申请');setSelectedCandidatePorts(keys.slice(0,1024));return;}
           setSelectedCandidatePorts(keys);
         }}}
         columns={[{title:'TCP 端口',dataIndex:'port',width:140,sorter:(a,b)=>a.port-b.port},{title:'状态',dataIndex:'status',render:(status:string,row:CandidateRow)=><Tag color={row.requestable?'blue':status.startsWith('已跳过')?'orange':'default'}>{status}</Tag>}]} />
-      {isDemoMode&&<Text type="secondary">演示模式只能查看，连接 Server 模式后才能提交端口申请。</Text>}
     </Modal>
   </div>;
 };

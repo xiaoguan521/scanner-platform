@@ -3,16 +3,16 @@ import { Alert, Button, Card, Col, Descriptions, Drawer, Form, Input, InputNumbe
 import { PlusOutlined, UploadOutlined } from '@ant-design/icons';
 import { useCollection } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
-import { apiClient, isDemoMode } from '../../api/client';
+import { apiClient } from '../../api/client';
 import { createKnowledge, updateKnowledge, deleteKnowledge, importKnowledge } from '../../api/runtime';
 import { useAuth } from '../../auth/AuthProvider';
 import type { KnowledgeEntry } from '../../types';
 
 type Values=Omit<KnowledgeEntry,'identifiers'|'references'|'affectedRanges'|'updatedAt'> & {identifiersText:string;referencesText:string;rangesText:string};
 export const KnowledgePage:React.FC=()=>{
-  const {user}=useAuth();const canWrite=!isDemoMode&&(user?.role==='admin'||user?.role==='security_engineer');
-  const {data:items,setData:setItems,loading,error}=useCollection('knowledge',[]);
-  const {data:categories}=useCollection('vulnerability-categories',[]);
+  const {user}=useAuth();const canWrite=user?.role==='admin'||user?.role==='security_engineer';
+  const {data:items,setData:setItems,loading,error}=useCollection('knowledge');
+  const {data:categories}=useCollection('vulnerability-categories');
   const [query,setQuery]=useState('');const [open,setOpen]=useState(false);const [editing,setEditing]=useState<KnowledgeEntry|null>(null);const [detail,setDetail]=useState<KnowledgeEntry|null>(null);const [busy,setBusy]=useState(false);const [form]=Form.useForm<Values>();const fileRef=useRef<HTMLInputElement>(null);
   const filtered=items.filter(i=>[i.id,i.title,i.component,...Object.values(i.identifiers??{}).flat()].join(' ').toLowerCase().includes(query.trim().toLowerCase()));
   const edit=(item?:KnowledgeEntry)=>{setEditing(item??null);form.resetFields();form.setFieldsValue(item?{...item,identifiersText:JSON.stringify(item.identifiers??{},null,2),referencesText:item.references?.join('\n')??'',rangesText:JSON.stringify(item.affectedRanges??[],null,2)}:{language:'zh-CN',identifiersText:'{}',rangesText:'[]',referencesText:'',source:'自建中文内容'});setOpen(true);};

@@ -19,9 +19,7 @@ import {
   message,
 } from 'antd';
 import { SafetyCertificateOutlined } from '@ant-design/icons';
-import { mockFindings } from '../../mock/data';
 import { Finding, FindingEvent, FindingAssignee, FindingNote, FindingRetest, FindingSeverity, FindingStatus } from '../../types';
-import { isDemoMode } from '../../api/client';
 import { useAuth } from '../../auth/AuthProvider';
 import { batchFindingDisposition, updateFinding, fetchFindingEvents, fetchFindingAssignees, assignFinding, fetchFindingNotes, addFindingNote, createFindingRetest, fetchFindingRetests } from '../../api/runtime';
 import { useCollection } from '../../api/hooks';
@@ -38,8 +36,8 @@ const { Text } = Typography;
 
 export const FindingsPage: React.FC = () => {
   const {user}=useAuth();
-  const canWrite=!isDemoMode&&(user?.role==='admin'||user?.role==='security_engineer');
-  const { data: findings, setData: setFindings, loading, error } = useCollection('findings', mockFindings);
+  const canWrite=user?.role==='admin'||user?.role==='security_engineer';
+  const { data: findings, setData: setFindings, loading, error } = useCollection('findings');
   const [searchParams, setSearchParams] = useSearchParams();
   const filters = readFindingFilters(searchParams);
   const { severity: severityFilter, status: statusFilter, method: methodFilter,
@@ -67,7 +65,7 @@ export const FindingsPage: React.FC = () => {
   const [eventRevision,setEventRevision]=useState(0);
   useEffect(()=>{
     setAcceptReason('');setAcceptUntil('');setEvents([]);setEventsError('');
-    if(!selectedFindingId || isDemoMode)return;
+    if(!selectedFindingId)return;
     const controller=new AbortController();
     const load=()=>fetchFindingEvents(selectedFindingId,controller.signal).then(result=>{if(!controller.signal.aborted){setEvents(result.items);setEventsError('')}}).catch(()=>{if(!controller.signal.aborted)setEventsError('状态记录加载失败，请稍后重试')});
     void load();const timer=window.setInterval(()=>void load(),10000);
@@ -80,7 +78,7 @@ export const FindingsPage: React.FC = () => {
   const [retestRevision,setRetestRevision]=useState(0);
   useEffect(()=>{
     setRetests([]);setRetestError('');
-    if(!selectedFindingId||isDemoMode)return;
+    if(!selectedFindingId)return;
     const controller=new AbortController();
     void fetchFindingRetests(selectedFindingId,controller.signal).then(result=>{if(!controller.signal.aborted)setRetests(result.items)}).catch(()=>{if(!controller.signal.aborted)setRetestError('复测记录加载失败，请稍后重试')});
     return()=>controller.abort();
@@ -95,7 +93,7 @@ export const FindingsPage: React.FC = () => {
   const [workRevision,setWorkRevision]=useState(0);
   useEffect(()=>{
     setNotes([]);setNoteBody('');setAssignees([]);setWorkError('');
-    if(!selectedFindingId||isDemoMode)return;
+    if(!selectedFindingId)return;
     const controller=new AbortController();
     void Promise.all([canWrite?fetchFindingAssignees(controller.signal):Promise.resolve({items:[] as FindingAssignee[],total:0}),fetchFindingNotes(selectedFindingId,controller.signal)]).then(([users,result])=>{
       if(!controller.signal.aborted){setAssignees(users.items);setNotes(result.items)}
@@ -103,19 +101,16 @@ export const FindingsPage: React.FC = () => {
     return()=>controller.abort();
   },[selectedFindingId,workRevision,canWrite]);
   const saveAssignment=async(id:string)=>{
-    if(isDemoMode){message.info('演示模式不会保存指派');return}
     setWorkSaving(true);
     try{const item=await assignFinding(id,assigneeId);setFindings(previous=>previous.map(f=>f.id===id?item:f));message.success('指派已保存并记录审计')}
     catch(e){message.error(String(e))}finally{setWorkSaving(false)}
   };
   const saveNote=async(id:string)=>{
-    if(isDemoMode){message.info('演示模式不会保存备注');return}
     try{const body=findingNoteInput(noteBody);setWorkSaving(true);await addFindingNote(id,body);setWorkRevision(n=>n+1);message.success('备注已追加并记录审计')}
     catch(e){message.error(e instanceof Error?e.message:String(e))}finally{setWorkSaving(false)}
   };
 
   const startRetest=async(id:string)=>{
-    if(isDemoMode){message.info('演示模式不会创建复测任务');return}
     Modal.confirm({
       title:'确认重新扫描该漏洞？',
       content:'平台会复用原扫描任务的冻结目标和授权范围，并创建一条新的扫描任务。',
@@ -138,7 +133,6 @@ export const FindingsPage: React.FC = () => {
   const selectionChanged=batchSelectionChanged(batchSelection,findings);
   const batchAllowed=batchSelection.length>0&&batchSelection.length<=100&&!selectionChanged&&batchSelection.every(item=>batchTransitionAllowed(item.expectedStatus,batchStatus));
   const saveBatch=async()=>{
-    if(isDemoMode){message.info('演示模式不会保存批量处置');return}
     if(!canWrite||!batchAllowed)return;
     try{
       const acceptance=batchStatus==='ACCEPTED_RISK'?acceptanceInput(batchReason,batchUntil):undefined;
@@ -186,11 +180,7 @@ export const FindingsPage: React.FC = () => {
       message.warning('FIXED 必须经 Server 确认完整扫描、规则执行和未检出阈值，目前不可操作');
       return;
     }
-    if (!isDemoMode) {
-      setSaving(true);try{const item=await updateFinding(id,newStatus,acceptance);setFindings(prev=>prev.map(f=>f.id===id?item:f));setEventRevision(n=>n+1);message.success('状态已保存并记录审计');}catch(e){message.error(String(e));}finally{setSaving(false)}
-      return;
-    }
-    message.info('仅演示：该操作不会保存，Server 数据和审计日志没有变化');
+    setSaving(true);try{const item=await updateFinding(id,newStatus,acceptance);setFindings(prev=>prev.map(f=>f.id===id?item:f));setEventRevision(n=>n+1);message.success('状态已保存并记录审计');}catch(e){message.error(String(e));}finally{setSaving(false)}
   };
 
   const getSeverityTag = (sev: FindingSeverity) => {
@@ -220,8 +210,8 @@ export const FindingsPage: React.FC = () => {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       <CollectionNotice loading={loading} error={error} />
       <Alert
-        message={isDemoMode ? '演示发现项' : '扫描引擎与模拟任务的发现项'}
-        description={isDemoMode ? '本页为演示数据。' : '模拟记录会单独标记。Nuclei 基线和 ZAP 被动发现需结合服务用途判断；Trivy 展示漏洞编号、受影响组件和修复版本。未检出不自动标记已修复。'}
+        message="扫描引擎发现项"
+        description="Nuclei 基线和 ZAP 被动发现需结合服务用途判断；Trivy 展示漏洞编号、受影响组件和修复版本。未检出不自动标记已修复。"
         type="warning"
         showIcon
         icon={<SafetyCertificateOutlined />}
@@ -281,7 +271,7 @@ export const FindingsPage: React.FC = () => {
           <Select aria-label="批量处置状态" value={batchStatus} disabled={batchSaving} onChange={setBatchStatus} style={{width:180}} options={[
             {value:'IN_PROGRESS',label:'标记修复中'}, {value:'FALSE_POSITIVE',label:'标记误报'}, {value:'ACCEPTED_RISK',label:'接受风险'}, {value:'OPEN',label:'恢复待处理'},
           ]}/>
-          <Button type="primary" disabled={(!isDemoMode&&!canWrite)||!batchAllowed||batchSaving} onClick={()=>{setBatchReason('');setBatchUntil('');setBatchOpen(true)}}>批量处置</Button>
+          <Button type="primary" disabled={!canWrite||!batchAllowed||batchSaving} onClick={()=>{setBatchReason('');setBatchUntil('');setBatchOpen(true)}}>批量处置</Button>
           <Button disabled={!batchSelection.length||batchSaving} onClick={()=>setBatchSelection([])}>清空选择</Button>
           {batchSelection.length>0&&!batchAllowed&&<Text type="warning">{selectionChanged?'已选记录状态已变化，请清空后重新选择':'选中记录包含不允许的状态流转，请调整选择或目标状态'}</Text>}
         </Space>
@@ -292,7 +282,7 @@ export const FindingsPage: React.FC = () => {
             selectedRowKeys:batchSelection.map(item=>item.id),
             preserveSelectedRowKeys:true,
             onChange:keys=>setBatchSelection(previous=>updateBatchSelection(previous,keys,findings)),
-            getCheckboxProps:record=>({disabled:batchSaving||(!isDemoMode&&!canWrite)||record.status==='FIXED'||(batchSelection.length>=100&&!batchSelection.some(item=>item.id===record.id))}),
+            getCheckboxProps:record=>({disabled:batchSaving||!canWrite||record.status==='FIXED'||(batchSelection.length>=100&&!batchSelection.some(item=>item.id===record.id))}),
           }}
           pagination={{showTotal:total=>`共 ${total} 项`}}
           scroll={{x:1600}}
@@ -372,12 +362,12 @@ export const FindingsPage: React.FC = () => {
                       openFindingDetails(r, event.currentTarget);
                     }}
                   >查看详情</Button>
-                  {r.status!=='OPEN'&&r.status!=='FIXED'&&<Button type="link" size="small" disabled={!isDemoMode&&!canWrite} onClick={event => { event.stopPropagation(); void handleUpdateStatus(r.id, 'OPEN'); }}>恢复待处理</Button>}
+                  {r.status!=='OPEN'&&r.status!=='FIXED'&&<Button type="link" size="small" disabled={!canWrite} onClick={event => { event.stopPropagation(); void handleUpdateStatus(r.id, 'OPEN'); }}>恢复待处理</Button>}
                   {r.status === 'OPEN' && (
                     <Button
                       type="link"
                       size="small"
-                      disabled={!isDemoMode&&!canWrite}
+                      disabled={!canWrite}
                       onClick={event => { event.stopPropagation(); void handleUpdateStatus(r.id, 'IN_PROGRESS'); }}
                     >
                       标记处理中
@@ -399,7 +389,7 @@ export const FindingsPage: React.FC = () => {
                       type="link"
                       size="small"
                       danger
-                      disabled={!isDemoMode&&!canWrite}
+                      disabled={!canWrite}
                       onClick={event => { event.stopPropagation(); void handleUpdateStatus(r.id, 'FALSE_POSITIVE'); }}
                     >
                       误报
@@ -497,14 +487,14 @@ export const FindingsPage: React.FC = () => {
               {selectedFinding.status==='ACCEPTED_RISK' && <Space direction="vertical" style={{width:'100%'}}>
                 <Text style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>接受原因：{detailText(selectedFinding.acceptedReason)}</Text>
                 <Text>到期时间：{detailText(selectedFinding.acceptedUntil)}</Text>
-                <Button loading={saving} disabled={!isDemoMode&&!canWrite} onClick={()=>void handleUpdateStatus(selectedFinding.id,'OPEN')}>撤销接受风险</Button>
+              <Button loading={saving} disabled={!canWrite} onClick={()=>void handleUpdateStatus(selectedFinding.id,'OPEN')}>撤销接受风险</Button>
               </Space>}
               {canAcceptRisk(selectedFinding.status)&&<Space direction="vertical" style={{width:'100%'}}>
                 <label htmlFor="accept-risk-reason">接受原因（最多 500 UTF-8 字节）</label>
-                <Input.TextArea id="accept-risk-reason" value={acceptReason} onChange={e=>setAcceptReason(e.target.value)} autoSize={{minRows:2,maxRows:6}} disabled={saving||(!isDemoMode&&!canWrite)} />
+                <Input.TextArea id="accept-risk-reason" value={acceptReason} onChange={e=>setAcceptReason(e.target.value)} autoSize={{minRows:2,maxRows:6}} disabled={saving||!canWrite} />
                 <label htmlFor="accept-risk-until">到期时间（本地时间，未来 365 天内）</label>
-                <Input id="accept-risk-until" type="datetime-local" value={acceptUntil} onChange={e=>setAcceptUntil(e.target.value)} disabled={saving||(!isDemoMode&&!canWrite)} />
-                <Button loading={saving} disabled={!isDemoMode&&!canWrite} onClick={()=>{try{void handleUpdateStatus(selectedFinding.id,'ACCEPTED_RISK',acceptanceInput(acceptReason,acceptUntil))}catch(e){message.error(e instanceof Error?e.message:'接受风险输入无效')}}}>接受风险</Button>
+                <Input id="accept-risk-until" type="datetime-local" value={acceptUntil} onChange={e=>setAcceptUntil(e.target.value)} disabled={saving||!canWrite} />
+                <Button loading={saving} disabled={!canWrite} onClick={()=>{try{void handleUpdateStatus(selectedFinding.id,'ACCEPTED_RISK',acceptanceInput(acceptReason,acceptUntil))}catch(e){message.error(e instanceof Error?e.message:'接受风险输入无效')}}}>接受风险</Button>
               </Space>}
               {selectedFinding.status==='FIXED'&&<Text type="secondary">修复状态由完整扫描判定。</Text>}
             </section>
@@ -514,12 +504,12 @@ export const FindingsPage: React.FC = () => {
                 <Text>当前处置人：{selectedFinding.assigneeName||selectedFinding.assigneeId||'未指派'}</Text>
                 {workError&&<Alert type="error" message={workError} />}
                 <label htmlFor="finding-assignee">处置人（可清除指派）</label>
-                <Select id="finding-assignee" aria-label="漏洞处置人" allowClear style={{width:'100%'}} value={assigneeId||undefined} onChange={value=>setAssigneeId(value??'')} options={assignees.map(item=>({value:item.id,label:item.name}))} disabled={workSaving||(!isDemoMode&&!canWrite)||Boolean(workError)} placeholder="未指派" />
-                <Button loading={workSaving} disabled={(!isDemoMode&&!canWrite)||Boolean(workError)||assigneeId===(selectedFinding.assigneeId??'')} onClick={()=>void saveAssignment(selectedFinding.id)}>保存指派</Button>
+                <Select id="finding-assignee" aria-label="漏洞处置人" allowClear style={{width:'100%'}} value={assigneeId||undefined} onChange={value=>setAssigneeId(value??'')} options={assignees.map(item=>({value:item.id,label:item.name}))} disabled={workSaving||!canWrite||Boolean(workError)} placeholder="未指派" />
+                <Button loading={workSaving} disabled={!canWrite||Boolean(workError)||assigneeId===(selectedFinding.assigneeId??'')} onClick={()=>void saveAssignment(selectedFinding.id)}>保存指派</Button>
                 <label htmlFor="finding-note">追加备注（最多 2000 UTF-8 字节，单行纯文本）</label>
-                <Input id="finding-note" value={noteBody} onChange={event=>setNoteBody(event.target.value)} disabled={workSaving||(!isDemoMode&&!canWrite)} />
-                <Button loading={workSaving} disabled={(!isDemoMode&&!canWrite)||!noteBody.trim()} onClick={()=>void saveNote(selectedFinding.id)}>追加备注</Button>
-                {notes.length?<Timeline items={notes.map(note=>({key:note.id,children:<Space direction="vertical" size={2}><Text type="secondary">{note.createdAt} · {note.actorName||note.actor}</Text><Text style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{note.body}</Text></Space>}))}/>:<Text type="secondary">{isDemoMode?'演示模式没有服务端备注':'暂无备注'}</Text>}
+                <Input id="finding-note" value={noteBody} onChange={event=>setNoteBody(event.target.value)} disabled={workSaving||!canWrite} />
+                <Button loading={workSaving} disabled={!canWrite||!noteBody.trim()} onClick={()=>void saveNote(selectedFinding.id)}>追加备注</Button>
+                {notes.length?<Timeline items={notes.map(note=>({key:note.id,children:<Space direction="vertical" size={2}><Text type="secondary">{note.createdAt} · {note.actorName||note.actor}</Text><Text style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{note.body}</Text></Space>}))}/>:<Text type="secondary">暂无备注</Text>}
               </Space>
             </section>
             <section style={{width:'100%'}}>
@@ -527,14 +517,14 @@ export const FindingsPage: React.FC = () => {
               {retestError&&<Alert type="error" message={retestError} />}
               <Space direction="vertical" style={{width:'100%'}}>
                 <Text type="secondary">复测只复用原任务冻结的目标、端口策略和授权，不会接受新的扫描目标。</Text>
-                <Button type="primary" loading={retestSaving} disabled={isDemoMode||!canWrite||selectedFinding.synthetic===true||selectedFinding.status==='FALSE_POSITIVE'||retests.some(retestIsActive)} onClick={()=>void startRetest(selectedFinding.id)}>重新扫描该漏洞</Button>
-                {retests.length?<Timeline items={retests.map(item=>({key:item.id,children:<Space direction="vertical" size={2}><Text>{retestStatusLabel(item.status)} · 任务 {item.taskId}</Text><Text type="secondary">{item.createdAt} · {item.actor}</Text></Space>}))}/>:<Text type="secondary">{isDemoMode?'演示模式不会创建复测任务':'暂无复测记录'}</Text>}
+                <Button type="primary" loading={retestSaving} disabled={!canWrite||selectedFinding.synthetic===true||selectedFinding.status==='FALSE_POSITIVE'||retests.some(retestIsActive)} onClick={()=>void startRetest(selectedFinding.id)}>重新扫描该漏洞</Button>
+                {retests.length?<Timeline items={retests.map(item=>({key:item.id,children:<Space direction="vertical" size={2}><Text>{retestStatusLabel(item.status)} · 任务 {item.taskId}</Text><Text type="secondary">{item.createdAt} · {item.actor}</Text></Space>}))}/>:<Text type="secondary">暂无复测记录</Text>}
               </Space>
             </section>
             <section style={{width:'100%'}}>
               <Typography.Title level={5}>状态变更记录</Typography.Title>
               {eventsError&&<Alert type="error" message={eventsError} />}
-              {events.length?<Timeline items={events.map(event=>({key:event.id,children:<Space direction="vertical" size={2}><Text>{event.fromStatus} → {event.toStatus}</Text><Text type="secondary">{event.createdAt} · {event.actor}</Text>{event.reason&&<Text style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{event.reason}</Text>}</Space>}))}/>:<Text type="secondary">{isDemoMode?'演示模式没有服务端状态记录':'暂无状态变更记录'}</Text>}
+              {events.length?<Timeline items={events.map(event=>({key:event.id,children:<Space direction="vertical" size={2}><Text>{event.fromStatus} → {event.toStatus}</Text><Text type="secondary">{event.createdAt} · {event.actor}</Text>{event.reason&&<Text style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{event.reason}</Text>}</Space>}))}/>:<Text type="secondary">暂无状态变更记录</Text>}
             </section>
             <Descriptions title="关联标识" column={1} size="small" bordered
               styles={{ content: { overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' } }}

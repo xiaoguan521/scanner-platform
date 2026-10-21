@@ -99,7 +99,7 @@ def main():
         log=open(directory/(name+'.log'),'ab');logs.append(log)
         args=[str(ROOT/'dist'/('sec-'+name))]
         if name=='server':
-            args+=['--listen',f'127.0.0.1:{port}','--db',str(db),'--ui-dir',str(ROOT/'web/dist'),'--seed-demo']
+            args+=['--listen',f'127.0.0.1:{port}','--db',str(db),'--ui-dir',str(ROOT/'web/dist')]
         else:
             args+=['--server',base]
             if name=='updater':args+=['--rules-dir',str(directory/'rules'),'--trusted-rule-public-key',str(public_key)]

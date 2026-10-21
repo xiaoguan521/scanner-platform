@@ -2,17 +2,21 @@
 
 记录待核对项的来源、锁定版本、验证日期、结果和未决风险。未经实际验证的项目不得标记为已确认。
 
+## 2026-10-21：移除演示种子与浏览器 mock 通道
+
+- 根据隔离靶机真实 SSH/自动综合扫描结果，移除 `cmd/seed-demo`、`make seed-demo` 和 Server 的 `--seed-demo` 启动参数；本地启动不再自动写入合成资产、任务或发现项。`scripts/test_local.py` 改为从空数据库开始验证登录、资产、任务和 Worker API。
+- 前端认证、总览、资产、授权、任务、漏洞、报告、节点、知识库、用户和审计页面统一走 Server API；删除 `web/src/mock`、`isDemoMode`/`VITE_DATA_MODE` 分支。API 失败只显示错误状态，不回退到浏览器内存数据。
+- 已更新产品路线图、现状和快速开始文档，验收入口改为隔离靶机真实数据。`npm --prefix web run build`、前端源码契约测试、`make test`、`make lint`、`make build` 和 `git diff --check` 需在本批提交前重新运行。
+
 ## 2026-10-21：六域信息架构与导航基础
 
 - 主导航由原来的平铺入口收敛为“总览、资产、扫描、漏洞、报告、系统”六个稳定域；系统域承载授权范围、节点与规则库、漏洞知识库、用户与角色、审计日志。每个子入口只指向已存在的真实路由，系统设置和通知中心在闭环完成前不展示空壳入口。
 - 菜单定义集中在 `web/src/components/Layout/navigation.ts`，角色过滤仍由前端负责隐藏入口，后端权限校验保持不变；点击一级域标题会进入该域默认页面，直接访问既有路由不受影响。
 - `node --test web/src/components/Layout/navigation.test.mjs` 和 `npm --prefix web run build` 通过。真实浏览器的折叠菜单、键盘导航和窄屏体验仍待 Stage 1 回归。
 
-## 2026-10-21：Server 默认数据通道与演示种子
+## 2026-10-21：Server 数据通道收敛（历史记录）
 
-- `make seed-demo` 现在调用 `cmd/seed-demo`，向指定本地 SQLite 写入一个 `192.0.2.10` 主机、一个完成的模拟任务和一个模拟发现项；重复执行按固定 ID/地址幂等，不创建授权范围、不启动 Worker、不连接任何目标。
-- 前端数据模式默认改为 Server；API 请求失败仍显示错误状态，不回退到内存数据。显式 `VITE_DATA_MODE=demo` 暂时保留为兼容开关，待下一批清理 fixture 分支。
-- `go test ./cmd/seed-demo`、`node --test web/src/api/data-mode.test.mjs`、前端构建和差异检查应作为本批验收；真实浏览器种子数据展示和停止运行中 Server 后的 CLI 操作仍待运行验收。
+- 本节早期记录的演示种子已由上方“移除演示种子与浏览器 mock 通道”批次替代；仓库当前不再提供 `make seed-demo`、`cmd/seed-demo` 或 `VITE_DATA_MODE`。
 
 ## 2026-10-20：单项接受风险、到期与状态事件
 

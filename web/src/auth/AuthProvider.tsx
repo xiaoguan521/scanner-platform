@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { Alert, Button, Card, Form, Input, Spin, Typography } from 'antd';
-import { apiClient, ApiRequestError, isDemoMode } from '../api/client';
+import { apiClient, ApiRequestError } from '../api/client';
 import type { User } from '../types';
 
 interface AuthState {
@@ -12,12 +12,11 @@ export const useAuth = () => useContext(Context);
 
 export const AuthProvider: React.FC<{children:React.ReactNode}> = ({children}) => {
   const [user,setUser] = useState<User|null>(null);
-  const [loading,setLoading] = useState(!isDemoMode);
+  const [loading,setLoading] = useState(true);
   const [error,setError] = useState('');
   const [setupRequired,setSetupRequired] = useState(false);
   const [submitting,setSubmitting] = useState(false);
   useEffect(()=>{
-    if(isDemoMode) return;
     apiClient.setupStatus().then(v=>setSetupRequired(v.required)).catch(()=>{});
     const expired=()=>{setUser(null);};
     window.addEventListener('scanner-session-expired',expired);
@@ -28,7 +27,6 @@ export const AuthProvider: React.FC<{children:React.ReactNode}> = ({children}) =
   },[]);
   const logout=async()=>{try{await apiClient.logout();}finally{setUser(null);}};
   const state=useMemo(()=>({user,logout}),[user]);
-  if(isDemoMode) return <Context.Provider value={state}>{children}</Context.Provider>;
   if(loading) return <div style={{display:'grid',placeItems:'center',height:'100vh'}}><Spin size="large" /></div>;
   if(!user) return (
     <div style={{minHeight:'100vh',display:'grid',placeItems:'center',background:'#f1f5f9',padding:20}}>

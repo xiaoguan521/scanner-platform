@@ -3,20 +3,18 @@ import { Alert, Button, Card, Form, Input, message, Modal, Select, Space, Table,
 import { useCollection } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
 import { useAuth } from '../../auth/AuthProvider';
-import { isDemoMode } from '../../api/client';
 import { activateRules, createCustomRule, deleteCustomRule, fetchRules, importRules, updateCustomRule } from '../../api/runtime';
-import { mockNodes, mockRuleBundles } from '../../mock/data';
 import type { CustomRule, NodeInfo, RuleBundle, RuleJob } from '../../types';
 
 import { ScanPolicySettings } from './ScanPolicySettings';
 type CustomRuleForm={id:string;name:string;severity:CustomRule['severity'];description:string;matchType:CustomRule['matchType'];part:'header'|'body';valuesText:string;statusCodesText:string;enabled:boolean};
 
 export const NodesPage:React.FC=()=>{
-  const {user}=useAuth();const canWrite=!isDemoMode&&(user?.role==='admin'||user?.role==='security_engineer');
-  const {data:nodes,loading,error}=useCollection('nodes',mockNodes);
-  const {data:bundles,error:bundleError}=useCollection('rules',mockRuleBundles);
-  const {data:jobs,error:jobError}=useCollection('rule-jobs',[]);
-  const {data:customRules,setData:setCustomRules,loading:customRulesLoading,error:customRulesError}=useCollection('custom-rules',[]);
+  const {user}=useAuth();const canWrite=user?.role==='admin'||user?.role==='security_engineer';
+  const {data:nodes,loading,error}=useCollection('nodes');
+  const {data:bundles,error:bundleError}=useCollection('rules');
+  const {data:jobs,error:jobError}=useCollection('rule-jobs');
+  const {data:customRules,setData:setCustomRules,loading:customRulesLoading,error:customRulesError}=useCollection('custom-rules');
   const [file,setFile]=useState<File|null>(null);const [busy,setBusy]=useState(false);const [fetchOpen,setFetchOpen]=useState(false);const [form]=Form.useForm();
   const [ruleOpen,setRuleOpen]=useState(false);const [editingRule,setEditingRule]=useState<CustomRule|null>(null);const [ruleForm]=Form.useForm<CustomRuleForm>();
   const ruleMatchType=Form.useWatch('matchType',ruleForm)??'word';

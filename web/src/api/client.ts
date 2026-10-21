@@ -1,12 +1,6 @@
 import type { AssetImportPreview } from '../pages/Assets/import';
 import type { Asset, AuthorizedScope, Finding, NodeInfo, PortQuarantine, RuleBundle, ScanTask, User, UserRole, PortRequest, TimeWindow, ApprovalDecision, Schedule, RuleJob, CustomRule, AssetProfile, KnowledgeEntry, DetectionCapability, VulnerabilityCategory, ScanPolicy, ScanPlan } from '../types';
 
-// Server is the only normal data path. The explicit demo value remains a
-// temporary compatibility switch while the seed command replaces all fixture
-// consumers; API errors never fall back to browser data.
-export const dataMode: 'demo' | 'server' = import.meta.env.VITE_DATA_MODE === 'demo' ? 'demo' : 'server';
-export const isDemoMode = dataMode === 'demo';
-
 export interface SystemStatus {
   role: 'sec-server' | 'sec-portable';
   phase: string;

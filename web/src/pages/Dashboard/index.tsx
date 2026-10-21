@@ -8,57 +8,49 @@ import {
   CheckCircleOutlined,
   FieldTimeOutlined,
 } from '@ant-design/icons';
-import { mockAssets, mockFindings, mockTasks, mockRuleBundles } from '../../mock/data';
-import { isDemoMode } from '../../api/client';
 import { useCollection, useDashboardSummary } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
 import { Link } from 'react-router-dom';
 
-import { findingCounts, isVulnerability } from '../Findings/presentation';
-import { isActiveVulnerability, pendingCriticalHigh, pendingCriticalHighCount, riskAssetCount, riskScore, severityDistribution, topRiskAssets, topRiskGroups, vulnerabilityTrend } from './presentation';
 const { Text } = Typography;
 
 export const DashboardPage: React.FC = () => {
   const [trendDays, setTrendDays] = useState<7 | 30 | 90>(30);
   const { data: dashboardSummary, loading: summaryLoading, error: summaryError } = useDashboardSummary(trendDays);
-  const { data: assets, loading: assetsLoading, error: assetsError } = useCollection('assets', mockAssets, '', isDemoMode);
-  const { data: findings, loading: findingsLoading, error: findingsError } = useCollection('findings', mockFindings, '', isDemoMode);
-  const { data: tasks, loading: tasksLoading, error: tasksError } = useCollection('tasks', mockTasks);
-  const { data: ruleBundles, loading: rulesLoading, error: rulesError } = useCollection('rules', mockRuleBundles, '', isDemoMode);
-  const currentRule = isDemoMode ? ruleBundles.find((r) => r.isCurrent) : dashboardSummary?.currentRule;
-  const vulnerabilities=findings.filter(isVulnerability);
+  const { data: tasks, loading: tasksLoading, error: tasksError } = useCollection('tasks');
   const emptyCounts = { vulnerabilities: 0, loginEntries: 0, unknown: 0, version: 0, verified: 0 };
-  const counts = isDemoMode ? findingCounts(findings) : dashboardSummary?.findingCounts ?? emptyCounts;
-  const criticalCount = isDemoMode ? vulnerabilities.filter((f) => isActiveVulnerability(f) && f.severity === 'CRITICAL').length : dashboardSummary?.criticalCount ?? 0;
-  const highCount = isDemoMode ? vulnerabilities.filter((f) => isActiveVulnerability(f) && f.severity === 'HIGH').length : dashboardSummary?.highCount ?? 0;
-  const totalFindings = isDemoMode ? vulnerabilities.length : dashboardSummary?.findingCount ?? 0;
-  const currentRiskScore = isDemoMode ? riskScore(findings) : dashboardSummary?.riskScore ?? 0;
-  const riskyAssets = isDemoMode ? riskAssetCount(findings) : dashboardSummary?.riskyAssetCount ?? 0;
-  const trend = useMemo(() => isDemoMode ? vulnerabilityTrend(findings, trendDays) : dashboardSummary?.trend ?? [], [findings, trendDays, dashboardSummary]);
+  const currentRule = dashboardSummary?.currentRule;
+  const counts = dashboardSummary?.findingCounts ?? emptyCounts;
+  const criticalCount = dashboardSummary?.criticalCount ?? 0;
+  const highCount = dashboardSummary?.highCount ?? 0;
+  const totalFindings = dashboardSummary?.findingCount ?? 0;
+  const currentRiskScore = dashboardSummary?.riskScore ?? 0;
+  const riskyAssets = dashboardSummary?.riskyAssetCount ?? 0;
+  const trend = dashboardSummary?.trend ?? [];
   const maxTrend = Math.max(1, ...trend.map(point => point.count));
   const emptyDistribution = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, INFO: 0 };
-  const distribution = isDemoMode ? severityDistribution(findings) : dashboardSummary?.severityDistribution ?? emptyDistribution;
-  const riskGroups = useMemo(() => isDemoMode ? topRiskGroups(findings) : dashboardSummary?.riskGroups ?? [], [findings, dashboardSummary]);
-  const riskAssets = useMemo(() => isDemoMode ? topRiskAssets(assets, findings) : dashboardSummary?.riskAssets ?? [], [assets, findings, dashboardSummary]);
-  const pendingFindings = useMemo(() => isDemoMode ? pendingCriticalHigh(findings) : dashboardSummary?.pendingFindings ?? [], [findings, dashboardSummary]);
-  const pendingFindingCount = isDemoMode ? pendingCriticalHighCount(findings) : dashboardSummary?.pendingCount ?? 0;
-  const assetCount = isDemoMode ? assets.length : dashboardSummary?.assetCount ?? 0;
-  const taskCount = isDemoMode ? tasks.length : dashboardSummary?.taskCount ?? 0;
-  const runningTaskCount = isDemoMode ? tasks.filter((task) => task.status === 'RUNNING').length : dashboardSummary?.runningTaskCount ?? 0;
+  const distribution = dashboardSummary?.severityDistribution ?? emptyDistribution;
+  const riskGroups = dashboardSummary?.riskGroups ?? [];
+  const riskAssets = dashboardSummary?.riskAssets ?? [];
+  const pendingFindings = dashboardSummary?.pendingFindings ?? [];
+  const pendingFindingCount = dashboardSummary?.pendingCount ?? 0;
+  const assetCount = dashboardSummary?.assetCount ?? 0;
+  const taskCount = dashboardSummary?.taskCount ?? 0;
+  const runningTaskCount = dashboardSummary?.runningTaskCount ?? 0;
   const quickStart = useMemo(() => [
-    { key: 'asset', label: '登记第一个资产', done: isDemoMode ? assets.length > 0 : Boolean(dashboardSummary?.assetCount), to: '/assets', action: '去登记' },
-    { key: 'task', label: '发起第一次扫描', done: isDemoMode ? tasks.some((task) => !task.synthetic) : Boolean(dashboardSummary?.hasNonSyntheticTask), to: '/tasks', action: '去扫描' },
-    { key: 'result', label: '查看第一份扫描结果', done: isDemoMode ? tasks.some((task) => !task.synthetic && task.status === 'COMPLETED') : Boolean(dashboardSummary?.hasCompletedScan), to: '/findings', action: '看结果' },
-  ], [assets.length, tasks, dashboardSummary]);
-  const showQuickStart = !isDemoMode && !summaryLoading && !tasksLoading && quickStart.some((step) => !step.done);
+    { key: 'asset', label: '登记第一个资产', done: Boolean(dashboardSummary?.assetCount), to: '/assets', action: '去登记' },
+    { key: 'task', label: '发起第一次扫描', done: Boolean(dashboardSummary?.hasNonSyntheticTask), to: '/tasks', action: '去扫描' },
+    { key: 'result', label: '查看第一份扫描结果', done: Boolean(dashboardSummary?.hasCompletedScan), to: '/findings', action: '看结果' },
+  ], [dashboardSummary]);
+  const showQuickStart = !summaryLoading && !tasksLoading && quickStart.some((step) => !step.done);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       {/* 顶部安全合规与运行提示 */}
-      <CollectionNotice loading={summaryLoading || assetsLoading || findingsLoading || tasksLoading || rulesLoading} error={summaryError || assetsError || findingsError || tasksError || rulesError} />
+      <CollectionNotice loading={summaryLoading || tasksLoading} error={summaryError || tasksError} />
       <Alert
-        message={isDemoMode ? '仅演示：安全规则的设计目标' : '本地业务与扫描任务'}
-        description="业务数据来自 SQLite。支持 Nuclei 只读基线、ZAP 被动响应检查和 Trivy 离线输入；模拟记录单独标注，未检出不会自动标记已修复。"
+        message="本地业务与扫描任务"
+        description="业务数据来自 SQLite。支持 Nuclei 只读基线、ZAP 被动响应检查和 Trivy 离线输入；未检出不会自动标记已修复。"
         type="info"
         showIcon
         icon={<SafetyOutlined />}
@@ -145,8 +137,8 @@ export const DashboardPage: React.FC = () => {
           <Card bordered={false}>
             <Statistic
               title="规则库版本 (CURRENT)"
-              value={currentRule?.version || (isDemoMode?'演示暂无':'尚未导入')}
-              formatter={()=>currentRule?.version || (isDemoMode?'演示暂无':'尚未导入')}
+              value={currentRule?.version || '尚未导入'}
+              formatter={()=>currentRule?.version || '尚未导入'}
               prefix={<CheckCircleOutlined style={{ color: '#13c2c2' }} />}
               valueStyle={{ fontSize: 18 }}
             />

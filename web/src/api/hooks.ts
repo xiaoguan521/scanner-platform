@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react';
-import { apiClient, isDemoMode } from './client';
+import { apiClient } from './client';
 import type { DashboardSummary, Resources, SystemStatus, Capabilities } from './client';
 
-export function useCollection<K extends keyof Resources>(name: K, demoFixtures: Resources[K][], query = '', enabled = true) {
-  const [data, setData] = useState<Resources[K][]>(() => isDemoMode && enabled ? [...demoFixtures] : []);
-  const [loading, setLoading] = useState(!isDemoMode && enabled);
+export function useCollection<K extends keyof Resources>(name: K, query = '', enabled = true) {
+  const [data, setData] = useState<Resources[K][]>([]);
+  const [loading, setLoading] = useState(enabled);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (isDemoMode || !enabled) return;
+    if (!enabled) return;
     const controller = new AbortController();
     setLoading(true);
     let inFlight = false;
@@ -43,10 +43,9 @@ export function useCollection<K extends keyof Resources>(name: K, demoFixtures: 
 
 export function useDashboardSummary(days: 7 | 30 | 90) {
   const [data, setData] = useState<DashboardSummary | null>(null);
-  const [loading, setLoading] = useState(!isDemoMode);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    if (isDemoMode) return;
     const controller = new AbortController();
     let inFlight = false;
     const load = () => {
@@ -70,7 +69,6 @@ export function useSystemStatus() {
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    if (isDemoMode) return;
     const controller = new AbortController();
     const load=()=>Promise.all([apiClient.systemStatus(controller.signal), apiClient.capabilities(controller.signal)])
       .then(([nextStatus,nextCapabilities])=>{if(!controller.signal.aborted){setStatus(nextStatus);setCapabilities(nextCapabilities);setError(null);}})
