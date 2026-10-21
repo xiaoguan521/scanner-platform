@@ -34,6 +34,11 @@ export interface NotificationList {
   unreadCount: number;
 }
 
+export interface NotificationListPage extends NotificationList {
+  page: number;
+  pageSize: number;
+}
+
 export interface NotificationSettings {
   webhookEnabled: boolean;
   webhookUrl: string;

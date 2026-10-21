@@ -10,13 +10,17 @@ export const NotificationsPage: React.FC = () => {
   const [unreadCount, setUnreadCount] = useState(0);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(15);
+  const [total, setTotal] = useState(0);
 
   const reload = async () => {
     setBusy(true);
     try {
-      const next = await apiClient.notifications();
+      const next = await apiClient.notificationsPage(page, pageSize);
       setItems(next.items);
       setUnreadCount(next.unreadCount);
+      setTotal(next.total);
       setError('');
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '通知读取失败');
@@ -25,7 +29,7 @@ export const NotificationsPage: React.FC = () => {
     }
   };
 
-  useEffect(() => { void reload(); }, []);
+  useEffect(() => { void reload(); }, [page, pageSize]);
 
   const markRead = async (item: Notification) => {
     try {
@@ -55,6 +59,7 @@ export const NotificationsPage: React.FC = () => {
         itemLayout="vertical"
         locale={{ emptyText: <Empty description="暂无通知" /> }}
         dataSource={items}
+        pagination={{ current: page, pageSize, total, showSizeChanger: true, pageSizeOptions: [15, 30, 60], showTotal: count => `共 ${count} 条通知`, onChange: (nextPage, nextSize) => { if (nextSize !== pageSize) { setPageSize(nextSize); setPage(1); } else setPage(nextPage); } }}
         renderItem={item => (
           <List.Item
             actions={!item.readAt ? [<Button key="read" type="link" onClick={() => void markRead(item)}>标记已读</Button>] : []}

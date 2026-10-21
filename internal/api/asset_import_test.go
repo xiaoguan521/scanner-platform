@@ -106,6 +106,13 @@ func TestAssetImportAPIAuthorizationAndConfirmation(t *testing.T) {
 	if got := send("GET", "/api/v1/business-groups", "", "", cookies["viewer"], false); got.Code != 200 {
 		t.Fatalf("viewer groups=%d %s", got.Code, got.Body.String())
 	}
+	var groupPage PageListResponse[assets.BusinessGroup]
+	if got := send("GET", "/api/v1/business-groups?page=1&page_size=1&q=示例", "", "", cookies["viewer"], false); got.Code != 200 || json.Unmarshal(got.Body.Bytes(), &groupPage) != nil || groupPage.Page != 1 || groupPage.PageSize != 1 || groupPage.Total < 1 || len(groupPage.Items) > 1 {
+		t.Fatalf("paged groups=%d %s %+v", got.Code, got.Body.String(), groupPage)
+	}
+	if got := send("GET", "/api/v1/business-groups?page=1&page_size=101", "", "", cookies["viewer"], false); got.Code != 400 {
+		t.Fatalf("invalid paged groups=%d %s", got.Code, got.Body.String())
+	}
 	if got := send("POST", "/api/v1/business-groups", `{"name":"临时组"}`, "application/json", cookies["viewer"], true); got.Code != 403 {
 		t.Fatalf("viewer group create=%d", got.Code)
 	}
@@ -114,6 +121,10 @@ func TestAssetImportAPIAuthorizationAndConfirmation(t *testing.T) {
 	}
 	if got := send("GET", "/api/v1/assets/import-history", "", "", cookies["viewer"], false); got.Code != 200 {
 		t.Fatalf("viewer import history=%d %s", got.Code, got.Body.String())
+	}
+	var historyPage PageListResponse[assets.ImportHistory]
+	if got := send("GET", "/api/v1/assets/import-history?page=1&page_size=1", "", "", cookies["viewer"], false); got.Code != 200 || json.Unmarshal(got.Body.Bytes(), &historyPage) != nil || historyPage.Page != 1 || historyPage.PageSize != 1 || historyPage.Total < 1 || len(historyPage.Items) > 1 {
+		t.Fatalf("paged import history=%d %s %+v", got.Code, got.Body.String(), historyPage)
 	}
 	if got := send("POST", "/api/v1/assets/import/confirm", body, "application/json", cookies["admin"], true); got.Code != 409 {
 		t.Fatalf("repeat=%d", got.Code)

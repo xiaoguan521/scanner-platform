@@ -12,7 +12,10 @@ import (
 	"scanner-platform/internal/taskflow"
 )
 
-var ErrNotificationNotFound = errors.New("notification not found")
+var (
+	ErrNotificationNotFound         = errors.New("notification not found")
+	ErrInvalidNotificationListQuery = errors.New("invalid notification list query")
+)
 
 // Notification is an in-product, read-only signal. It deliberately contains
 // no target address, credentials, request/response evidence, or engine output.
@@ -32,6 +35,20 @@ type NotificationList struct {
 	Items       []Notification `json:"items"`
 	Total       int            `json:"total"`
 	UnreadCount int            `json:"unreadCount"`
+}
+
+type NotificationListQuery struct {
+	Page       int
+	PageSize   int
+	UnreadOnly bool
+}
+
+type NotificationListPage struct {
+	Items       []Notification `json:"items"`
+	Total       int            `json:"total"`
+	UnreadCount int            `json:"unreadCount"`
+	Page        int            `json:"page"`
+	PageSize    int            `json:"pageSize"`
 }
 
 const notificationWindow = 7 * 24 * time.Hour
@@ -194,6 +211,59 @@ func (s *RuntimeStore) ListNotifications(ctx context.Context, unreadOnly bool) (
 		result.Items = append(result.Items, item)
 	}
 	return result, rows.Err()
+}
+
+func (s *RuntimeStore) ListNotificationsPage(ctx context.Context, query NotificationListQuery) (NotificationListPage, error) {
+	page, pageSize, offset, err := normalizeNotificationPage(query.Page, query.PageSize)
+	if err != nil {
+		return NotificationListPage{}, err
+	}
+	if err := s.RefreshNotifications(ctx); err != nil {
+		return NotificationListPage{}, fmt.Errorf("refresh notifications: %w", err)
+	}
+	where := "1=1"
+	if query.UnreadOnly {
+		where = "read_at IS NULL"
+	}
+	var result NotificationListPage
+	if err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM notifications WHERE "+where).Scan(&result.Total); err != nil {
+		return result, err
+	}
+	if err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM notifications WHERE read_at IS NULL").Scan(&result.UnreadCount); err != nil {
+		return result, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id,kind,severity,title,message,object_type,object_id,created_at,read_at
+		FROM notifications WHERE `+where+` ORDER BY CASE WHEN read_at IS NULL THEN 0 ELSE 1 END,created_at DESC,id DESC LIMIT ? OFFSET ?`, pageSize, offset)
+	if err != nil {
+		return result, err
+	}
+	defer rows.Close()
+	result.Items = make([]Notification, 0, pageSize)
+	for rows.Next() {
+		var item Notification
+		if err := rows.Scan(&item.ID, &item.Kind, &item.Severity, &item.Title, &item.Message, &item.ObjectType, &item.ObjectID, &item.CreatedAt, &item.ReadAt); err != nil {
+			return NotificationListPage{}, err
+		}
+		result.Items = append(result.Items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return NotificationListPage{}, err
+	}
+	result.Page, result.PageSize = page, pageSize
+	return result, nil
+}
+
+func normalizeNotificationPage(page, pageSize int) (int, int, int, error) {
+	if page == 0 {
+		page = 1
+	}
+	if pageSize == 0 {
+		pageSize = 25
+	}
+	if page < 1 || page > 100000 || pageSize < 1 || pageSize > 100 {
+		return 0, 0, 0, ErrInvalidNotificationListQuery
+	}
+	return page, pageSize, (page - 1) * pageSize, nil
 }
 
 func (s *RuntimeStore) MarkNotificationRead(ctx context.Context, id string) error {

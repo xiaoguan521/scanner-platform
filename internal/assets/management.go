@@ -43,6 +43,43 @@ type ImportHistoryRepository interface {
 	ListImportHistory(context.Context) ([]ImportHistory, error)
 }
 
+// BusinessGroupListQuery and ImportHistoryListQuery are the bounded list
+// contracts used by the Server UI. The legacy list methods remain available
+// for older callers that do not send pagination parameters.
+type BusinessGroupListQuery struct {
+	Page     int
+	PageSize int
+	Search   string
+}
+
+type BusinessGroupListPage struct {
+	Items    []BusinessGroup
+	Total    int
+	Page     int
+	PageSize int
+}
+
+type ImportHistoryListQuery struct {
+	Page     int
+	PageSize int
+	Search   string
+}
+
+type ImportHistoryListPage struct {
+	Items    []ImportHistory
+	Total    int
+	Page     int
+	PageSize int
+}
+
+type BusinessGroupPageRepository interface {
+	ListBusinessGroupsPage(context.Context, BusinessGroupListQuery) (BusinessGroupListPage, error)
+}
+
+type ImportHistoryPageRepository interface {
+	ListImportHistoryPage(context.Context, ImportHistoryListQuery) (ImportHistoryListPage, error)
+}
+
 func normalizeBusinessGroup(name string) (string, error) {
 	name = strings.TrimSpace(name)
 	if name == "" || len(name) > 100 || !utf8.ValidString(name) || strings.ContainsFunc(name, unicode.IsControl) {
@@ -85,6 +122,43 @@ GROUP BY g.name,g.created_at ORDER BY LOWER(g.name),g.name`)
 		return nil, fmt.Errorf("list business groups rows: %w", err)
 	}
 	return groups, nil
+}
+
+func (s *Store) ListBusinessGroupsPage(ctx context.Context, query BusinessGroupListQuery) (BusinessGroupListPage, error) {
+	page, pageSize, offset, search, err := normalizeManagementPage(query.Page, query.PageSize, query.Search)
+	if err != nil {
+		return BusinessGroupListPage{}, err
+	}
+	where := "1=1"
+	args := []any{}
+	if search != "" {
+		where += ` AND LOWER(g.name) LIKE ? ESCAPE '\'`
+		args = append(args, "%"+escapeLike(strings.ToLower(search))+"%")
+	}
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM asset_business_groups g WHERE `+where, args...).Scan(&total); err != nil {
+		return BusinessGroupListPage{}, fmt.Errorf("count business groups: %w", err)
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT g.name,COUNT(a.id),g.created_at
+FROM asset_business_groups g LEFT JOIN assets a ON a.business_group=g.name
+WHERE `+where+`
+GROUP BY g.name,g.created_at ORDER BY LOWER(g.name),g.name LIMIT ? OFFSET ?`, append(args, pageSize, offset)...)
+	if err != nil {
+		return BusinessGroupListPage{}, fmt.Errorf("list business groups page: %w", err)
+	}
+	defer rows.Close()
+	items := make([]BusinessGroup, 0, pageSize)
+	for rows.Next() {
+		var group BusinessGroup
+		if err := rows.Scan(&group.Name, &group.AssetCount, &group.CreatedAt); err != nil {
+			return BusinessGroupListPage{}, fmt.Errorf("decode business group page: %w", err)
+		}
+		items = append(items, group)
+	}
+	if err := rows.Err(); err != nil {
+		return BusinessGroupListPage{}, fmt.Errorf("list business groups page rows: %w", err)
+	}
+	return BusinessGroupListPage{Items: items, Total: total, Page: page, PageSize: pageSize}, nil
 }
 
 func (s *Store) CreateBusinessGroup(ctx context.Context, actor, name string) (BusinessGroup, error) {
@@ -144,4 +218,59 @@ FROM asset_import_history ORDER BY created_at DESC,id DESC LIMIT 200`)
 		return nil, fmt.Errorf("list asset import history rows: %w", err)
 	}
 	return history, nil
+}
+
+func (s *Store) ListImportHistoryPage(ctx context.Context, query ImportHistoryListQuery) (ImportHistoryListPage, error) {
+	page, pageSize, offset, search, err := normalizeManagementPage(query.Page, query.PageSize, query.Search)
+	if err != nil {
+		return ImportHistoryListPage{}, err
+	}
+	where := "1=1"
+	args := []any{}
+	if search != "" {
+		where += ` AND LOWER(actor) LIKE ? ESCAPE '\'`
+		args = append(args, "%"+escapeLike(strings.ToLower(search))+"%")
+	}
+	var total int
+	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM asset_import_history WHERE "+where, args...).Scan(&total); err != nil {
+		return ImportHistoryListPage{}, fmt.Errorf("count import history: %w", err)
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id,actor,imported,total,created_at
+FROM asset_import_history WHERE `+where+` ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?`, append(args, pageSize, offset)...)
+	if err != nil {
+		return ImportHistoryListPage{}, fmt.Errorf("list import history page: %w", err)
+	}
+	defer rows.Close()
+	items := make([]ImportHistory, 0, pageSize)
+	for rows.Next() {
+		var item ImportHistory
+		if err := rows.Scan(&item.ID, &item.Actor, &item.Imported, &item.Total, &item.CreatedAt); err != nil {
+			return ImportHistoryListPage{}, fmt.Errorf("decode import history page: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return ImportHistoryListPage{}, fmt.Errorf("list import history page rows: %w", err)
+	}
+	return ImportHistoryListPage{Items: items, Total: total, Page: page, PageSize: pageSize}, nil
+}
+
+const (
+	managementDefaultPageSize = 25
+	managementMaxPageSize     = 100
+	managementMaxPage         = 100000
+)
+
+func normalizeManagementPage(page, pageSize int, search string) (int, int, int, string, error) {
+	if page == 0 {
+		page = 1
+	}
+	if pageSize == 0 {
+		pageSize = managementDefaultPageSize
+	}
+	search = strings.TrimSpace(search)
+	if page < 1 || page > managementMaxPage || pageSize < 1 || pageSize > managementMaxPageSize || len(search) > 160 || strings.IndexByte(search, 0) >= 0 {
+		return 0, 0, 0, "", ErrInvalid
+	}
+	return page, pageSize, (page - 1) * pageSize, search, nil
 }

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Alert, Button, Card, Empty, Form, Input, message, Modal, Space, Tag, Typography } from 'antd';
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { DataTable } from '../../components/DataState';
@@ -12,29 +12,35 @@ export const BusinessGroupsPage: React.FC = () => {
   const [items, setItems] = useState<BusinessGroup[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(15);
+  const [total, setTotal] = useState(0);
+  const [search, setSearch] = useState('');
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [form] = Form.useForm<{ name: string }>();
 
-  const reload = async () => {
+  const reload = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await apiClient.businessGroups();
+      const response = await apiClient.businessGroupsPage(page, pageSize, search);
       setItems(response.items);
+      setTotal(response.total);
       setError('');
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '业务组读取失败');
     } finally {
       setLoading(false);
     }
-  };
-  useEffect(() => { void reload(); }, []);
+  }, [page, pageSize, search]);
+  useEffect(() => { void reload(); }, [reload]);
 
   const create = async ({ name }: { name: string }) => {
     setBusy(true);
     try {
       const item = await apiClient.createBusinessGroup(name.trim());
-      setItems(prev => [...prev, item].sort((a, b) => a.name.localeCompare(b.name)));
+      setPage(1);
+      setSearch('');
       setOpen(false);
       form.resetFields();
       message.success('业务组已创建');
@@ -48,14 +54,14 @@ export const BusinessGroupsPage: React.FC = () => {
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       <Alert showIcon type="info" message="业务组是资产登记的归属维度" description="新建资产或导入 CSV 时可复用已有业务组。删除资产不会删除业务组，便于保留组织维度和审计记录。" />
-      <Card title="业务组" extra={<Space><Button icon={<ReloadOutlined />} onClick={() => void reload()} loading={loading}>刷新</Button><Button type="primary" icon={<PlusOutlined />} disabled={!canEdit} onClick={() => setOpen(true)}>新增业务组</Button></Space>}>
+      <Card title="业务组" extra={<Space wrap><Input.Search aria-label="业务组搜索" placeholder="搜索业务组" allowClear value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} style={{ width: 220 }} /><Button icon={<ReloadOutlined />} onClick={() => void reload()} loading={loading}>刷新</Button><Button type="primary" icon={<PlusOutlined />} disabled={!canEdit} onClick={() => setOpen(true)}>新增业务组</Button></Space>}>
         {error && <Alert type="error" showIcon message={error} style={{ marginBottom: 16 }} />}
         <DataTable<BusinessGroup>
           rowKey="name"
           dataSource={items}
           loading={loading}
           locale={{ emptyText: <Empty description="暂无业务组，请先登记资产或创建业务组" /> }}
-          pagination={{ pageSize: 15, showTotal: total => `共 ${total} 个业务组` }}
+          pagination={{ current: page, pageSize, total, showSizeChanger: true, pageSizeOptions: [15, 30, 60], showTotal: count => `共 ${count} 个业务组`, onChange: (nextPage, nextSize) => { if (nextSize !== pageSize) { setPageSize(nextSize); setPage(1); } else setPage(nextPage); } }}
           columns={[
             { title: '业务组', dataIndex: 'name', render: (name: string) => <Typography.Text strong>{name}</Typography.Text> },
             { title: '资产数', dataIndex: 'assetCount', width: 140, render: (count: number) => <Tag color={count ? 'blue' : 'default'}>{count} 台</Tag> },

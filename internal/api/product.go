@@ -147,15 +147,29 @@ func registerProductHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui fu
 		}
 	}))
 	mux.HandleFunc("GET /api/v1/notifications", ui(false, func(w http.ResponseWriter, r *http.Request) {
-		unreadOnly := false
-		if raw := r.URL.Query().Get("unread"); raw != "" {
-			if raw != "true" && raw != "false" {
+		query, paged, ok := parseNotificationListQuery(r)
+		if !ok {
+			if _, hasPage := r.URL.Query()["page"]; hasPage {
+				bad(w, http.StatusBadRequest, "invalid_notification_list_query")
+			} else if _, hasPageSize := r.URL.Query()["page_size"]; hasPageSize {
+				bad(w, http.StatusBadRequest, "invalid_notification_list_query")
+			} else {
 				bad(w, http.StatusBadRequest, "invalid_notification_filter")
+			}
+			return
+		}
+		if paged {
+			page, err := store.ListNotificationsPage(r.Context(), query)
+			if errors.Is(err, repo.ErrInvalidNotificationListQuery) {
+				bad(w, http.StatusBadRequest, "invalid_notification_list_query")
 				return
 			}
-			unreadOnly = raw == "true"
+			if !runtimeStoreError(w, err) {
+				runtimeJSON(w, http.StatusOK, page)
+			}
+			return
 		}
-		items, err := store.ListNotifications(r.Context(), unreadOnly)
+		items, err := store.ListNotifications(r.Context(), query.UnreadOnly)
 		if !runtimeStoreError(w, err) {
 			runtimeJSON(w, http.StatusOK, items)
 		}
@@ -186,6 +200,22 @@ func registerProductHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui fu
 		}
 	}))
 	mux.HandleFunc("GET /api/v1/knowledge", ui(false, func(w http.ResponseWriter, r *http.Request) {
+		query, paged, ok := parseKnowledgeListQuery(r)
+		if !ok {
+			bad(w, http.StatusBadRequest, "invalid_knowledge_list_query")
+			return
+		}
+		if paged {
+			page, err := store.ListKnowledgePage(r.Context(), query)
+			if errors.Is(err, repo.ErrInvalidKnowledgeListQuery) {
+				bad(w, http.StatusBadRequest, "invalid_knowledge_list_query")
+				return
+			}
+			if !runtimeStoreError(w, err) {
+				runtimeJSON(w, http.StatusOK, PageListResponse[findings.KnowledgeEntry]{Items: page.Items, Total: page.Total, Page: page.Page, PageSize: page.PageSize})
+			}
+			return
+		}
 		items, err := store.ListKnowledge(r.Context())
 		if !runtimeStoreError(w, err) {
 			runtimeJSON(w, 200, ListResponse[findings.KnowledgeEntry]{Items: items, Total: len(items)})

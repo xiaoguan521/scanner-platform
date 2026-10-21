@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { DataTable } from '../../components/DataState';
 import { Alert, Button, Card, Col, Descriptions, Drawer, Form, Input, InputNumber, message, Modal, Row, Select, Space, Tag, Typography } from 'antd';
 import { PlusOutlined, UploadOutlined } from '@ant-design/icons';
@@ -12,10 +12,10 @@ import type { KnowledgeEntry } from '../../types';
 type Values=Omit<KnowledgeEntry,'identifiers'|'references'|'affectedRanges'|'updatedAt'> & {identifiersText:string;referencesText:string;rangesText:string};
 export const KnowledgePage:React.FC=()=>{
   const {user}=useAuth();const canWrite=user?.role==='admin'||user?.role==='security_engineer';
-  const {data:items,setData:setItems,loading,error}=useCollection('knowledge');
   const {data:categories}=useCollection('vulnerability-categories');
-  const [query,setQuery]=useState('');const [open,setOpen]=useState(false);const [editing,setEditing]=useState<KnowledgeEntry|null>(null);const [detail,setDetail]=useState<KnowledgeEntry|null>(null);const [busy,setBusy]=useState(false);const [form]=Form.useForm<Values>();const fileRef=useRef<HTMLInputElement>(null);
-  const filtered=items.filter(i=>[i.id,i.title,i.component,...Object.values(i.identifiers??{}).flat()].join(' ').toLowerCase().includes(query.trim().toLowerCase()));
+  const [items,setItems]=useState<KnowledgeEntry[]>([]);const [loading,setLoading]=useState(true);const [error,setError]=useState('');const [page,setPage]=useState(1);const [pageSize,setPageSize]=useState(15);const [total,setTotal]=useState(0);const [query,setQuery]=useState('');const [open,setOpen]=useState(false);const [editing,setEditing]=useState<KnowledgeEntry|null>(null);const [detail,setDetail]=useState<KnowledgeEntry|null>(null);const [busy,setBusy]=useState(false);const [form]=Form.useForm<Values>();const fileRef=useRef<HTMLInputElement>(null);
+  const reload=useCallback(async(signal?:AbortSignal)=>{setLoading(true);try{const response=await apiClient.knowledgePage(page,pageSize,query,signal);if(!signal?.aborted){setItems(response.items);setTotal(response.total);setError('');}}catch(cause){if(!signal?.aborted)setError(cause instanceof Error?cause.message:'知识库读取失败');}finally{if(!signal?.aborted)setLoading(false);}},[page,pageSize,query]);
+  useEffect(()=>{const controller=new AbortController();void reload(controller.signal);return()=>controller.abort();},[reload]);
   const edit=(item?:KnowledgeEntry)=>{setEditing(item??null);form.resetFields();form.setFieldsValue(item?{...item,identifiersText:JSON.stringify(item.identifiers??{},null,2),referencesText:item.references?.join('\n')??'',rangesText:JSON.stringify(item.affectedRanges??[],null,2)}:{language:'zh-CN',identifiersText:'{}',rangesText:'[]',referencesText:'',source:'自建中文内容'});setOpen(true);};
   const save=async(values:Values)=>{
     setBusy(true);try{
@@ -25,7 +25,7 @@ export const KnowledgePage:React.FC=()=>{
       if(!Array.isArray(affectedRanges)||affectedRanges.some(r=>!r||typeof r!=='object'||Object.entries(r).some(([k,v])=>!['introduced','fixed','lastAffected'].includes(k)||typeof v!=='string')))throw new Error('版本范围须为数组，仅支持 introduced、fixed、lastAffected 字符串');
       const input={...fields,identifiers,affectedRanges,references:(referencesText??'').split('\n').map(v=>v.trim()).filter(Boolean),updatedAt:new Date().toISOString()};
       const saved=editing?await updateKnowledge(editing.id,input):await createKnowledge(input);
-      setItems(prev=>editing?prev.map(i=>i.id===saved.id?saved:i):[saved,...prev]);message.success('知识条目已保存');setOpen(false);
+      setItems(prev=>editing?prev.map(i=>i.id===saved.id?saved:i):[saved,...prev]);message.success('知识条目已保存');setOpen(false);if(!editing){setPage(1);}else{void reload();}
     }catch(e){message.error(e instanceof Error?e.message:'保存失败');}finally{setBusy(false);}
   };
   const remove=(item:KnowledgeEntry)=>Modal.confirm({title:`删除知识条目 ${item.id}`,content:'已生成的扫描发现项和报告快照会保留。后续版本匹配不再使用该条目。',okText:'删除',okButtonProps:{danger:true},cancelText:'取消',onOk:async()=>{await deleteKnowledge(item.id);setItems(prev=>prev.filter(i=>i.id!==item.id));message.success('条目已删除');}});
@@ -35,15 +35,15 @@ export const KnowledgePage:React.FC=()=>{
       const parsed=JSON.parse(await file.text());const imported=Array.isArray(parsed)?parsed:parsed.items;
       if(!Array.isArray(imported)||imported.length===0||imported.length>10000)throw new Error('JSON 需要包含条目数组或 {"items": [...]}，每次 1–10000 条');
       if(imported.some(i=>!i||typeof i!=='object'||typeof i.id!=='string'))throw new Error('每个条目必须包含字符串 id');
-      const result=await importKnowledge(imported);const response=await apiClient.collection('knowledge');setItems(response.items);message.success(`已导入 ${result.imported??imported.length} 条知识`);
+      const result=await importKnowledge(imported);setPage(1);await reload();message.success(`已导入 ${result.imported??imported.length} 条知识`);
     }catch(e){message.error(e instanceof Error?e.message:'导入失败');}finally{setBusy(false);if(fileRef.current)fileRef.current.value='';}
   };
   return <Space direction="vertical" size={16} style={{width:'100%'}}>
     <CollectionNotice loading={loading} error={error}/>
     <Alert showIcon type="info" message="漏洞知识库与中文修复建议" description="支持本地 JSON 导入和自建中文内容。条目用于组件版本匹配与发现项内容补全；版本匹配结果标注为版本推断。CNNVD、CNVD 等数据源尚未接入，可人工填写外部编号。"/>
     <Card title="漏洞知识库" extra={<Space wrap><input ref={fileRef} type="file" accept=".json,application/json" style={{display:'none'}} onChange={e=>void importFile(e.target.files?.[0])}/><Button icon={<UploadOutlined/>} disabled={!canWrite} loading={busy} onClick={()=>fileRef.current?.click()}>导入本地 JSON</Button><Button type="primary" icon={<PlusOutlined/>} disabled={!canWrite} onClick={()=>edit()}>新增条目</Button></Space>}>
-      <Input.Search aria-label="搜索知识条目" value={query} onChange={e=>setQuery(e.target.value)} allowClear placeholder="搜索平台编号、标题、组件或外部编号" style={{maxWidth:480,marginBottom:16}}/>
-      <DataTable<KnowledgeEntry> rowKey="id" dataSource={filtered} loading={loading} scroll={{x:1100}} pagination={{pageSize:15,showSizeChanger:true,showTotal:n=>`共 ${n} 条`}} columns={[
+      <Input.Search aria-label="搜索知识条目" value={query} onChange={e=>{setQuery(e.target.value);setPage(1);}} allowClear placeholder="搜索平台编号、标题、组件或外部编号" style={{maxWidth:480,marginBottom:16}}/>
+      <DataTable<KnowledgeEntry> rowKey="id" dataSource={items} loading={loading} scroll={{x:1100}} pagination={{current:page,pageSize,total,showSizeChanger:true,pageSizeOptions:[15,30,60],showTotal:n=>`共 ${n} 条`,onChange:(nextPage,nextSize)=>{if(nextSize!==pageSize){setPageSize(nextSize);setPage(1);}else setPage(nextPage);}}} columns={[
         {title:'平台编号',dataIndex:'id',width:170},{title:'中文标题',dataIndex:'title',render:(v:string,r)=><Button type="link" style={{padding:0,whiteSpace:'normal',textAlign:'left'}} onClick={()=>setDetail(r)}>{v}</Button>},
         {title:'组件',dataIndex:'component',width:150},{title:'CVSS',dataIndex:'cvssScore',width:85,render:(v:number|undefined)=>v??'未提供'}, {title:'分类',dataIndex:'category',width:140},
         {title:'内容',dataIndex:'language',width:125,render:(v:string)=><Tag color={v==='zh-CN'?'green':'orange'}>{v==='zh-CN'?'中文':'原文待中文化'}</Tag>},

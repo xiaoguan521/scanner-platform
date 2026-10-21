@@ -203,14 +203,25 @@ paths:
         required: false
         schema:
           type: boolean
+      - in: query
+        name: page
+        required: false
+        schema: {type: integer, minimum: 1, maximum: 100000}
+        description: When supplied with page_size, returns a bounded page response.
+      - in: query
+        name: page_size
+        required: false
+        schema: {type: integer, minimum: 1, maximum: 100, default: 25}
       responses:
         '200':
-          description: Notification list and unread count
+          description: Notification list and unread count; paged requests also include page and pageSize.
           content:
             application/json:
               schema:
-                "$ref": "#/components/schemas/NotificationList"
-        '400': {description: Invalid unread filter}
+                oneOf:
+                - "$ref": "#/components/schemas/NotificationList"
+                - "$ref": "#/components/schemas/NotificationListPage"
+        '400': {description: Invalid unread filter or pagination}
         '401': {description: Unauthenticated}
   "/api/v1/notifications/read-all":
     post:
@@ -597,6 +608,16 @@ paths:
       summary: List persisted asset business groups
       description: Returns business-group names and current asset counts without exposing asset addresses or scan data.
       security: [{sessionCookie: []}]
+      parameters:
+      - in: query
+        name: page
+        schema: {type: integer, minimum: 1, maximum: 100000}
+      - in: query
+        name: page_size
+        schema: {type: integer, minimum: 1, maximum: 100, default: 25}
+      - in: query
+        name: q
+        schema: {type: string, maxLength: 160}
       responses:
         '200':
           description: Business group list
@@ -644,8 +665,18 @@ paths:
     get:
       tags: [assets]
       summary: List safe asset import history summaries
-      description: Returns only actor, counts and timestamps; CSV rows, addresses and names are never returned. The result is limited to the latest 200 imports.
+      description: Returns only actor, counts and timestamps; CSV rows, addresses and names are never returned. Without pagination it keeps the legacy latest-200 projection; paged requests use the same safe projection with bounded page size.
       security: [{sessionCookie: []}]
+      parameters:
+      - in: query
+        name: page
+        schema: {type: integer, minimum: 1, maximum: 100000}
+      - in: query
+        name: page_size
+        schema: {type: integer, minimum: 1, maximum: 100, default: 25}
+      - in: query
+        name: q
+        schema: {type: string, maxLength: 160}
       responses:
         '200':
           description: Import history list
@@ -2837,12 +2868,30 @@ paths:
     get:
       summary: "List normalized imported vulnerability knowledge"
       security: [{sessionCookie: []}]
+      parameters:
+      - in: query
+        name: page
+        schema: {type: integer, minimum: 1, maximum: 100000}
+      - in: query
+        name: page_size
+        schema: {type: integer, minimum: 1, maximum: 100, default: 25}
+      - in: query
+        name: q
+        schema: {type: string, maxLength: 160}
       responses:
         "200":
-          description: "List normalized imported vulnerability knowledge"
+          description: "List normalized imported vulnerability knowledge; paged requests include page and pageSize"
           content:
             application/json:
-              schema: {"type": "object", "properties": {"items": {"type": "array", "items": {"$ref": "#/components/schemas/KnowledgeEntry"}}, "total": {"type": "integer"}}, "required": ["items", "total"]}
+              schema:
+                oneOf:
+                - type: object
+                  properties: {items: {type: array, items: {"$ref": "#/components/schemas/KnowledgeEntry"}}, total: {type: integer}}
+                  required: [items, total]
+                - allOf:
+                  - "$ref": "#/components/schemas/Pagination"
+                  - type: object
+                    properties: {items: {type: array, items: {"$ref": "#/components/schemas/KnowledgeEntry"}}}
         "400": {description: Invalid input}
         "403": {description: Insufficient role or invalid same-origin mutation header}
     post:
@@ -5102,6 +5151,10 @@ components:
         items: {type: array, items: {"$ref": "#/components/schemas/Notification"}}
         total: {type: integer, minimum: 0}
         unreadCount: {type: integer, minimum: 0}
+    NotificationListPage:
+      allOf:
+      - "$ref": "#/components/schemas/NotificationList"
+      - "$ref": "#/components/schemas/Pagination"
     ScanPlanDefaults:
       type: object
       required: [portPreset, intensity, portRanges, portExclusions, customRuleIds]

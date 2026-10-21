@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
 func TestBusinessGroupsTrackAssetsAndRemainSafe(t *testing.T) {
@@ -62,4 +63,45 @@ func TestAssetImportHistoryContainsOnlySummary(t *testing.T) {
 			t.Fatalf("history leaked raw import data: %q", field)
 		}
 	}
+}
+
+func TestManagementListPagesBoundResultsAndEscapeSearch(t *testing.T) {
+	store, accounts, actor := importFixture(t)
+	ctx := context.Background()
+	for _, name := range []string{"平台服务", "平台_legacy", "其他服务"} {
+		if _, err := store.CreateBusinessGroup(ctx, actor, name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	groups, ok := any(store).(BusinessGroupPageRepository)
+	if !ok {
+		t.Fatal("store does not implement business group paging")
+	}
+	page, err := groups.ListBusinessGroupsPage(ctx, BusinessGroupListQuery{Page: 1, PageSize: 1, Search: "平台_"})
+	if err != nil || page.Total != 1 || len(page.Items) != 1 || page.Items[0].Name != "平台_legacy" {
+		t.Fatalf("group page=%+v err=%v", page, err)
+	}
+	if _, err := groups.ListBusinessGroupsPage(ctx, BusinessGroupListQuery{Page: 1, PageSize: 101}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("invalid group page size err=%v", err)
+	}
+
+	for i := 0; i < 3; i++ {
+		if _, err := store.PreviewImport(ctx, actor, []byte(ImportTemplate)); err != nil {
+			t.Fatal(err)
+		}
+		// Preview IDs are user-bound and the fixture replaces a pending preview;
+		// create history rows directly to exercise the list projection.
+		if _, err := store.db.ExecContext(ctx, `INSERT INTO asset_import_history(id,actor,imported,total,created_at) VALUES(?,?,?,?,?)`, "history-page-"+string(rune('0'+i)), actor, 1, 1, time.Now().UTC().Add(time.Duration(i)*time.Second).Format(time.RFC3339Nano)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	history, ok := any(store).(ImportHistoryPageRepository)
+	if !ok {
+		t.Fatal("store does not implement import history paging")
+	}
+	historyPage, err := history.ListImportHistoryPage(ctx, ImportHistoryListQuery{Page: 2, PageSize: 2, Search: actor})
+	if err != nil || historyPage.Total != 3 || len(historyPage.Items) != 1 || historyPage.Page != 2 {
+		t.Fatalf("history page=%+v err=%v", historyPage, err)
+	}
+	_ = accounts
 }

@@ -12,10 +12,14 @@ test('asset management uses server resources and safe import summaries', () => {
   assert.match(client, /businessGroups\(\).*\/api\/v1\/business-groups/);
   assert.match(client, /createBusinessGroup\(name:string\).*business-groups.*POST/);
   assert.match(client, /assetImportHistory\(\).*\/api\/v1\/assets\/import-history/);
+  assert.match(client, /businessGroupsPage\(page:number,pageSize:number/);
+  assert.match(client, /assetImportHistoryPage\(page:number,pageSize:number/);
   assert.match(nav, /\/business-groups', label: '业务组'/);
   assert.match(nav, /\/asset-import-history', label: '导入记录'/);
   assert.match(groups, /apiClient\.createBusinessGroup/);
   assert.match(history, /apiClient\.assetImportHistory/);
+  assert.match(groups, /businessGroupsPage|pageSize/);
+  assert.match(history, /assetImportHistoryPage|pageSize/);
   assert.match(history, /不保存 CSV 原文、目标地址或资产清单/);
 });
 

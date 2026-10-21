@@ -5,9 +5,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"scanner-platform/internal/account"
+	"scanner-platform/internal/findings"
 	"scanner-platform/internal/repo"
 )
 
@@ -62,6 +64,24 @@ func TestNotificationsAPIAuthFilterAndReadActions(t *testing.T) {
 	got := send(http.MethodGet, "/api/v1/notifications?unread=true", false, true)
 	if got.Code != http.StatusOK || got.Body.String() == "" {
 		t.Fatalf("notification list: %d %s", got.Code, got.Body.String())
+	}
+	page := send(http.MethodGet, "/api/v1/notifications?page=1&page_size=1&unread=true", false, true)
+	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), `"page":1`) || !strings.Contains(page.Body.String(), `"pageSize":1`) {
+		t.Fatalf("notification page: %d %s", page.Code, page.Body.String())
+	}
+	if invalid := send(http.MethodGet, "/api/v1/notifications?page=1&page_size=101", false, true); invalid.Code != http.StatusBadRequest {
+		t.Fatalf("invalid notification page: %d %s", invalid.Code, invalid.Body.String())
+	}
+	score := 5.0
+	if _, err := store.SaveKnowledge(ctx, findings.KnowledgeEntry{ID: "API-KNOWLEDGE-001", Title: "Example vulnerability", Description: "safe summary", Component: "apache", Source: "fixture", Solution: "upgrade", Language: "en", CVSSScore: &score, AffectedRanges: []findings.VersionRange{{Introduced: "1.0", Fixed: "2.0"}}}, admin.ID); err != nil {
+		t.Fatal(err)
+	}
+	knowledge := send(http.MethodGet, "/api/v1/knowledge?page=1&page_size=1&q=apache", false, true)
+	if knowledge.Code != http.StatusOK || !strings.Contains(knowledge.Body.String(), `"page":1`) || !strings.Contains(knowledge.Body.String(), `API-KNOWLEDGE-001`) {
+		t.Fatalf("knowledge page: %d %s", knowledge.Code, knowledge.Body.String())
+	}
+	if invalid := send(http.MethodGet, "/api/v1/knowledge?page=1&page_size=101", false, true); invalid.Code != http.StatusBadRequest {
+		t.Fatalf("invalid knowledge page: %d %s", invalid.Code, invalid.Body.String())
 	}
 	if got := send(http.MethodPost, "/api/v1/notifications/read-all", false, true); got.Code != http.StatusForbidden {
 		t.Fatalf("missing read csrf: %d", got.Code)
