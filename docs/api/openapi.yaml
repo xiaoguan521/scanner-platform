@@ -2152,7 +2152,7 @@ paths:
   "/api/v1/scan-plans":
     get:
       summary: "List read-only product scan presets"
-      description: "Returns product-language presets. The defaults do not expose engine command-line flags; selecting one still sends the final bounded plan through normal Server validation."
+      description: "Returns product-language presets and saved custom plans. Defaults do not expose engine command-line flags; selecting one still sends the final bounded plan through normal Server validation."
       security: [{sessionCookie: []}]
       responses:
         "200":
@@ -2168,6 +2168,66 @@ paths:
                     items: {"$ref": "#/components/schemas/ScanPlan"}
                   total: {type: integer}
         "401": {description: Unauthenticated}
+    post:
+      summary: "Create a custom scan plan"
+      description: "Creates a product-level custom plan by copying a preset or editing its bounded defaults."
+      security: [{sessionCookie: []}]
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"$ref": "#/components/schemas/ScanPlanInput"}
+      responses:
+        "201":
+          description: "Created custom plan"
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/ScanPlan"}
+        "400": {description: Invalid product-level plan}
+        "401": {description: Unauthenticated}
+        "403": {description: Insufficient role or invalid same-origin mutation header}
+        "409": {description: Plan state conflict}
+  "/api/v1/scan-plans/{id}":
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: {type: string, minLength: 1, maxLength: 160}
+    put:
+      summary: "Update a custom scan plan"
+      security: [{sessionCookie: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"$ref": "#/components/schemas/ScanPlanInput"}
+      responses:
+        "200":
+          description: "Updated custom plan"
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/ScanPlan"}
+        "400": {description: Invalid product-level plan}
+        "401": {description: Unauthenticated}
+        "403": {description: Insufficient role or invalid same-origin mutation header}
+        "409": {description: Preset or missing plan cannot be updated}
+    delete:
+      summary: "Delete a custom scan plan"
+      security: [{sessionCookie: []}]
+      responses:
+        "200":
+          description: "Deleted custom plan"
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: {type: string, enum: [DELETED]}
+        "401": {description: Unauthenticated}
+        "403": {description: Insufficient role or invalid same-origin mutation header}
+        "409": {description: Presets and missing plans cannot be deleted}
   "/api/v1/knowledge":
     get:
       summary: "List normalized imported vulnerability knowledge"
@@ -4206,22 +4266,35 @@ components:
       type: object
       required: [portPreset, intensity, portRanges, portExclusions, customRuleIds]
       properties:
-        portPreset: {type: string, enum: [common, common-and-custom]}
+        portPreset: {type: string, enum: [common, custom, common-and-custom, registered, full]}
         intensity: {type: string, enum: [gentle, standard, aggressive]}
         portRanges: {type: string}
         portExclusions: {type: string}
         customRuleIds: {type: array, items: {type: string}}
+    ScanPlanInput:
+      type: object
+      required: [title, summary, detail, defaults]
+      properties:
+        title: {type: string, minLength: 1, maxLength: 160}
+        summary: {type: string, minLength: 1, maxLength: 400}
+        detail: {type: string, minLength: 1, maxLength: 1200}
+        sourceId: {type: string, enum: [quick, standard]}
+        defaults: {"$ref": "#/components/schemas/ScanPlanDefaults"}
     ScanPlan:
       type: object
       required: [id, title, summary, detail, kind, readOnly, defaults]
       properties:
-        id: {type: string, enum: [quick, standard]}
+        id: {type: string, minLength: 1}
         title: {type: string}
         summary: {type: string}
         detail: {type: string}
-        kind: {type: string, enum: [PRESET]}
+        kind: {type: string, enum: [PRESET, CUSTOM]}
         readOnly: {type: boolean}
         defaults: {"$ref": "#/components/schemas/ScanPlanDefaults"}
+        sourceId: {type: string}
+        createdBy: {type: string}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
     VersionRange:
       type: object
       properties:

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"scanner-platform/internal/findings"
 	"scanner-platform/internal/repo"
@@ -27,8 +28,46 @@ func registerProductHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui fu
 		runtimeJSON(w, 200, ListResponse[findings.Capability]{Items: items, Total: len(items)})
 	}))
 	mux.HandleFunc("GET /api/v1/scan-plans", ui(false, func(w http.ResponseWriter, r *http.Request) {
-		items := scanplans.Catalog()
-		runtimeJSON(w, http.StatusOK, ListResponse[scanplans.Plan]{Items: items, Total: len(items)})
+		items, err := store.ListScanPlans(r.Context())
+		if !runtimeStoreError(w, err) {
+			runtimeJSON(w, http.StatusOK, ListResponse[scanplans.Plan]{Items: items, Total: len(items)})
+		}
+	}))
+	writeScanPlan := func(w http.ResponseWriter, r *http.Request, update bool) {
+		var body scanplans.Input
+		if !runtimeDecode(w, r, &body) {
+			return
+		}
+		id := ""
+		if update {
+			id = r.PathValue("id")
+		}
+		item, err := store.SaveScanPlan(r.Context(), actor(r), body, id, update)
+		if errors.Is(err, repo.ErrInvalidScanPlan) || errors.Is(err, scanplans.ErrInvalid) {
+			bad(w, http.StatusBadRequest, "invalid_scan_plan")
+			return
+		}
+		if errors.Is(err, repo.ErrScanPlanConflict) {
+			bad(w, http.StatusConflict, "scan_plan_conflict")
+			return
+		}
+		if !runtimeStoreError(w, err) {
+			status := http.StatusOK
+			if !update {
+				status = http.StatusCreated
+			}
+			runtimeJSON(w, status, item)
+		}
+	}
+	mux.HandleFunc("POST /api/v1/scan-plans", ui(true, func(w http.ResponseWriter, r *http.Request) { writeScanPlan(w, r, false) }))
+	mux.HandleFunc("PUT /api/v1/scan-plans/{id}", ui(true, func(w http.ResponseWriter, r *http.Request) { writeScanPlan(w, r, true) }))
+	mux.HandleFunc("DELETE /api/v1/scan-plans/{id}", ui(true, func(w http.ResponseWriter, r *http.Request) {
+		err := store.DeleteScanPlan(r.Context(), r.PathValue("id"), actor(r))
+		if errors.Is(err, repo.ErrScanPlanConflict) {
+			bad(w, http.StatusConflict, "scan_plan_conflict")
+		} else if !runtimeStoreError(w, err) {
+			runtimeJSON(w, http.StatusOK, map[string]string{"status": "DELETED"})
+		}
 	}))
 	mux.HandleFunc("GET /api/v1/vulnerability-categories", ui(false, func(w http.ResponseWriter, r *http.Request) {
 		items := findings.Categories()

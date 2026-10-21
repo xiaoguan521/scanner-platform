@@ -56,20 +56,34 @@ export interface TimeWindow {
   timeZone: string;
 }
 
+export type ScanPlanPortPreset = 'common' | 'custom' | 'common-and-custom' | 'registered' | 'full';
+export type ScanPlanIntensity = 'gentle' | 'standard' | 'aggressive';
+export interface ScanPlanDefaults {
+  portPreset: ScanPlanPortPreset;
+  intensity: ScanPlanIntensity;
+  portRanges: string;
+  portExclusions: string;
+  customRuleIds: string[];
+}
 export interface ScanPlan {
-  id: 'quick' | 'standard';
+  id: string;
   title: string;
   summary: string;
   detail: string;
-  kind: 'PRESET';
+  kind: 'PRESET' | 'CUSTOM';
   readOnly: boolean;
-  defaults: {
-    portPreset: 'common' | 'common-and-custom';
-    intensity: 'gentle' | 'standard' | 'aggressive';
-    portRanges: string;
-    portExclusions: string;
-    customRuleIds: string[];
-  };
+  defaults: ScanPlanDefaults;
+  sourceId?: string;
+  createdBy?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+export interface ScanPlanInput {
+  title: string;
+  summary: string;
+  detail: string;
+  defaults: ScanPlanDefaults;
+  sourceId?: string;
 }
 
 export type ReviewDecision = 'APPROVE' | 'REJECT';

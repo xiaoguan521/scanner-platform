@@ -4,10 +4,10 @@ import { DownloadOutlined, PlusOutlined } from '@ant-design/icons';
 import { useCollection } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
 import { apiClient, isDemoMode } from '../../api/client';
-import { archiveTask, cancelTask, createTask, deleteSchedule, deleteTask, exportTask, fetchScheduleRuns, fetchTask, fetchTaskLogs, pauseTask, restoreTask, resumeTask, saveSchedule, toggleSchedule, updateSchedule } from '../../api/runtime';
+import { archiveTask, cancelTask, createScanPlan, createTask, deleteScanPlan, deleteSchedule, deleteTask, exportTask, fetchScheduleRuns, fetchTask, fetchTaskLogs, pauseTask, restoreTask, resumeTask, saveSchedule, toggleSchedule, updateScanPlan, updateSchedule } from '../../api/runtime';
 import { useAuth } from '../../auth/AuthProvider';
 import { mockAssets, mockScanPlans, mockTasks } from '../../mock/data';
-import type { CustomRule, PortProbeRange, ScanPlan, ScanTask, Schedule, ScheduleRun, TaskInput, ScanPolicy, TaskLog } from '../../types';
+import type { CustomRule, PortProbeRange, ScanPlan, ScanPlanInput, ScanTask, Schedule, ScheduleRun, TaskInput, ScanPolicy, TaskLog } from '../../types';
 
 import { parsePortRanges, showRanges, coversAllPorts, presetLabels, summarizePorts, compressPorts, previewProbePorts } from './policy';
 import { assertTaskSubmission, isAutoTaskWizard, wizardStepFields } from './wizard';
@@ -20,7 +20,8 @@ const ApplicationCoverage:React.FC<{task:ScanTask}>=({task})=><>
   <Typography.Text>Java / Go 应用：{task.applicationScanStatus?applicationStatuses[task.applicationScanStatus]??'状态未知':'等待 Worker 回报（旧任务未记录应用覆盖）'}</Typography.Text>
   {task.applicationResults?.map(app=><Typography.Text key={app.alias} type={['collection_failed','analysis_failed'].includes(app.status)?'danger':undefined}>应用 {app.alias}：{applicationStatuses[app.status]??'状态未知'}；已分析 {app.analyzedCount} / 选中 {app.selectedCount} 个文件</Typography.Text>)}
 </>;
-type Values={engine:'auto'|'synthetic'|'nuclei'|'trivy'|'zap'|'port-probe';scheme:'http'|'https';inputPath:string;inputKind:'filesystem'|'image-archive'|'rootfs'|'artifact';targets:string[];assetId:string;scanPlan:'quick'|'standard';portPreset:'common'|'custom'|'common-and-custom'|'registered'|'full';intensity:'gentle'|'standard'|'aggressive';portRanges:string;portExclusions:string;opsApproved:boolean;customRuleIds:string[];mode:'now'|'schedule';name:string;nextRun:string;intervalMinutes:number;window:boolean;weekdays:number[];start:string;end:string;timeZone:string};
+type Values={engine:'auto'|'synthetic'|'nuclei'|'trivy'|'zap'|'port-probe';scheme:'http'|'https';inputPath:string;inputKind:'filesystem'|'image-archive'|'rootfs'|'artifact';targets:string[];assetId:string;scanPlan:string;portPreset:'common'|'custom'|'common-and-custom'|'registered'|'full';intensity:'gentle'|'standard'|'aggressive';portRanges:string;portExclusions:string;opsApproved:boolean;customRuleIds:string[];mode:'now'|'schedule';name:string;nextRun:string;intervalMinutes:number;window:boolean;weekdays:number[];start:string;end:string;timeZone:string};
+type PlanEditorValues=ScanPlanInput;
 function validateProbeRanges(text?:string):void{
   const ranges=parsePortRanges(text);
   if(ranges.length===0) throw new Error('此模式至少填写一个端口或端口范围');
@@ -30,12 +31,13 @@ export const TasksPage:React.FC=()=>{
   const [showArchived,setShowArchived]=useState(false);
   const {data:tasks,setData:setTasks,loading,error}=useCollection('tasks',mockTasks,showArchived?'?archived=true':'?archived=false');
   const {data:assets}=useCollection('assets',mockAssets);
-  const {data:scanPlans,loading:scanPlansLoading,error:scanPlansError}=useCollection('scan-plans',mockScanPlans);
+  const {data:scanPlans,setData:setScanPlans,loading:scanPlansLoading,error:scanPlansError}=useCollection('scan-plans',mockScanPlans);
   const {data:customRules}=useCollection('custom-rules',[] as CustomRule[]);
   const {data:schedules,setData:setSchedules,loading:scheduleLoading,error:scheduleError}=useCollection('schedules',[]);
   const [policy,setPolicy]=useState<ScanPolicy|null>(null);const [policyError,setPolicyError]=useState('');
   useEffect(()=>{if(isDemoMode)return;const controller=new AbortController();apiClient.scanPolicy().then(setPolicy).catch(e=>setPolicyError(String(e)));return()=>controller.abort();},[]);
   const [open,setOpen]=useState(false);const [busy,setBusy]=useState(false);const [form]=Form.useForm<Values>();
+  const [planEditorOpen,setPlanEditorOpen]=useState(false);const [planEditorBusy,setPlanEditorBusy]=useState(false);const [editingPlan,setEditingPlan]=useState<ScanPlan|null>(null);const [planForm]=Form.useForm<PlanEditorValues>();
   const [wizardStep,setWizardStep]=useState(0);
   const [editingSchedule,setEditingSchedule]=useState<Schedule|null>(null);
   const [historySchedule,setHistorySchedule]=useState<Schedule|null>(null);const [scheduleRunPage,setScheduleRunPage]=useState(1);const [scheduleRuns,setScheduleRuns]=useState<ScheduleRun[]>([]);const [scheduleRunTotal,setScheduleRunTotal]=useState(0);const [scheduleRunLoading,setScheduleRunLoading]=useState(false);const [scheduleRunError,setScheduleRunError]=useState('');
@@ -91,7 +93,22 @@ export const TasksPage:React.FC=()=>{
     return()=>controller.abort();
   },[detailTask?.id]);
   const confirmFull=()=>new Promise<boolean>(resolve=>Modal.confirm({title:'确认全端口探测',content:'将对这台主机的 TCP 1–65535 端口发起连接（排除项会跳过）。按每次连接超时 1 秒、并发 16 粗略估算约 69 分钟；实际时间取决于速率、超时和响应，服务识别与漏洞检测会额外耗时。可能增加目标连接数及日志量，请确认维护窗口和授权范围。',okText:'确认全端口范围',cancelText:'返回修改',onOk:()=>resolve(true),onCancel:()=>resolve(false)}));
-  const choosePlan=(plan:ScanPlan)=>{if(plan.id!=='quick'&&plan.id!=='standard')return;form.setFieldsValue({scanPlan:plan.id,...plan.defaults});};
+  const choosePlan=(plan:ScanPlan)=>{form.setFieldsValue({scanPlan:plan.id,...plan.defaults});};
+  const openPlanEditor=(plan:ScanPlan,copy:boolean)=>{
+    if(!canWrite){message.info('当前账号没有管理自定义扫描方案的权限');return;}
+    setEditingPlan(copy?null:plan);
+    planForm.setFieldsValue({title:copy?`${plan.title}（自定义）`:plan.title,summary:plan.summary,detail:plan.detail,defaults:{...plan.defaults,customRuleIds:[...(plan.defaults.customRuleIds??[])]},sourceId:plan.kind==='PRESET'?plan.id:plan.sourceId});
+    setPlanEditorOpen(true);
+  };
+  const savePlan=async(values:PlanEditorValues)=>{
+    setPlanEditorBusy(true);
+    try{
+      const saved=editingPlan?await updateScanPlan(editingPlan.id,values):await createScanPlan(values);
+      setScanPlans(prev=>editingPlan?prev.map(item=>item.id===saved.id?saved:item):[...prev,saved]);
+      setPlanEditorOpen(false);setEditingPlan(null);planForm.resetFields();message.success(editingPlan?'自定义扫描方案已更新':'自定义扫描方案已保存');
+    }catch(cause){message.error(cause instanceof Error?cause.message:'保存扫描方案失败');}finally{setPlanEditorBusy(false);}
+  };
+  const removePlan=(plan:ScanPlan)=>Modal.confirm({title:'删除自定义扫描方案',content:`删除“${plan.title}”后不会影响已经创建的任务；之后不能再从方案卡片选择它。`,okText:'删除',okButtonProps:{danger:true},cancelText:'取消',onOk:async()=>{try{await deleteScanPlan(plan.id);setScanPlans(prev=>prev.filter(item=>item.id!==plan.id));if(selectedPlan===plan.id){const quick=scanPlans.find(item=>item.id==='quick');if(quick)choosePlan(quick);}message.success('自定义扫描方案已删除');}catch(cause){message.error(cause instanceof Error?cause.message:'删除扫描方案失败');throw cause;}}});
   const create=async(values:Values)=>{
     if(busy)return;
     setBusy(true);
@@ -265,7 +282,7 @@ export const TasksPage:React.FC=()=>{
         {(engine==='nuclei'||engine==='zap')&&<Form.Item name="scheme" label="Web 协议" rules={[{required:true}]}><Select options={[{value:'http',label:'HTTP'},{value:'https',label:'HTTPS（允许自签名证书）'}]}/></Form.Item>}
         {engine==='trivy'?<><Form.Item name="inputKind" label="输入类型"><Select options={[{value:'rootfs',label:'Linux 系统包快照（rootfs）'},{value:'filesystem',label:'应用依赖清单（lock 文件）'},{value:'artifact',label:'已部署应用 / 中间件（JAR / Go 文件）'},{value:'image-archive',label:'Docker 镜像归档（docker save / OCI tar）'}]}/></Form.Item><Form.Item name="inputPath" label="Worker 本机输入路径（只填相对路径）" rules={[{required:true,message:'请填写已复制到 Worker 的输入目录'}]} extra="系统包示例：将已授权采集的输入目录（含隐藏校验文件）复制到 Worker 的 runtime/inputs/，此处填相对路径。"><Input placeholder="例如 lab-a/os" maxLength={240}/></Form.Item><Alert style={{marginBottom:16}} type="info" showIcon message="Trivy 读取 Worker 上的离线快照，不会自行联网或连接目标。"/></>:engine==='port-probe'||engine==='auto'?<>
           <div hidden={wizard&&wizardStep!==0}><Form.Item name="assetId" label="已登记主机" rules={[{required:true,message:'请选择一台已登记的主机'}]}><Select showSearch optionFilterProp="label" options={assets.filter(a=>a.kind==='host').map(a=>({value:a.id,label:`${a.address} · ${a.businessGroup}`}))} placeholder="只选择一台主机"/></Form.Item></div>
-          <div hidden={wizard&&wizardStep!==1}><Form.Item name="scanPlan" hidden><Input /></Form.Item><Form.Item label="预置扫描方案"><Space wrap align="start">{scanPlans.map(plan=><Card key={plan.id} size="small" hoverable onClick={()=>choosePlan(plan)} style={{width:250,cursor:'pointer',borderColor:selectedPlan===plan.id?'#1677ff':undefined,boxShadow:selectedPlan===plan.id?'0 0 0 1px #1677ff':undefined}}><Typography.Text strong>{plan.title}</Typography.Text><Typography.Paragraph style={{margin:'6px 0 2px'}}>{plan.summary}</Typography.Paragraph><Typography.Text type="secondary">{plan.detail}</Typography.Text></Card>)}</Space></Form.Item><Form.Item name="portPreset" label="探测范围"><Select onChange={v=>{if(v==='full')form.setFieldValue('intensity','gentle');}} options={Object.entries(presetLabels).map(([value,label])=>({value,label}))}/></Form.Item>
+          <div hidden={wizard&&wizardStep!==1}><Form.Item name="scanPlan" hidden><Input /></Form.Item><Form.Item label="扫描方案"><Space wrap align="start">{scanPlans.map(plan=><Card key={plan.id} size="small" hoverable onClick={()=>choosePlan(plan)} style={{width:270,cursor:'pointer',borderColor:selectedPlan===plan.id?'#1677ff':undefined,boxShadow:selectedPlan===plan.id?'0 0 0 1px #1677ff':undefined}}><Space size={6}><Typography.Text strong>{plan.title}</Typography.Text><Tag color={plan.kind==='CUSTOM'?'blue':'default'}>{plan.kind==='CUSTOM'?'自定义':'预置'}</Tag></Space><Typography.Paragraph style={{margin:'6px 0 2px'}}>{plan.summary}</Typography.Paragraph><Typography.Text type="secondary">{plan.detail}</Typography.Text><Space size={4} style={{marginTop:8}}><Button size="small" type="link" disabled={!canWrite} onClick={event=>{event.stopPropagation();openPlanEditor(plan,true);}}>复制为自定义</Button>{plan.kind==='CUSTOM'&&<><Button size="small" type="link" disabled={!canWrite} onClick={event=>{event.stopPropagation();openPlanEditor(plan,false);}}>编辑</Button><Button size="small" type="link" danger disabled={!canWrite} onClick={event=>{event.stopPropagation();removePlan(plan);}}>删除</Button></>}</Space></Card>)}</Space></Form.Item><Form.Item name="portPreset" label="探测范围"><Select onChange={v=>{if(v==='full')form.setFieldValue('intensity','gentle');}} options={Object.entries(presetLabels).map(([value,label])=>({value,label}))}/></Form.Item>
           {(portPreset==='common'||portPreset==='common-and-custom')&&<Alert style={{marginBottom:16}} showIcon type={policyError?'error':'info'} message={policyError?'常见端口策略读取失败':`常见端口来自系统策略：${policy?.commonPorts?.length??'—'} 个`} description={(policy?summarizePorts(policy.commonPorts):null)||policyError||'由 Server 统一确定，创建任务时冻结策略。'}/>}
           {portPreset==='full'&&<Alert style={{marginBottom:16}} showIcon type="warning" message="全端口探测耗时较长，请预留维护窗口" description="最多 65535 个 TCP 端口，默认使用温和强度；提交时需要再次确认。排除和隔离端口始终跳过。"/>}
           <Form.Item name="intensity" label="扫描强度"><Select options={[{value:'gentle',label:'温和 · 较低并发和请求速率'},{value:'standard',label:'标准'},{value:'aggressive',label:'积极 · 连接数和目标负载较高'}]}/></Form.Item>
@@ -298,6 +315,24 @@ export const TasksPage:React.FC=()=>{
           <Alert style={{marginTop:16}} type="info" showIcon message="端口预览根据当前系统策略、登记端口、排除项和隔离项计算；Server 创建时重新校验并冻结实际范围。全端口提交仍需再次确认。"/>
         </>}
         {(engine==='auto'||engine==='port-probe')&&<div hidden={wizard&&wizardStep!==3} style={{marginTop:16}}><Form.Item name="opsApproved" valuePropName="checked" rules={[{validator:(_,value)=>value?Promise.resolve():Promise.reject(new Error('请确认运维授权和四层转发排除情况'))}]}><Checkbox>我已获得运维对这台主机和所选 TCP 端口范围的探测授权，并已排除已知的 Nginx 四层转发端口</Checkbox></Form.Item></div>}
+      </Form>
+    </Modal>
+    <Modal title={editingPlan?'编辑自定义扫描方案':'复制为自定义扫描方案'} open={planEditorOpen} width={680} onCancel={()=>{if(planEditorBusy)return;setPlanEditorOpen(false);setEditingPlan(null);planForm.resetFields();}} onOk={()=>planForm.submit()} confirmLoading={planEditorBusy} destroyOnClose maskClosable={!planEditorBusy}>
+      <Form<PlanEditorValues> form={planForm} layout="vertical" onFinish={savePlan} initialValues={{defaults:{portPreset:'common',intensity:'gentle',portRanges:'',portExclusions:'',customRuleIds:[]}}}>
+        <Form.Item name="sourceId" hidden><Input /></Form.Item>
+        <Form.Item name="title" label="方案名称" rules={[{required:true,message:'请输入方案名称'},{max:80,message:'方案名称不能超过 80 个字符'}]}><Input maxLength={80}/></Form.Item>
+        <Form.Item name="summary" label="一句话说明" rules={[{required:true,message:'请输入一句话说明'},{max:200,message:'说明不能超过 200 个字符'}]}><Input maxLength={200}/></Form.Item>
+        <Form.Item name="detail" label="检测范围与影响" rules={[{required:true,message:'请说明检测范围和影响'},{max:600,message:'说明不能超过 600 个字符'}]}><Input.TextArea rows={3} maxLength={600}/></Form.Item>
+        <Space wrap style={{display:'flex'}} align="start">
+          <Form.Item name={['defaults','portPreset']} label="探测范围" rules={[{required:true}]} style={{minWidth:260}}><Select options={Object.entries(presetLabels).map(([value,label])=>({value,label}))}/></Form.Item>
+          <Form.Item name={['defaults','intensity']} label="扫描强度" rules={[{required:true}]} style={{minWidth:220}}><Select options={[{value:'gentle',label:'温和'},{value:'standard',label:'标准'},{value:'aggressive',label:'积极'}]}/></Form.Item>
+        </Space>
+        <Form.Item noStyle shouldUpdate={(previous,current)=>previous.defaults?.portPreset!==current.defaults?.portPreset}>{({getFieldValue})=>{
+          const preset=getFieldValue(['defaults','portPreset']);
+          return ['custom','common-and-custom'].includes(preset)?<Form.Item name={['defaults','portRanges']} label="自定义 TCP 端口范围" rules={[{required:true,message:'自定义范围方案必须填写端口范围'}]} extra="英文逗号分隔，例如 22, 8080-8090。Server 保存和创建任务时都会再次校验。"><Input placeholder="例如 22,18080"/></Form.Item>:null;
+        }}</Form.Item>
+        <Form.Item name={['defaults','portExclusions']} label="默认排除端口或范围" extra="可留空；系统、资产和任务排除仍会在创建任务时合并。"><Input placeholder="例如 443,8000-8010"/></Form.Item>
+        <Form.Item name={['defaults','customRuleIds']} label="默认自定义规则" extra="只保存已启用规则的选择；规则状态和权限仍由 Server 在创建任务时复核。"><Select mode="multiple" allowClear showSearch optionFilterProp="label" options={customRules.filter(rule=>rule.enabled).map(rule=>({value:rule.id,label:`${rule.name} · ${rule.severity}`}))} maxTagCount="responsive" placeholder="留空表示全部启用规则"/></Form.Item>
       </Form>
     </Modal>
     <Modal title={`定时任务历史运行${historySchedule?`：${historySchedule.name}`:''}`} open={Boolean(historySchedule)} onCancel={()=>setHistorySchedule(null)} footer={<Button onClick={()=>setHistorySchedule(null)}>关闭</Button>} width={780}>

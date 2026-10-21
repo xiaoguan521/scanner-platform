@@ -1,7 +1,10 @@
 import { requestBlob, requestJSON } from './client';
-import type { ScanTask, TaskInput, Schedule, ScheduleRun, Finding, FindingEvent, FindingAssignee, FindingNote, FindingRetest, RuleJob, CustomRule, KnowledgeEntry, TaskLog } from '../types';
+import type { ScanPlan, ScanPlanInput, ScanTask, TaskInput, Schedule, ScheduleRun, Finding, FindingEvent, FindingAssignee, FindingNote, FindingRetest, RuleJob, CustomRule, KnowledgeEntry, TaskLog } from '../types';
 
 export const createTask = (input:TaskInput) => requestJSON<ScanTask>('/api/v1/tasks','POST',input);
+export const createScanPlan = (input:ScanPlanInput) => requestJSON<ScanPlan>('/api/v1/scan-plans','POST',input);
+export const updateScanPlan = (id:string,input:ScanPlanInput) => requestJSON<ScanPlan>('/api/v1/scan-plans/'+encodeURIComponent(id),'PUT',input);
+export const deleteScanPlan = (id:string) => requestJSON<{status:string}>('/api/v1/scan-plans/'+encodeURIComponent(id),'DELETE');
 export const cancelTask = (id:string) => requestJSON('/api/v1/tasks/'+encodeURIComponent(id)+'/cancel','POST');
 export const pauseTask = (id:string) => requestJSON<{status:'PAUSED'}>('/api/v1/tasks/'+encodeURIComponent(id)+'/pause','POST');
 export const resumeTask = (id:string) => requestJSON<{status:'PENDING'}>('/api/v1/tasks/'+encodeURIComponent(id)+'/resume','POST');

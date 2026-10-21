@@ -33,6 +33,8 @@ func (s *RuntimeStore) initProduct(ctx context.Context) error {
 	for _, q := range []string{
 		`CREATE TABLE IF NOT EXISTS product_settings(id TEXT PRIMARY KEY,data TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS vulnerability_knowledge(id TEXT PRIMARY KEY,data TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS scan_plans(id TEXT PRIMARY KEY,data TEXT NOT NULL,created_by TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,updated_at TEXT NOT NULL)`,
+		`CREATE INDEX IF NOT EXISTS scan_plans_updated ON scan_plans(updated_at DESC,id DESC)`,
 		`CREATE TABLE IF NOT EXISTS task_finding_observations(task_id TEXT NOT NULL REFERENCES scan_tasks(id),finding_id TEXT NOT NULL,data TEXT NOT NULL,PRIMARY KEY(task_id,finding_id))`,
 		`INSERT INTO task_finding_observations(task_id,finding_id,data) SELECT task_id,id,data FROM security_findings WHERE 1 ON CONFLICT(task_id,finding_id) DO NOTHING`,
 	} {
