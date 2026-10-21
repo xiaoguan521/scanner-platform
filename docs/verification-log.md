@@ -1,5 +1,12 @@
 # Verification log
 
+## 2026-10-21：PostgreSQL 发现项投影与生命周期适配
+
+- 新增 PostgreSQL 迁移 `0009_finding_projection.sql` 和 `internal/repo/postgres_findings.go`。适配器以稳定指纹 `(asset_id, fingerprint_hash)` 去重，保留人工处置字段，支持接受风险到期、状态事件、任务观察、分页/搜索/风险筛选和固定排序；发现项投影保存完整页面字段，`security_findings` 的稳定身份与生命周期列保持权威。
+- 默认单测覆盖空连接、稳定指纹输入边界、查询占位符绑定和排序白名单；`ExpireAcceptedRisks` 在关闭查询游标后再更新，避免 PostgreSQL 驱动连接复用错误。
+- 在隔离 PostgreSQL 夹具上运行：`POSTGRES_DSN_FILE="$PWD/runtime/postgres/dsn" go test -tags lab ./internal/repo -run 'TestPostgresFindingStoreLab$' -count=1`，并与任务队列、任务投影、账号、资产、资产管理和授权适配器组合运行，全部通过。`make migrate-postgres` 已将 `0009_finding_projection` 记录为已应用。
+- 这仍是 Server 侧独立适配器；当前 Web/Server 默认 Repository 仍为 SQLite，报告适配、启动时后端选择和 PostgreSQL 浏览器核心旅程尚未完成。测试只使用隔离夹具和文档保留地址，不提交靶机结果、凭据或 DSN。
+
 ## 2026-10-21：PostgreSQL 任务安全投影与 Worker 进度
 
 - 新增 PostgreSQL 迁移 `0008_task_projection.sql`，建立任务安全投影和 Worker advisory progress 表；新增 `PostgresTaskProjection`，从规范化队列读取状态、租约、目标块和归档时间，从投影读取其余页面字段，并在写入进度前校验当前运行 Worker。
