@@ -35,6 +35,7 @@ type Repository interface {
 	List(context.Context) ([]User, error)
 	Create(context.Context, User, string, string, string) (User, error)
 	Update(context.Context, User, string, string, bool) (User, error)
+	ResetPassword(context.Context, User, string, string) (User, error)
 }
 type Store struct{ db *sql.DB }
 
@@ -307,4 +308,51 @@ func (s *Store) Update(ctx context.Context, actor User, id, role string, active 
 	u.Role = role
 	u.IsActive = active
 	return u, nil
+}
+
+// ResetPassword replaces an administrator-managed password and invalidates all
+// existing sessions for the target account. The password is never written to
+// an audit record or returned to the caller.
+func (s *Store) ResetPassword(ctx context.Context, actor User, id, password string) (User, error) {
+	if actor.Role != "admin" {
+		return User{}, ErrForbidden
+	}
+	if len(password) < 12 || len(password) > 72 {
+		return User{}, ErrInvalid
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return User{}, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return User{}, err
+	}
+	defer tx.Rollback()
+	var user User
+	var active int
+	if err := tx.QueryRowContext(ctx, "SELECT id,username,role,is_active FROM users WHERE id=?", id).Scan(&user.ID, &user.Username, &user.Role, &active); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return User{}, ErrMissing
+		}
+		return User{}, err
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE users SET password_hash=? WHERE id=?", string(hash), id); err != nil {
+		return User{}, err
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM user_sessions WHERE user_id=?", id); err != nil {
+		return User{}, err
+	}
+	key, err := randomID()
+	if err != nil {
+		return User{}, err
+	}
+	if _, err := tx.ExecContext(ctx, "INSERT INTO audit_logs(id,actor,action,object_type,object_id,detail,created_at) VALUES (?,?,?,'user',?,'',?)", key, actor.ID, "reset_user_password", id, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		return User{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return User{}, err
+	}
+	user.IsActive = active == 1
+	return user, nil
 }

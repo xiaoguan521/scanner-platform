@@ -285,6 +285,32 @@ func NewDevelopmentHandler(s account.Repository, assetStore assets.Repository, a
 		}
 		respond(w, 200, user)
 	}))
+	mux.HandleFunc("POST /api/v1/users/{id}/password-reset", auth(s, true, func(w http.ResponseWriter, r *http.Request, u account.User) {
+		if !mutationGuard(w, r) {
+			return
+		}
+		var body struct {
+			Password string `json:"password"`
+		}
+		if !readJSON(w, r, &body) {
+			return
+		}
+		user, err := s.ResetPassword(r.Context(), u, r.PathValue("id"), body.Password)
+		if err != nil {
+			switch {
+			case errors.Is(err, account.ErrInvalid):
+				bad(w, 400, "invalid_password")
+			case errors.Is(err, account.ErrForbidden):
+				bad(w, 403, "forbidden")
+			case errors.Is(err, account.ErrMissing):
+				bad(w, 404, "not_found")
+			default:
+				bad(w, 500, "db_error")
+			}
+			return
+		}
+		respond(w, 200, user)
+	}))
 
 	mux.HandleFunc("GET /api/v1/assets", auth(s, false, func(w http.ResponseWriter, r *http.Request, _ account.User) {
 		list, err := assetStore.List(r.Context())

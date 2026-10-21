@@ -50,8 +50,21 @@ func TestSQLiteAccountLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	reset, err := store.ResetPassword(ctx, admin, user.ID, "Reset-Demo-Password-41")
+	if err != nil || reset.ID != user.ID || !reset.IsActive {
+		t.Fatalf("reset password: %+v, %v", reset, err)
+	}
+	if _, err := store.Session(ctx, viewerToken); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("password reset left old session active: %v", err)
+	}
+	if _, newToken, err := store.Authenticate(ctx, "reader_user", "Reset-Demo-Password-41"); err != nil || newToken == "" {
+		t.Fatalf("new password did not authenticate: %v", err)
+	}
 	if _, err := store.Create(ctx, viewer, "newreader", "Another-Demo-Password-32", "viewer"); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("viewer created user: %v", err)
+	}
+	if _, err := store.ResetPassword(ctx, viewer, user.ID, "Another-Demo-Password-42"); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("viewer reset password: %v", err)
 	}
 	if _, err := store.Update(ctx, viewer, admin.ID, "viewer", false); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("viewer changed admin: %v", err)

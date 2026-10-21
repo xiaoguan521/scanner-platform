@@ -22,9 +22,11 @@ export const UsersPage: React.FC = () => {
   const [query,setQuery] = useState('');
   const [creating,setCreating] = useState(false);
   const [editing,setEditing] = useState<User|null>(null);
+  const [resetting,setResetting] = useState<User|null>(null);
   const [busy,setBusy] = useState(false);
   const [createForm] = Form.useForm();
   const [editForm] = Form.useForm();
+  const [resetForm] = Form.useForm<{password:string;confirmPassword:string}>();
   const rows = useMemo(()=>users.filter(u=>u.username.toLowerCase().includes(query.trim().toLowerCase())),[users,query]);
   const canManage = !isDemoMode && currentUser?.role==='admin';
 
@@ -47,6 +49,16 @@ export const UsersPage: React.FC = () => {
     }catch(e){message.error(e instanceof Error ? e.message:'更新失败');}
     finally{setBusy(false);}
   };
+  const resetPassword = async (values:{password:string;confirmPassword:string})=>{
+    if(!resetting)return;
+    if(values.password!==values.confirmPassword){message.error('两次输入的新密码不一致');return;}
+    setBusy(true);
+    try {
+      await apiClient.resetUserPassword(resetting.id,values.password);
+      setResetting(null);resetForm.resetFields();message.success(`已重置 ${resetting.username} 的密码，旧会话已失效`);
+    }catch(e){message.error(e instanceof Error ? e.message:'密码重置失败');}
+    finally{setBusy(false);}
+  };
   return <div style={{display:'flex',flexDirection:'column',gap:20}}>
     <CollectionNotice loading={loading} error={error}/>
     <Alert showIcon type={isDemoMode?'info':'success'}
@@ -61,9 +73,9 @@ export const UsersPage: React.FC = () => {
           {title:'用户名',dataIndex:'username',render:(name:string)=><Typography.Text strong>{name}</Typography.Text>},
           {title:'角色',dataIndex:'role',render:(role:UserRole)=><Tag color={role==='admin'?'orange':'blue'}>{roleNames[role]}</Tag>},
           {title:'账号状态',dataIndex:'isActive',render:(active:boolean)=><Tag color={active?'success':'default'}>{active?'启用':'停用'}</Tag>},
-          {title:'操作',render:(_:unknown,record:User)=><Button type="link" disabled={!canManage || record.id===currentUser?.id} onClick={()=>{
+          {title:'操作',render:(_:unknown,record:User)=><Space><Button type="link" disabled={!canManage || record.id===currentUser?.id} onClick={()=>{
             editForm.setFieldsValue({role:record.role,isActive:record.isActive});setEditing(record);
-          }}>修改角色 / 状态</Button>},
+          }}>修改角色 / 状态</Button><Button type="link" disabled={!canManage} onClick={()=>{resetForm.resetFields();setResetting(record);}}>重置密码</Button></Space>},
         ]}/>
     </Card>
     <Modal title="新增用户" open={creating} onOk={()=>createForm.submit()} onCancel={()=>setCreating(false)} okButtonProps={{loading:busy}}>
@@ -77,6 +89,13 @@ export const UsersPage: React.FC = () => {
       <Form form={editForm} layout="vertical" onFinish={editUser}>
         <Form.Item name="role" label="角色" rules={[{required:true}]}><Select options={roleOptions}/></Form.Item>
         <Form.Item name="isActive" label="启用状态" rules={[{required:true}]}><Select options={[{value:true,label:'启用'},{value:false,label:'停用'}]}/></Form.Item>
+      </Form>
+    </Modal>
+    <Modal title={'重置 ' + (resetting?.username ?? '') + ' 的密码'} open={!!resetting} onOk={()=>resetForm.submit()} onCancel={()=>{if(busy)return;setResetting(null);resetForm.resetFields();}} okButtonProps={{loading:busy}} destroyOnClose>
+      <Alert type="warning" showIcon message="重置后旧会话立即失效" description="新密码不会写入审计日志或返回页面；请通过安全渠道交付给用户。" style={{marginBottom:16}}/>
+      <Form form={resetForm} layout="vertical" onFinish={resetPassword} autoComplete="off">
+        <Form.Item name="password" label="新密码" rules={[{required:true},{min:12,message:'至少 12 个字符'},{max:72,message:'最多 72 个字节'}]}><Input.Password autoComplete="new-password"/></Form.Item>
+        <Form.Item name="confirmPassword" label="确认新密码" dependencies={['password']} rules={[{required:true},{validator:(_,value)=>value===resetForm.getFieldValue('password')?Promise.resolve():Promise.reject(new Error('两次输入的新密码不一致'))}]}><Input.Password autoComplete="new-password"/></Form.Item>
       </Form>
     </Modal>
   </div>;

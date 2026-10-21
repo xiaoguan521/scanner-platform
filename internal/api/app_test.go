@@ -81,6 +81,21 @@ func TestUserAPILoginRBACAndLogout(t *testing.T) {
 		t.Fatalf("viewer login: %d", viewerLogin.Code)
 	}
 	vc := viewerLogin.Result().Cookies()[0]
+	if resp := send("POST", "/api/v1/users/"+viewer.ID+"/password-reset", `{"password":"Reset-Viewer-Password-456"}`, c, false); resp.Code != 403 {
+		t.Fatalf("missing password reset header: %d", resp.Code)
+	}
+	reset := send("POST", "/api/v1/users/"+viewer.ID+"/password-reset", `{"password":"Reset-Viewer-Password-456"}`, c, true)
+	if reset.Code != 200 {
+		t.Fatalf("password reset: %d %s", reset.Code, reset.Body.String())
+	}
+	if resp := send("GET", "/api/v1/auth/me", "", vc, false); resp.Code != 401 {
+		t.Fatalf("old viewer session survived password reset: %d", resp.Code)
+	}
+	newViewerLogin := send("POST", "/api/v1/auth/login", `{"username":"testviewer","password":"Reset-Viewer-Password-456"}`, nil, true)
+	if newViewerLogin.Code != 200 {
+		t.Fatalf("new viewer password did not authenticate: %d", newViewerLogin.Code)
+	}
+	vc = newViewerLogin.Result().Cookies()[0]
 	if resp := send("GET", "/api/v1/users", "", vc, false); resp.Code != 403 {
 		t.Fatalf("viewer listed users: %d", resp.Code)
 	}

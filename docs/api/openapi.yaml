@@ -253,6 +253,48 @@ paths:
           description: Unauthenticated
         '403':
           description: Forbidden update
+  "/api/v1/users/{id}/password-reset":
+    post:
+      tags:
+      - accounts
+      summary: Admin-only password reset
+      description: Replaces the password, revokes all sessions for the target user, and never returns or audits the password value.
+      security:
+      - sessionCookie: []
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema:
+          type: string
+          enum:
+          - XMLHttpRequest
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/PasswordResetRequest"
+      responses:
+        '200':
+          description: Password reset; response contains only the user projection
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/User"
+        '400':
+          description: Password length is invalid
+        '401':
+          description: Unauthenticated
+        '403':
+          description: Admin role required
+        '404':
+          description: User not found
   "/api/v1/assets":
     get:
       tags:
@@ -2814,6 +2856,15 @@ components:
           - security_engineer
           - ops_approver
           - viewer
+    PasswordResetRequest:
+      type: object
+      required: [password]
+      properties:
+        password:
+          type: string
+          format: password
+          minLength: 12
+          maxLength: 72
     UpdateUserRequest:
       type: object
       required:
