@@ -65,7 +65,7 @@ func TestBuildPlanRequiresRoleScopedPackageAndPinnedSSHFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildPlan() error = %v", err)
 	}
-	if plan.Role != provision.PackageRoleWorker || plan.NodeID != "worker-a" || len(plan.Steps) != 5 {
+	if plan.Role != provision.PackageRoleWorker || plan.NodeID != "worker-a" || len(plan.Steps) != 6 {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
 	data, err := os.ReadFile(filepath.Join(packageDir, "worker-a-token"))
@@ -136,7 +136,7 @@ func TestBuildRotationPlanHasExplicitBackupAndRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.Operation != OperationRotate || plan.BackupDir == "" || len(plan.Steps) != 6 || len(plan.Recovery) != 2 {
+	if plan.Operation != OperationRotate || plan.BackupDir == "" || len(plan.Steps) != 7 || len(plan.Recovery) != 3 {
 		t.Fatalf("unexpected rotation plan: %#v", plan)
 	}
 	publishCommand := plan.Steps[3].Args[len(plan.Steps[3].Args)-1]
@@ -145,6 +145,34 @@ func TestBuildRotationPlanHasExplicitBackupAndRecovery(t *testing.T) {
 	}
 	if !strings.Contains(plan.Recovery[0].Args[len(plan.Recovery[0].Args)-1], "mv --") {
 		t.Fatal("rotation plan has no remote restore")
+	}
+	if !strings.Contains(plan.Steps[5].Args[len(plan.Steps[5].Args)-1], "systemctl is-active --quiet") {
+		t.Fatal("rotation plan does not verify the service state")
+	}
+}
+
+func TestRotationServiceVerificationFailureRunsRollback(t *testing.T) {
+	plan := Plan{
+		Operation: OperationRotate,
+		Steps: []Step{
+			{Name: "stage", Binary: "ssh", Args: []string{"stage"}},
+			{Name: "copy", Binary: "scp", Args: []string{"copy"}},
+			{Name: "verify", Binary: "ssh", Args: []string{"verify"}},
+			{Name: "publish", Binary: "ssh", Args: []string{"publish"}},
+			{Name: "restart", Binary: "ssh", Args: []string{"restart"}},
+			{Name: "verify-active", Binary: "ssh", Args: []string{"verify-active"}},
+			{Name: "cleanup", Binary: "ssh", Args: []string{"cleanup"}},
+		},
+		Recovery: []Step{{Name: "rollback", Binary: "ssh", Args: []string{"rollback"}}, {Name: "restart-old", Binary: "ssh", Args: []string{"restart-old"}}, {Name: "verify-old", Binary: "ssh", Args: []string{"verify-old"}}},
+		cleanup:  Step{Name: "cleanup-staging", Binary: "ssh", Args: []string{"cleanup-staging"}},
+	}
+	runner := &recordingRunner{failAt: 5}
+	if err := plan.Execute(context.Background(), runner); err == nil {
+		t.Fatal("service verification failure was accepted")
+	}
+	want := []string{"stage", "copy", "verify", "publish", "restart", "verify-active", "rollback", "restart-old", "verify-old", "cleanup-staging"}
+	if strings.Join(runner.calls, "|") != strings.Join(want, "|") {
+		t.Fatalf("rollback calls = %#v, want %#v", runner.calls, want)
 	}
 }
 

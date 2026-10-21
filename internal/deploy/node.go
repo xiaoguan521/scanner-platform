@@ -189,6 +189,11 @@ func BuildPlan(opts Options) (Plan, error) {
 		Binary: sshBinary,
 		Args:   append(append([]string(nil), baseSSH...), remoteCommand("systemctl restart "+shellWord(opts.ServiceName))),
 	})
+	steps = append(steps, Step{
+		Name:   "verify-service-active",
+		Binary: sshBinary,
+		Args:   append(append([]string(nil), baseSSH...), remoteCommand("systemctl is-active --quiet "+shellWord(opts.ServiceName))),
+	})
 	if operation == OperationRotate {
 		steps = append(steps, Step{
 			Name:   "remove-rollback-backup",
@@ -211,6 +216,10 @@ func BuildPlan(opts Options) (Plan, error) {
 			Name:   "restart-service-after-rollback",
 			Binary: sshBinary,
 			Args:   append(append([]string(nil), baseSSH...), remoteCommand("systemctl restart "+shellWord(opts.ServiceName))),
+		}, {
+			Name:   "verify-service-after-rollback",
+			Binary: sshBinary,
+			Args:   append(append([]string(nil), baseSSH...), remoteCommand("systemctl is-active --quiet "+shellWord(opts.ServiceName))),
 		}}
 	}
 	return Plan{Target: endpoint, Operation: operation, Role: verified.Role, NodeID: verified.NodeID, RemoteDir: opts.RemoteDir, StageDir: stage, BackupDir: backup, Steps: steps, Recovery: recovery, cleanup: cleanup}, nil
@@ -229,7 +238,7 @@ func (p Plan) Execute(ctx context.Context, runner Runner) error {
 			if index <= 3 && p.cleanup.Binary != "" {
 				_ = runner.Run(ctx, p.cleanup.Binary, p.cleanup.Args)
 			}
-			if p.Operation == OperationRotate && (index == 3 || index == 4) && len(p.Recovery) > 0 {
+			if p.Operation == OperationRotate && index >= 3 && index <= 5 && len(p.Recovery) > 0 {
 				for _, recovery := range p.Recovery {
 					if recoveryErr := runner.Run(ctx, recovery.Binary, recovery.Args); recoveryErr != nil {
 						if p.cleanup.Binary != "" {

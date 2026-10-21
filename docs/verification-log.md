@@ -821,6 +821,11 @@
 - 新增 SQLite/PostgreSQL 审计适配、旧令牌失效和审计失败回滚测试；轮换缺少既有令牌时返回明确的 `node_credential_not_found`，不隐式签发新令牌。远程部署、自动证书/令牌轮换和客户端自动注册仍未实现。
 - 验证：`make test`（Go race 与 Python 37 项）、`make lint`、`make build`、`node web/src/pages/Nodes/pagination.test.mjs`、`node --test $(find web/src -name '*.test.mjs' -print)`（37 项）、`npm --prefix web run build`、OpenAPI YAML 解析、`POSTGRES_DSN_FILE="$PWD/runtime/postgres/dsn" go test -tags lab -race ./internal/repo`、`git diff --check` 均通过；PostgreSQL lab 实际执行了轮换审计写入。测试使用临时数据库、隔离 PostgreSQL、文档保留地址和临时令牌，未写入真实凭据或资产。
 
+## 2026-10-21：远程节点部署服务状态闭环
+
+- `sec-node-deploy` 的安装和轮换计划在 `systemctl restart` 成功后追加 `systemctl is-active --quiet`；服务未保持 active 时不报告成功，轮换会执行旧材料恢复、重启和恢复后的 active 检查。
+- 新增轮换服务状态检查失败路径与恢复顺序测试；未宣称真实 SSH、systemd 或生产节点验收，仍需在明确授权的 Linux 节点上执行隔离实验。
+
 ## 2026-10-21：Compose 部署静态安全门禁
 
 - 新增 `scripts/verify_compose_security.py`：通过 `docker compose config --format json` 规范化候选部署文件，随后不启动任何容器，失败即关闭。
