@@ -37,6 +37,24 @@ sec-server --listen 127.0.0.1:8080 \
 
 `sec-node-provision` 可以在部署机上离线生成一套 Server/Worker/Updater 的 TLS 和令牌文件。它只接受明确的数字 Server IP、节点 ID 和节点类型，不连接网络；输出目录必须不存在，已有文件不会被覆盖。CA 私钥留在单独的 CA 目录，不会复制到节点材料目录；私钥和令牌文件使用 owner-only 权限，命令的 JSON 输出只包含路径和节点元数据，不包含密钥或令牌。
 
+完整材料目录不应直接复制到每台节点。生成完整目录后，先按部署角色拆成最小权限包；拆包前会重新验证源目录，输出目录采用目录级原子发布，且不会把令牌写入 manifest：
+
+```bash
+./dist/sec-node-provision \
+  --split-from /var/lib/scanner-platform/node-materials \
+  --split-output-dir /var/lib/scanner-platform/packages/worker-a \
+  --package-role worker --node-id worker-a
+
+./dist/sec-node-provision \
+  --split-from /var/lib/scanner-platform/node-materials \
+  --split-output-dir /var/lib/scanner-platform/packages/server \
+  --package-role server
+```
+
+Server 包只含 CA 证书、Server 证书/私钥和节点令牌注册表；Worker/Updater 包只含 CA 证书、所选节点的客户端证书/私钥和令牌。拆包后在目标机执行同一个 `--verify-dir`，预检会拒绝缺少角色文件、混入其他节点材料、清单外文件和权限过宽的包。拆包是离线材料准备，不会自动传输文件、登记节点或重启服务。
+
+需要通过明确的运维 SSH 通道安装新节点时，使用 `sec-node-deploy` 生成计划；默认只演练，不执行网络操作。只有确认目标 IP、主机指纹、远程路径和服务名后，才显式传入 `--dry-run=false`。它只接受 role-scoped 包，先在远端预检，再发布到不存在的目标目录并重启固定的 `sec-server`、`sec-worker` 或 `sec-updater` 服务；复制失败会清理临时目录，发布后的重启失败不会自动删除材料。该命令不做主机发现、不接受域名或网段，也不会输出 SSH 命令的标准错误。
+
 材料通过受信部署通道复制到节点后，可在目标机执行只读校验。校验不需要 CA 私钥，也不会连接 Server；它会检查 manifest、清单外文件、owner-only 目录/私钥/令牌权限、令牌注册表、证书链、证书与私钥匹配关系以及 Server IP SAN：
 
 ```bash

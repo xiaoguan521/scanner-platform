@@ -13,6 +13,13 @@
 - 使用 `LAB_ENV=isolated POSTGRES_DSN_FILE="$PWD/runtime/postgres/dsn" make test-lab` 重新运行全仓 lab 测试通过；Nuclei、Trivy、SSH/输入隔离、规则和 PostgreSQL 夹具均通过，ZAP 因未安装按可选项跳过。另行运行 PostgreSQL 仓储 lab 全套测试也通过。
 - 该回归只使用本机隔离夹具和临时测试数据，未修改主 SQLite 运行库、规则目录、SSH 配置或扫描目标；ZAP 仍需在需要纳入发布验收时显式安装并设置 `SCANNER_EXPECT_ZAP=1`。
 
+## 2026-10-21：节点材料最小权限包与显式 SSH 部署计划
+
+- `sec-node-provision` 新增角色拆包：从完整离线材料目录生成 Server、Worker 或 Updater 包。拆包前重新执行完整材料预检，输出目录采用 owner-only 临时目录和目录级 rename；Server 包不含客户端私钥，Worker/Updater 包只含本节点客户端证书、私钥和令牌，不携带其他节点材料。
+- `--verify-dir` 现在识别角色包 manifest，按角色检查精确文件集、证书用途、节点身份、令牌格式、权限和清单外文件；旧版完整 manifest 仍保持兼容。新增测试覆盖成功拆包、令牌不进入 manifest、角色不匹配和最小文件集。
+- 新增 `sec-node-deploy` 计划器和构建目标。它只接受数字 IP、owner-only SSH 私钥、固定 `known_hosts` 文件、绝对远程路径和 allowlist 服务名；默认 dry-run，显式执行才按“创建临时目录→复制角色包→远端预检→目录发布→重启服务”顺序调用 `ssh/scp`。预发布失败会清理暂存目录，发布或重启失败保留已发布材料并返回错误；命令不做主机发现、不使用本地 shell、不输出命令标准错误。
+- 已运行 `go test ./internal/provision ./internal/deploy ./cmd/node-provision ./cmd/node-deploy`；真实远程传输、服务管理器、节点自动登记和生产 Linux 围栏仍未在本批宣称通过。
+
 ## 2026-10-21：节点材料传输后只读预检
 
 - `sec-node-provision --verify-dir` 新增离线预检入口，不需要 CA 私钥、不连接 Server，也不修改材料目录。它严格校验 manifest、清单外文件、owner-only 目录/私钥/令牌权限、节点令牌注册表、证书链、证书与私钥匹配关系和数字 Server IP SAN。

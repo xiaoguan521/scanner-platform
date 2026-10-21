@@ -41,6 +41,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("sec-node-provision", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	outputDir := flags.String("output-dir", "", "new directory for Server and node material")
+	splitFrom := flags.String("split-from", "", "complete material directory to split into a role-scoped package")
+	splitOutput := flags.String("split-output-dir", "", "new directory for a role-scoped package")
+	packageRole := flags.String("package-role", "", "role for --split-from: server, worker or updater")
+	packageNodeID := flags.String("node-id", "", "node ID for a worker or updater package")
 	rotateDir := flags.String("rotate-dir", "", "existing material directory to rotate in place")
 	verifyDir := flags.String("verify-dir", "", "transferred material directory to verify without changing it")
 	caDir := flags.String("ca-dir", "", "directory containing ca-key.pem and ca-cert.pem")
@@ -62,13 +66,43 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	modeCount := 0
-	for _, value := range []string{*outputDir, *rotateDir, *verifyDir} {
+	for _, value := range []string{*outputDir, *rotateDir, *verifyDir, *splitFrom} {
 		if strings.TrimSpace(value) != "" {
 			modeCount++
 		}
 	}
 	if modeCount != 1 {
-		fmt.Fprintln(stderr, "use exactly one of --output-dir, --rotate-dir or --verify-dir")
+		fmt.Fprintln(stderr, "use exactly one of --output-dir, --rotate-dir, --verify-dir or --split-from")
+		return 2
+	}
+	if strings.TrimSpace(*splitFrom) != "" {
+		if strings.TrimSpace(*splitOutput) == "" || strings.TrimSpace(*packageRole) == "" {
+			fmt.Fprintln(stderr, "--split-from requires --split-output-dir and --package-role")
+			return 2
+		}
+		if strings.TrimSpace(*caDir) != "" || strings.TrimSpace(*serverIP) != "" || len(nodes) != 0 || *generateCA || strings.TrimSpace(*rotateDir) != "" || strings.TrimSpace(*verifyDir) != "" {
+			fmt.Fprintln(stderr, "--split-from cannot be combined with CA, Server IP, node or other mode options")
+			return 2
+		}
+		result, err := provision.Package(provision.PackageOptions{
+			SourceDir: *splitFrom,
+			OutputDir: *splitOutput,
+			Role:      provision.PackageRole(strings.TrimSpace(*packageRole)),
+			NodeID:    strings.TrimSpace(*packageNodeID),
+		})
+		if err != nil {
+			fmt.Fprintln(stderr, "node package creation failed:", err)
+			return 1
+		}
+		if err := json.NewEncoder(stdout).Encode(result); err != nil {
+			fmt.Fprintln(stderr, "write package result:", err)
+			return 1
+		}
+		fmt.Fprintf(stderr, "Created %s node material package; run --verify-dir before service restart.\n", result.Role)
+		return 0
+	}
+	if strings.TrimSpace(*splitOutput) != "" || strings.TrimSpace(*packageRole) != "" || strings.TrimSpace(*packageNodeID) != "" {
+		fmt.Fprintln(stderr, "--split-output-dir, --package-role and --node-id require --split-from")
 		return 2
 	}
 	if strings.TrimSpace(*verifyDir) != "" {

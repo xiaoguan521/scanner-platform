@@ -48,6 +48,10 @@
 | Stage 5 真实扫描引擎 | 自动任务组合端口、HTTP(S) 基线/自定义规则和 Worker 本地 SSH 系统包/指定 Java-Go 应用采集；SSH 额外以有界 JSON 记录 systemd/init 服务单元、进程名以及本机 Docker/Podman 容器元数据；Trivy/Nuclei/ZAP 引擎单独可用；Linux Worker 围栏代码路径和一次性 arm64 隔离联调已核对 namespace、nftables、setpriv、UID/GID 10001、cgroup v2、DROP counter、`NoNewPrivs` 和 capabilities 清零；`sec-fence-launcher` 与 `sec-worker-supervisor` 已形成专属 namespace 的一次性启动和重启生命周期；`sec-node-provision` 可生成离线 TLS/mTLS 与令牌材料并支持本地目录级证书轮换 | 生产范围外发包/告警、故意后代进程的 cgroup 清理和 Compose `hostNetwork` 约束仍待部署验收；材料远程传输、自动节点部署、集群工作负载、真实服务器和国产系统仍待完成；源码部署中间件及国产软件公告源仍待专项适配 |
 | Stage 6 打磨 | 已有共享加载/错误/空状态、语义标签和统计卡片 | 缺完整设计令牌、性能与无障碍测试、i18n、核心旅程端到端实跑 |
 
+## 2026-10-21：节点材料拆包与显式部署计划
+
+节点部署材料现在支持按 Server、Worker、Updater 角色生成最小权限包。完整材料会在拆包前重新校验，角色包使用版本化 manifest、精确文件清单和 owner-only 权限；`sec-node-provision --verify-dir` 能分别校验三种包，旧版完整材料保持兼容。新增 `sec-node-deploy` 默认 dry-run 计划器，只有在操作者显式关闭 dry-run 后才会对指定数字 IP 通过固定 SSH 主机密钥校验执行暂存、复制、远端预检、目录发布和固定服务重启。远程部署系统、自动证书/令牌轮换、服务管理器和生产 Linux 围栏仍需单独验收。
+
 ## 当前边界和优先缺口
 
 安全扫描仍只处理用户明确指定且已登记/审批的目标；TCP 端口探测限定单台已登记主机，ICMP 只向已登记主机发送一次有界 echo。端口探测开放结果不会直接授权漏洞扫描。

@@ -60,6 +60,60 @@ certificate whose numeric IP SAN differs from the manifest. A successful
 preflight is a material check, not evidence that remote service orchestration
 or Linux fence acceptance is complete.
 
+### Role-scoped material packages
+
+Do not copy the complete provisioning directory to every node: it contains
+the Server key and the other nodes' bearer tokens. Create a package for each
+deployment role and verify that package after transfer:
+
+```text
+sec-node-provision \
+  --split-from /var/lib/scanner-platform/node-materials \
+  --split-output-dir /var/lib/scanner-platform/packages/worker-a \
+  --package-role worker --node-id worker-a
+
+sec-node-provision \
+  --split-from /var/lib/scanner-platform/node-materials \
+  --split-output-dir /var/lib/scanner-platform/packages/server \
+  --package-role server
+
+sec-node-provision --verify-dir /var/lib/scanner-platform/packages/worker-a
+```
+
+The Server package contains `ca-cert.pem`, the Server certificate/key and the
+node token registry. A Worker or Updater package contains only its own client
+certificate/key and token plus `ca-cert.pem`. Package manifests are role
+scoped and the verifier rejects extra files, missing files, mismatched node
+roles and owner-permission violations. This is still an offline packaging
+step; remote copy, service restart and automatic enrollment remain deployment
+system responsibilities.
+
+### Explicit SSH deployment
+
+`sec-node-deploy` turns a verified role package into a reviewable plan. It
+requires a numeric target IP, an owner-only SSH identity file, a pinned
+`known_hosts` file, an absolute remote directory and an allowlisted scanner
+service name. It defaults to dry-run; only `--dry-run=false` executes the
+fixed `ssh`/`scp` sequence:
+
+```text
+sec-node-deploy \
+  --package-dir /var/lib/scanner-platform/packages/worker-a \
+  --target-ip 192.0.2.20 --ssh-port 22 --user scanner \
+  --identity-file /etc/scanner-platform/deploy-key \
+  --known-hosts-file /etc/scanner-platform/known_hosts \
+  --remote-dir /var/lib/scanner-platform/node-materials \
+  --service sec-worker
+```
+
+The sequence creates a fresh remote staging directory, copies only the role
+package, runs the remote read-only preflight, publishes the directory only if
+the destination is absent, and restarts the fixed service. A pre-publish
+failure removes the staging directory; a publish or restart failure is
+reported without deleting the published material. The command never discovers
+hosts, accepts hostnames/CIDRs, invokes a local shell or prints command
+output. Rotation and rollback remain explicit operator actions.
+
 ## Linux fenced Worker contract
 
 The repository now includes `sec-fence-launcher` as the trusted Linux entry

@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -155,6 +156,90 @@ func TestVerifyRejectsTamperedTransferredMaterial(t *testing.T) {
 			t.Fatal("Verify accepted a group-accessible directory")
 		}
 	})
+}
+
+func TestPackageCreatesLeastPrivilegeRoleBundles(t *testing.T) {
+	root := t.TempDir()
+	when := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	source := filepath.Join(root, "complete")
+	_, err := Provision(Options{
+		OutputDir: source,
+		CADir:     filepath.Join(root, "ca"),
+		ServerIP:  netip.MustParseAddr("192.0.2.10"),
+		Nodes: []NodeSpec{
+			{ID: "worker-a", Kind: "worker"},
+			{ID: "updater-a", Kind: "updater"},
+		},
+		ValidFor:   24 * time.Hour,
+		CAValidFor: 48 * time.Hour,
+		GenerateCA: true,
+		Now:        func() time.Time { return when },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverDir := filepath.Join(root, "server")
+	_, err = Package(PackageOptions{SourceDir: source, OutputDir: serverDir, Role: PackageRoleServer, Now: func() time.Time { return when }})
+	if err != nil {
+		t.Fatalf("server package: %v", err)
+	}
+	if _, err := Verify(VerifyOptions{OutputDir: serverDir, Now: func() time.Time { return when }}); err != nil {
+		t.Fatalf("verify server package: %v", err)
+	}
+	assertPackageFiles(t, serverDir, []string{"ca-cert.pem", "manifest.json", "node-tokens", "server-cert.pem", "server-key.pem"})
+	for _, forbidden := range []string{"worker-a-token", "worker-a-client-key.pem", "updater-a-token", "updater-a-client-key.pem"} {
+		if _, err := os.Stat(filepath.Join(serverDir, forbidden)); !os.IsNotExist(err) {
+			t.Fatalf("server package contains %s: %v", forbidden, err)
+		}
+	}
+	workerDir := filepath.Join(root, "worker")
+	worker, err := Package(PackageOptions{SourceDir: source, OutputDir: workerDir, Role: PackageRoleWorker, NodeID: "worker-a", Now: func() time.Time { return when }})
+	if err != nil {
+		t.Fatalf("worker package: %v", err)
+	}
+	if _, err := Verify(VerifyOptions{OutputDir: workerDir, Now: func() time.Time { return when }}); err != nil {
+		t.Fatalf("verify worker package: %v", err)
+	}
+	if worker.NodeID != "worker-a" || worker.Role != PackageRoleWorker {
+		t.Fatalf("unexpected worker package metadata: %#v", worker)
+	}
+	assertPackageFiles(t, workerDir, []string{"ca-cert.pem", "manifest.json", "worker-a-client-cert.pem", "worker-a-client-key.pem", "worker-a-token"})
+	for _, forbidden := range []string{"server-key.pem", "node-tokens", "updater-a-token", "updater-a-client-key.pem"} {
+		if _, err := os.Stat(filepath.Join(workerDir, forbidden)); !os.IsNotExist(err) {
+			t.Fatalf("worker package contains %s: %v", forbidden, err)
+		}
+	}
+	token, err := os.ReadFile(filepath.Join(source, "worker-a-token"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := os.ReadFile(filepath.Join(workerDir, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(manifest), strings.TrimSpace(string(token))) {
+		t.Fatal("role package manifest leaked the node token")
+	}
+	if _, err := Package(PackageOptions{SourceDir: source, OutputDir: filepath.Join(root, "bad"), Role: PackageRoleWorker, NodeID: "updater-a", Now: func() time.Time { return when }}); err == nil {
+		t.Fatal("worker package accepted an updater node")
+	}
+}
+
+func assertPackageFiles(t *testing.T, dir string, want []string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		got = append(got, entry.Name())
+	}
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Fatalf("package files = %v, want %v", got, want)
+	}
 }
 
 func FuzzValidProvisionToken(f *testing.F) {

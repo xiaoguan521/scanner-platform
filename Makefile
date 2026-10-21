@@ -23,6 +23,7 @@ build:
 	$(GO) build -o dist/sec-fence-launcher$(EXE_EXT) ./cmd/fence-launcher
 	$(GO) build -o dist/sec-worker-supervisor$(EXE_EXT) ./cmd/worker-supervisor
 	$(GO) build -o dist/sec-node-provision$(EXE_EXT) ./cmd/node-provision
+	$(GO) build -o dist/sec-node-deploy$(EXE_EXT) ./cmd/node-deploy
 	$(GO) build -o dist/sec-portable$(EXE_EXT) ./cmd/portable
 
 web-install:

@@ -75,6 +75,39 @@ type Result struct {
 	Manifest          string       `json:"manifest"`
 }
 
+// PackageRole identifies the least-privilege material package for one
+// deployment role. A server package contains the server key and token
+// registry; a worker/updater package contains only that node's client key,
+// certificate and token plus the CA certificate.
+type PackageRole string
+
+const (
+	PackageRoleServer  PackageRole = "server"
+	PackageRoleWorker  PackageRole = "worker"
+	PackageRoleUpdater PackageRole = "updater"
+)
+
+// PackageOptions controls creation of a role-scoped material package from a
+// complete offline provisioning directory. The source is verified before any
+// output is published. Package creation never contacts a network.
+type PackageOptions struct {
+	SourceDir string
+	OutputDir string
+	Role      PackageRole
+	NodeID    string
+	Now       func() time.Time
+}
+
+// PackageResult contains only non-secret deployment metadata.
+type PackageResult struct {
+	OutputDir string      `json:"outputDir"`
+	Role      PackageRole `json:"role"`
+	NodeID    string      `json:"nodeId,omitempty"`
+	ServerURL string      `json:"serverUrl"`
+	Manifest  string      `json:"manifest"`
+	Files     []string    `json:"files"`
+}
+
 // RotateOptions controls an offline replacement of an existing material
 // directory. The CA private key remains in CADir and bearer-token files are
 // copied unchanged; only the server and client certificate/key pairs change.
@@ -97,19 +130,23 @@ type VerifyOptions struct {
 // the CLI to encode this structure as JSON for an operator or deployment
 // system.
 type VerifyResult struct {
-	OutputDir                 string    `json:"outputDir"`
-	ServerURL                 string    `json:"serverUrl"`
-	FileCount                 int       `json:"fileCount"`
-	NodeIDs                   []string  `json:"nodeIds"`
-	CACertificateNotAfter     time.Time `json:"caCertificateNotAfter"`
-	ServerCertificateNotAfter time.Time `json:"serverCertificateNotAfter"`
+	OutputDir                 string      `json:"outputDir"`
+	Role                      PackageRole `json:"role,omitempty"`
+	NodeID                    string      `json:"nodeId,omitempty"`
+	ServerURL                 string      `json:"serverUrl"`
+	FileCount                 int         `json:"fileCount"`
+	NodeIDs                   []string    `json:"nodeIds"`
+	CACertificateNotAfter     time.Time   `json:"caCertificateNotAfter"`
+	ServerCertificateNotAfter time.Time   `json:"serverCertificateNotAfter"`
 }
 
 type manifestDocument struct {
-	Version   int          `json:"version"`
-	ServerURL string       `json:"serverUrl"`
-	Files     []string     `json:"files"`
-	Nodes     []NodeResult `json:"nodes"`
+	Version     int          `json:"version"`
+	PackageRole PackageRole  `json:"packageRole,omitempty"`
+	NodeID      string       `json:"nodeId,omitempty"`
+	ServerURL   string       `json:"serverUrl"`
+	Files       []string     `json:"files"`
+	Nodes       []NodeResult `json:"nodes"`
 }
 
 // NodeResult describes the non-secret locations for one provisioned node.
@@ -268,6 +305,149 @@ func Provision(opts Options) (Result, error) {
 	return result, nil
 }
 
+// Package creates a role-scoped copy of a complete provisioning directory.
+// The complete source is verified first, then only the files required by the
+// selected role are copied into a new owner-only directory and published by a
+// directory rename. Existing output is never overwritten.
+func Package(opts PackageOptions) (PackageResult, error) {
+	now := time.Now
+	if opts.Now != nil {
+		now = opts.Now
+	}
+	when := now().UTC()
+	if err := validatePackageOptions(opts); err != nil {
+		return PackageResult{}, err
+	}
+	sourceDir, err := filepath.Abs(opts.SourceDir)
+	if err != nil {
+		return PackageResult{}, fmt.Errorf("resolve source directory: %w", err)
+	}
+	outputDir, err := filepath.Abs(opts.OutputDir)
+	if err != nil {
+		return PackageResult{}, fmt.Errorf("resolve output directory: %w", err)
+	}
+	if err := rejectNestedPaths(sourceDir, outputDir); err != nil {
+		return PackageResult{}, err
+	}
+	if _, err := Verify(VerifyOptions{OutputDir: sourceDir, Now: func() time.Time { return when }}); err != nil {
+		return PackageResult{}, fmt.Errorf("verify source material: %w", err)
+	}
+	manifest, _, err := readManifest(sourceDir)
+	if err != nil {
+		return PackageResult{}, err
+	}
+	selected, err := selectPackageNodes(manifest, opts.Role, opts.NodeID)
+	if err != nil {
+		return PackageResult{}, err
+	}
+	files := packageFiles(opts.Role, opts.NodeID)
+	if err := ensureParent(outputDir); err != nil {
+		return PackageResult{}, err
+	}
+	if err := ensureDirAbsent(outputDir); err != nil {
+		return PackageResult{}, err
+	}
+	tmp, err := os.MkdirTemp(filepath.Dir(outputDir), ".scanner-node-package-*")
+	if err != nil {
+		return PackageResult{}, fmt.Errorf("create package staging directory: %w", err)
+	}
+	if err := os.Chmod(tmp, 0700); err != nil {
+		_ = os.RemoveAll(tmp)
+		return PackageResult{}, fmt.Errorf("protect package staging directory: %w", err)
+	}
+	defer os.RemoveAll(tmp)
+	for _, name := range files {
+		secret := name == "server-key.pem" || name == "node-tokens" || strings.HasSuffix(name, "-client-key.pem") || strings.HasSuffix(name, "-token")
+		data, err := readRegular(filepath.Join(sourceDir, name), secret)
+		if err != nil {
+			return PackageResult{}, fmt.Errorf("read source material %s: %w", name, err)
+		}
+		mode := os.FileMode(0644)
+		if secret {
+			mode = 0600
+		}
+		if err := writeFile(filepath.Join(tmp, name), data, mode); err != nil {
+			return PackageResult{}, err
+		}
+	}
+	packageNodes := make([]NodeResult, 0, len(selected))
+	for _, node := range selected {
+		packageNodes = append(packageNodes, NodeResult{
+			ID:         node.ID,
+			Kind:       node.Kind,
+			TokenFile:  node.ID + "-token",
+			ClientCert: node.ID + "-client-cert.pem",
+			ClientKey:  node.ID + "-client-key.pem",
+		})
+	}
+	manifestFiles := append(append([]string(nil), files...), "manifest.json")
+	sort.Strings(manifestFiles)
+	packageManifest := manifestDocument{
+		Version:     2,
+		PackageRole: opts.Role,
+		NodeID:      opts.NodeID,
+		ServerURL:   manifest.ServerURL,
+		Files:       manifestFiles,
+		Nodes:       packageNodes,
+	}
+	manifestBytes, err := json.MarshalIndent(packageManifest, "", "  ")
+	if err != nil {
+		return PackageResult{}, fmt.Errorf("encode package manifest: %w", err)
+	}
+	if err := writeFile(filepath.Join(tmp, "manifest.json"), append(manifestBytes, '\n'), 0644); err != nil {
+		return PackageResult{}, err
+	}
+	if err := os.Rename(tmp, outputDir); err != nil {
+		return PackageResult{}, fmt.Errorf("publish node package: %w", err)
+	}
+	return PackageResult{
+		OutputDir: outputDir,
+		Role:      opts.Role,
+		NodeID:    opts.NodeID,
+		ServerURL: manifest.ServerURL,
+		Manifest:  filepath.Join(outputDir, "manifest.json"),
+		Files:     manifestFiles,
+	}, nil
+}
+
+func validatePackageOptions(opts PackageOptions) error {
+	if strings.TrimSpace(opts.SourceDir) == "" || strings.TrimSpace(opts.OutputDir) == "" {
+		return errors.New("source and output directories are required")
+	}
+	if opts.Role != PackageRoleServer && opts.Role != PackageRoleWorker && opts.Role != PackageRoleUpdater {
+		return errors.New("package role must be server, worker or updater")
+	}
+	if opts.Role == PackageRoleServer && strings.TrimSpace(opts.NodeID) != "" {
+		return errors.New("server package must not specify a node ID")
+	}
+	if opts.Role != PackageRoleServer && !nodeIDPattern.MatchString(opts.NodeID) {
+		return errors.New("node package requires a valid node ID")
+	}
+	return nil
+}
+
+func selectPackageNodes(manifest manifestDocument, role PackageRole, nodeID string) ([]NodeResult, error) {
+	if role == PackageRoleServer {
+		return append([]NodeResult(nil), manifest.Nodes...), nil
+	}
+	for _, node := range manifest.Nodes {
+		if node.ID == nodeID {
+			if PackageRole(node.Kind) != role {
+				return nil, fmt.Errorf("node %q has role %q, not %q", nodeID, node.Kind, role)
+			}
+			return []NodeResult{node}, nil
+		}
+	}
+	return nil, fmt.Errorf("node %q is not present in source material", nodeID)
+}
+
+func packageFiles(role PackageRole, nodeID string) []string {
+	if role == PackageRoleServer {
+		return []string{"ca-cert.pem", "node-tokens", "server-cert.pem", "server-key.pem"}
+	}
+	return []string{"ca-cert.pem", nodeID + "-client-cert.pem", nodeID + "-client-key.pem", nodeID + "-token"}
+}
+
 // Rotate replaces an existing material directory in one directory-level
 // swap. It is deliberately local and offline: callers still need to transfer
 // the resulting files through their deployment channel and reload services.
@@ -366,6 +546,9 @@ func Verify(opts VerifyOptions) (VerifyResult, error) {
 	if err != nil {
 		return VerifyResult{}, err
 	}
+	if manifest.Version == 2 {
+		return verifyRolePackage(outputDir, manifest, when)
+	}
 	serverIP, _, err := parseServerURL(manifest.ServerURL)
 	if err != nil {
 		return VerifyResult{}, err
@@ -461,8 +644,20 @@ func readManifest(outputDir string) (manifestDocument, []byte, error) {
 	if err := decoder.Decode(&manifest); err != nil || decoder.Decode(new(any)) != io.EOF {
 		return manifestDocument{}, nil, errors.New("provisioning manifest is invalid")
 	}
-	if manifest.Version != 1 || manifest.ServerURL == "" || len(manifest.Files) == 0 || len(manifest.Nodes) == 0 {
+	if (manifest.Version != 1 && manifest.Version != 2) || manifest.ServerURL == "" || len(manifest.Files) == 0 || len(manifest.Nodes) == 0 {
 		return manifestDocument{}, nil, errors.New("provisioning manifest is incomplete")
+	}
+	if manifest.Version == 2 {
+		if manifest.PackageRole != PackageRoleServer && manifest.PackageRole != PackageRoleWorker && manifest.PackageRole != PackageRoleUpdater {
+			return manifestDocument{}, nil, errors.New("provisioning package role is invalid")
+		}
+		if manifest.PackageRole == PackageRoleServer {
+			if manifest.NodeID != "" {
+				return manifestDocument{}, nil, errors.New("server package contains a node ID")
+			}
+		} else if !nodeIDPattern.MatchString(manifest.NodeID) {
+			return manifestDocument{}, nil, errors.New("node package contains an invalid node ID")
+		}
 	}
 	return manifest, data, nil
 }
@@ -536,6 +731,144 @@ func validateManifestFiles(outputDir string, manifest manifestDocument) error {
 	return nil
 }
 
+func verifyRolePackage(outputDir string, manifest manifestDocument, when time.Time) (VerifyResult, error) {
+	if err := validateRolePackageFiles(outputDir, manifest); err != nil {
+		return VerifyResult{}, err
+	}
+	serverIP, _, err := parseServerURL(manifest.ServerURL)
+	if err != nil {
+		return VerifyResult{}, err
+	}
+	ca, err := readCertificateFile(filepath.Join(outputDir, "ca-cert.pem"), "CA certificate")
+	if err != nil {
+		return VerifyResult{}, err
+	}
+	if !ca.IsCA || !ca.BasicConstraintsValid || ca.CheckSignature(ca.SignatureAlgorithm, ca.RawTBSCertificate, ca.Signature) != nil {
+		return VerifyResult{}, errors.New("CA certificate is invalid")
+	}
+	if when.Before(ca.NotBefore) || !when.Before(ca.NotAfter) {
+		return VerifyResult{}, errors.New("CA certificate is expired or not yet valid")
+	}
+	if manifest.PackageRole == PackageRoleServer {
+		serverCert, err := readCertificateFile(filepath.Join(outputDir, "server-cert.pem"), "server certificate")
+		if err != nil {
+			return VerifyResult{}, err
+		}
+		if serverCert.Subject.CommonName != "scanner-platform-server" || len(serverCert.IPAddresses) != 1 || serverCert.IPAddresses[0].String() != serverIP.String() {
+			return VerifyResult{}, errors.New("server certificate identity does not match the manifest")
+		}
+		if err := verifyLeafCertificate(serverCert, ca, x509.ExtKeyUsageServerAuth, when); err != nil {
+			return VerifyResult{}, fmt.Errorf("verify server certificate: %w", err)
+		}
+		if err := verifyPrivateKeyPair(filepath.Join(outputDir, "server-key.pem"), serverCert, "server key"); err != nil {
+			return VerifyResult{}, err
+		}
+		if err := validateNodeTokenRegistryEntries(outputDir, manifest); err != nil {
+			return VerifyResult{}, err
+		}
+		ids := make([]string, 0, len(manifest.Nodes))
+		for _, node := range manifest.Nodes {
+			ids = append(ids, node.ID)
+		}
+		sort.Strings(ids)
+		return VerifyResult{OutputDir: outputDir, Role: manifest.PackageRole, ServerURL: manifest.ServerURL, FileCount: len(manifest.Files), NodeIDs: ids, CACertificateNotAfter: ca.NotAfter.UTC(), ServerCertificateNotAfter: serverCert.NotAfter.UTC()}, nil
+	}
+	if len(manifest.Nodes) != 1 || manifest.Nodes[0].ID != manifest.NodeID || PackageRole(manifest.Nodes[0].Kind) != manifest.PackageRole {
+		return VerifyResult{}, errors.New("node package manifest does not match its node")
+	}
+	node := manifest.Nodes[0]
+	cert, err := readCertificateFile(filepath.Join(outputDir, node.ID+"-client-cert.pem"), node.ID+" client certificate")
+	if err != nil {
+		return VerifyResult{}, err
+	}
+	if cert.Subject.CommonName != node.ID || len(cert.IPAddresses) != 0 {
+		return VerifyResult{}, fmt.Errorf("client certificate identity for %s is invalid", node.ID)
+	}
+	if err := verifyLeafCertificate(cert, ca, x509.ExtKeyUsageClientAuth, when); err != nil {
+		return VerifyResult{}, fmt.Errorf("verify client certificate for %s: %w", node.ID, err)
+	}
+	if err := verifyPrivateKeyPair(filepath.Join(outputDir, node.ID+"-client-key.pem"), cert, node.ID+" client key"); err != nil {
+		return VerifyResult{}, err
+	}
+	token, err := readOwnerOnly(filepath.Join(outputDir, node.ID+"-token"))
+	if err != nil || !validProvisionToken(string(trimProvisionLineEnding(token))) {
+		if err == nil {
+			err = errors.New("token has invalid format")
+		}
+		return VerifyResult{}, fmt.Errorf("validate node token: %w", err)
+	}
+	return VerifyResult{OutputDir: outputDir, Role: manifest.PackageRole, NodeID: manifest.NodeID, ServerURL: manifest.ServerURL, FileCount: len(manifest.Files), NodeIDs: []string{node.ID}, CACertificateNotAfter: ca.NotAfter.UTC()}, nil
+}
+
+func validateRolePackageFiles(outputDir string, manifest manifestDocument) error {
+	expected := make(map[string]struct{}, len(manifest.Files))
+	for _, name := range manifest.Files {
+		if name == "" || filepath.Base(name) != name || filepath.Clean(name) != name || strings.ContainsAny(name, "\\:\x00") {
+			return errors.New("provisioning package contains an unsafe file name")
+		}
+		if _, ok := expected[name]; ok {
+			return errors.New("provisioning package contains duplicate files")
+		}
+		expected[name] = struct{}{}
+		secret := name == "server-key.pem" || name == "node-tokens" || strings.HasSuffix(name, "-client-key.pem") || strings.HasSuffix(name, "-token")
+		if _, err := readRegular(filepath.Join(outputDir, name), secret); err != nil {
+			return fmt.Errorf("validate package material %s: %w", name, err)
+		}
+	}
+	entries, err := os.ReadDir(outputDir)
+	if err != nil {
+		return fmt.Errorf("list package directory: %w", err)
+	}
+	for _, entry := range entries {
+		if _, ok := expected[entry.Name()]; !ok {
+			return fmt.Errorf("package directory contains unlisted file %q", entry.Name())
+		}
+	}
+	if _, ok := expected["ca-cert.pem"]; !ok {
+		return errors.New("provisioning package omits CA certificate")
+	}
+	if _, ok := expected["manifest.json"]; !ok {
+		return errors.New("provisioning package omits manifest")
+	}
+	required := map[string]struct{}{"ca-cert.pem": {}, "manifest.json": {}}
+	if manifest.PackageRole == PackageRoleServer {
+		for _, name := range []string{"node-tokens", "server-cert.pem", "server-key.pem"} {
+			required[name] = struct{}{}
+		}
+	} else {
+		nodeID := manifest.NodeID
+		for _, name := range []string{nodeID + "-client-cert.pem", nodeID + "-client-key.pem", nodeID + "-token"} {
+			required[name] = struct{}{}
+		}
+	}
+	if len(expected) != len(required) {
+		return errors.New("provisioning package contains files outside its role")
+	}
+	for name := range required {
+		if _, ok := expected[name]; !ok {
+			return fmt.Errorf("provisioning package omits required file %q", name)
+		}
+	}
+	if manifest.PackageRole == PackageRoleServer {
+		if len(manifest.Nodes) == 0 {
+			return errors.New("server package has no node descriptors")
+		}
+		seen := make(map[string]struct{}, len(manifest.Nodes))
+		for _, node := range manifest.Nodes {
+			if !nodeIDPattern.MatchString(node.ID) || (node.Kind != "worker" && node.Kind != "updater") {
+				return errors.New("server package contains an invalid node descriptor")
+			}
+			if _, exists := seen[node.ID]; exists {
+				return fmt.Errorf("server package contains duplicate node %q", node.ID)
+			}
+			seen[node.ID] = struct{}{}
+		}
+	} else if len(manifest.Nodes) != 1 || manifest.Nodes[0].ID != manifest.NodeID || PackageRole(manifest.Nodes[0].Kind) != manifest.PackageRole {
+		return errors.New("node package descriptor is invalid")
+	}
+	return nil
+}
+
 func readCertificateFile(path, description string) (*x509.Certificate, error) {
 	data, err := readRegular(path, false)
 	if err != nil {
@@ -580,6 +913,26 @@ func verifyPrivateKeyPair(path string, cert *x509.Certificate, description strin
 }
 
 func validateNodeTokenRegistry(outputDir string, manifest manifestDocument) error {
+	if err := validateNodeTokenRegistryEntries(outputDir, manifest); err != nil {
+		return err
+	}
+	for _, node := range manifest.Nodes {
+		fileToken, err := readOwnerOnly(filepath.Join(outputDir, node.ID+"-token"))
+		if err != nil {
+			return fmt.Errorf("read token for %s: %w", node.ID, err)
+		}
+		registryToken, err := readRegistryToken(outputDir, node.ID)
+		if err != nil {
+			return err
+		}
+		if value := strings.TrimSuffix(strings.TrimSuffix(string(fileToken), "\n"), "\r"); value != registryToken {
+			return fmt.Errorf("token file for %s does not match the registry", node.ID)
+		}
+	}
+	return nil
+}
+
+func validateNodeTokenRegistryEntries(outputDir string, manifest manifestDocument) error {
 	data, err := readOwnerOnly(filepath.Join(outputDir, "node-tokens"))
 	if err != nil {
 		return fmt.Errorf("read node token registry: %w", err)
@@ -609,18 +962,34 @@ func validateNodeTokenRegistry(outputDir string, manifest manifestDocument) erro
 			return fmt.Errorf("node token registry contains duplicate node %q", id)
 		}
 		seen[id] = token
-		fileToken, err := readOwnerOnly(filepath.Join(outputDir, id+"-token"))
-		if err != nil {
-			return fmt.Errorf("read token for %s: %w", id, err)
-		}
-		if value := strings.TrimSuffix(strings.TrimSuffix(string(fileToken), "\n"), "\r"); value != token {
-			return fmt.Errorf("token file for %s does not match the registry", id)
-		}
 	}
 	if len(seen) != len(expected) {
 		return errors.New("node token registry does not match the manifest nodes")
 	}
 	return nil
+}
+
+func readRegistryToken(outputDir, nodeID string) (string, error) {
+	data, err := readOwnerOnly(filepath.Join(outputDir, "node-tokens"))
+	if err != nil {
+		return "", fmt.Errorf("read node token registry: %w", err)
+	}
+	data = trimProvisionLineEnding(data)
+	for lineNo, raw := range strings.Split(string(data), "\n") {
+		line := strings.TrimSuffix(raw, "\r")
+		if line == "" {
+			continue
+		}
+		id, token, ok := strings.Cut(line, "=")
+		if !ok || id != nodeID || !validProvisionToken(token) {
+			if id == nodeID {
+				return "", fmt.Errorf("node token registry entry on line %d is invalid", lineNo+1)
+			}
+			continue
+		}
+		return token, nil
+	}
+	return "", fmt.Errorf("node token registry has no entry for %s", nodeID)
 }
 
 func validProvisionToken(token string) bool {
