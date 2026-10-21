@@ -630,3 +630,10 @@
 - PostgreSQL RuntimeStore 已接入计划增改删、启停、时间窗/资产/端口授权校验、到期触发和单次计划停用；到期触发持有计划行锁，避免同一 `NextRun` 被并发 Tick 重复消费，生成任务仍复用既有授权校验与规则冻结。
 - 隔离 PostgreSQL lab 测试实际创建一条文档保留地址段的单次计划，执行两次 Tick，确认只生成一个 `PENDING` 任务、只写入一条运行历史，并在测试结束清理夹具数据；规则、目标、任务和运行结果未写入仓库。
 - `POSTGRES_DSN_FILE=... go test -tags=lab ./internal/repo`、`POSTGRES_DSN_FILE=... make migrate-postgres` 均通过；通知、mTLS/证书轮换、非核心系统管理和 PostgreSQL 浏览器旅程仍未完成。
+
+## 2026-10-21：PostgreSQL 通知中心与安全摘要投递回归
+
+- 新增迁移 `0013_notifications.sql`，建立平台内通知和安全摘要 Webhook 投递队列；通知只保存授权范围、接受风险和失败任务的稳定摘要，不保存目标地址、凭据、请求/响应或引擎输出。
+- PostgreSQL RuntimeStore 已接入通知刷新、未读筛选、分页、已读标记、管理员设置、投递状态查询和有界异步投递；Webhook 继续默认关闭，仅允许既有安全校验接受的 HTTPS/回环地址，失败按次数和退避重试，服务重启会回收陈旧投递声明。
+- 隔离 PostgreSQL lab 测试使用文档保留地址段和本地 `httptest.Server`，实际验证授权到期摘要、失败任务摘要、已读状态、设置审计和 Webhook 投递均可用；未访问外部互联网。
+- 已执行 `POSTGRES_DSN_FILE=... make migrate-postgres` 应用 0013，并执行 `POSTGRES_DSN_FILE=... go test -tags=lab ./internal/repo`；完整 `make test`、`make lint`、`make build` 和 PostgreSQL 启动回归将在本提交收口后再次运行。

@@ -78,7 +78,7 @@ func (s *PostgresRuntimeStore) RuntimeMode() string { return "postgres" }
 // advertise PostgreSQL runtime features until their tables and adapters are
 // wired to the selected database.
 func (s *PostgresRuntimeStore) UnavailableRuntimeCapabilities() []string {
-	return []string{"synthetic-worker", "notifications"}
+	return []string{"synthetic-worker"}
 }
 
 // Close is intentionally a no-op. The bootstrap owns the shared pool used by

@@ -227,6 +227,7 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "initialize PostgreSQL repositories: %v\n", err)
 			return 1
 		}
+		notificationsOn = true
 	} else {
 		var err error
 		absoluteDB, err = filepath.Abs(*dbPath)
