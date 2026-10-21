@@ -17,6 +17,12 @@
 
 ## 本轮推进边界
 
+本轮补齐生产部署输入：`deploy/Dockerfile` 提供 Server、Worker、Updater
+三个 BuildKit target，`deploy/compose.production.yaml` 固定服务网络、
+secret 挂载、Worker 能力和目录权限；Compose 不包含 `build:`，镜像引用由
+部署环境提供 `@sha256` digest。静态门禁已在临时 secret fixture 上通过，
+但真实镜像推送、证书/令牌注入、服务管理和隔离 Linux 运行态仍不计入已验收。
+
 节点材料部署前已增加角色最小权限拆包：`sec-node-provision` 可从完整离线材料目录生成 Server、Worker 或 Updater 包，拆包前重新验签式预检，输出采用目录级原子发布；`--verify-dir` 会按角色拒绝其他节点的证书、私钥和令牌。`sec-node-deploy --rotate-existing` 现在提供显式远程替换的备份/失败恢复计划。该能力解决材料分发的最小权限边界和替换回滚路径，但不等同于真实远程传输、服务重启或自动注册完成。
 
 本轮已完成 P0 的信息架构基础、真实数据通道收敛和主要页面的语义组件抽取，并补上系统管理闭环：一级导航固定为“总览、资产、扫描、漏洞、报告、系统”六个域，管理员可维护时区和新登录会话时长，所有登录用户可查看授权/风险/任务提醒并标记已读；服务端持久化、权限和审计保持在 Server。状态文案和颜色由共享组件维护，页面只负责业务组合。

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Validate the deployment security contract after Compose normalization.
 
-The repository intentionally does not ship a production Compose file.  This
-checker is the gate that a deployment file must pass before it is used.  The
-Compose CLI performs YAML interpolation and normalization; this script only
-consumes its JSON output and never executes a service.
+The checker is the gate that the repository's production Compose contract
+must pass before it is used.  The Compose CLI performs YAML interpolation and
+normalization; this script only consumes its JSON output and never executes a
+service.
 """
 
 from __future__ import annotations
@@ -80,7 +80,10 @@ def _secret_targets(service: dict[str, Any]) -> set[str]:
     if isinstance(secrets, list):
         for item in secrets:
             if isinstance(item, dict) and item.get("target"):
-                targets.add(str(item["target"]))
+                target = str(item["target"])
+                if not target.startswith("/"):
+                    target = "/run/secrets/" + target
+                targets.add(target)
     return targets
 
 

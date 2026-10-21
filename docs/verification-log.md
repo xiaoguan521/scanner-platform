@@ -1,5 +1,13 @@
 # Verification log
 
+## 2026-10-21：生产镜像与 Compose 部署契约
+
+- 新增 `deploy/Dockerfile` 的 `server`、`worker`、`updater` BuildKit targets：Go 服务、Server UI、SHA-256 固定的 Nuclei/Trivy 和 Linux `nft`/`setpriv` 运行依赖在镜像阶段构建；运行目标不携带数据库凭据或节点秘密。
+- 新增 `deploy/compose.production.yaml` 与 `production.env.example`。Compose 不含 `build:`，镜像必须使用 `@sha256`，Server Web 端口只绑定回环地址，节点 API 只在明确的 Worker 网络地址监听，Worker 规则目录只读、runtime 独立可写，secret 文件和 cgroup 挂载均显式声明。
+- `scripts/verify_compose_security.py` 现在按 Compose 语义把短 secret target 规范化为 `/run/secrets/...`；已用临时 fixture secret 文件和四个 digest 形式的测试镜像引用运行 `DEPLOY_COMPOSE_FILE=deploy/compose.production.yaml make verify-deploy` 通过，并清理 fixture。新增短 target 单元测试；没有启动或拉取任何部署服务。
+- `docker buildx build --check --target server -f deploy/Dockerfile .` 通过；实际 `--load` 构建已开始并完成源码/UI/基础镜像阶段，但在下载锁定的 Nuclei 发布包时因 GitHub 连接读超时退出，未生成本地镜像。该失败是外部下载链路问题，需在可用的构建网络中重试。
+- 真实镜像推送、生产证书/令牌、远程节点服务管理、Linux namespace/cgroup/DROP 抓包仍需在隔离部署环境验收。
+
 ## 2026-10-21：节点材料远程轮换与失败恢复计划
 
 - `sec-node-deploy` 新增显式 `--rotate-existing` 模式。首次安装仍拒绝覆盖已有远程目录；轮换模式先把既有目录移到唯一回滚目录，再复制并只读预检角色包，发布后重启固定服务，只有重启成功才清理回滚目录。

@@ -149,6 +149,13 @@ class ComposeSecurityTest(unittest.TestCase):
         validator.validate_config(config)
         self.assertEqual(config, original)
 
+    def test_secret_short_target_is_normalized_to_compose_mount_path(self):
+        config = valid_config()
+        server = config["services"]["sec-server"]
+        server["environment"]["TLS_CERT_FILE"] = "/run/secrets/server_cert"
+        server["secrets"][0]["target"] = "server_cert"
+        self.assertEqual(validator.validate_config(config), [])
+
 
 if __name__ == "__main__":
     unittest.main()

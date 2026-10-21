@@ -1,0 +1,270 @@
+# Production deployment contract. Build and publish the three images first,
+# then provide their immutable @sha256 references in the environment. This
+# file intentionally has no build directives and never contains credentials.
+services:
+  postgres:
+    image: ${SCANNER_POSTGRES_IMAGE:?set an immutable PostgreSQL image digest}
+    restart: always
+    environment:
+      POSTGRES_USER: secadmin
+      POSTGRES_DB: sec_platform
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets:
+      - db_password
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    networks:
+      - control_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U secadmin -d sec_platform"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  sec-server:
+    image: ${SCANNER_SERVER_IMAGE:?set an immutable server image digest}
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      TLS_CERT_FILE: /run/secrets/server_cert
+      TLS_KEY_FILE: /run/secrets/server_key
+    command:
+      - --listen
+      - 127.0.0.1:8080
+      - --ui-dir
+      - /opt/sec/web/dist
+      - --storage
+      - postgres
+      - --postgres-dsn-file
+      - /run/secrets/postgres_dsn
+      - --report-dir
+      - /runtime/reports
+      - --node-listen
+      - 172.30.1.10:8443
+      - --node-tls-cert
+      - /run/secrets/server_cert
+      - --node-tls-key
+      - /run/secrets/server_key
+      - --node-tls-client-ca
+      - /run/secrets/node_client_ca
+      - --node-token-file
+      - /run/secrets/node_tokens
+    secrets:
+      - source: postgres_dsn
+        target: postgres_dsn
+        uid: "10001"
+        gid: "10001"
+        mode: 0400
+      - source: server_cert
+        target: server_cert
+        uid: "10001"
+        gid: "10001"
+        mode: 0400
+      - source: server_key
+        target: server_key
+        uid: "10001"
+        gid: "10001"
+        mode: 0400
+      - source: node_client_ca
+        target: node_client_ca
+        uid: "10001"
+        gid: "10001"
+        mode: 0400
+      - source: node_tokens
+        target: node_tokens
+        uid: "10001"
+        gid: "10001"
+        mode: 0400
+    volumes:
+      - server_reports:/runtime/reports
+    ports:
+      - "127.0.0.1:8080:8080"
+    networks:
+      control_net:
+      worker_net:
+        ipv4_address: 172.30.1.10
+
+  sec-updater:
+    image: ${SCANNER_UPDATER_IMAGE:?set an immutable updater image digest}
+    restart: always
+    depends_on:
+      - sec-server
+    user: "10001:10001"
+    environment:
+      NODE_TOKEN_FILE: /run/secrets/updater_token
+    command:
+      - --server
+      - https://172.30.1.10:8443
+      - --id
+      - updater-primary
+      - --node-token-file
+      - /run/secrets/updater_token
+      - --node-ca-cert
+      - /run/secrets/node_client_ca
+      - --node-client-cert
+      - /run/secrets/updater_client_cert
+      - --node-client-key
+      - /run/secrets/updater_client_key
+      - --rules-dir
+      - /vuln-data
+      - --trusted-rule-public-key
+      - /run/secrets/bundle_public_key
+      - --bin-dir
+      - /opt/sec/bin
+    secrets:
+      - source: node_client_ca
+        target: node_client_ca
+        uid: "10001"
+        gid: "10001"
+        mode: 0400
+      - source: updater_token
+        target: updater_token
+        uid: "10001"
+        gid: "10001"
+        mode: 0400
+      - source: updater_client_cert
+        target: updater_client_cert
+        uid: "10001"
+        gid: "10001"
+        mode: 0400
+      - source: updater_client_key
+        target: updater_client_key
+        uid: "10001"
+        gid: "10001"
+        mode: 0400
+      - source: bundle_public_key
+        target: bundle_public_key
+        uid: "10001"
+        gid: "10001"
+        mode: 0400
+    volumes:
+      - vuln_data:/vuln-data
+    networks:
+      - worker_net
+
+  sec-worker-1:
+    image: ${SCANNER_WORKER_IMAGE:?set an immutable worker image digest}
+    restart: always
+    depends_on:
+      - sec-server
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_ADMIN
+      - SETUID
+      - SETGID
+    environment:
+      NODE_TOKEN_FILE: /run/secrets/worker_token
+      HOME: /runtime/home
+    command:
+      - --launcher
+      - /opt/sec/bin/sec-fence-launcher
+      - --worker
+      - /opt/sec/bin/sec-worker
+      - --restart-delay
+      - 2s
+      - --max-backoff
+      - 60s
+      - --
+      - --server
+      - https://172.30.1.10:8443
+      - --id
+      - worker-node-1
+      - --node-token-file
+      - /run/secrets/worker_token
+      - --node-ca-cert
+      - /run/secrets/node_client_ca
+      - --node-client-cert
+      - /run/secrets/worker_client_cert
+      - --node-client-key
+      - /run/secrets/worker_client_key
+      - --bin-dir
+      - /opt/sec/bin
+      - --rules-dir
+      - /vuln-data
+      - --runtime-dir
+      - /runtime/worker
+      - --inputs-dir
+      - /runtime/inputs
+      - --fence-cgroup-root
+      - /sys/fs/cgroup/sec-worker
+      - --fence-infra
+      - tcp://172.30.1.10:8443
+    secrets:
+      - source: node_client_ca
+        target: node_client_ca
+        uid: "0"
+        gid: "0"
+        mode: 0400
+      - source: worker_token
+        target: worker_token
+        uid: "0"
+        gid: "0"
+        mode: 0400
+      - source: worker_client_cert
+        target: worker_client_cert
+        uid: "0"
+        gid: "0"
+        mode: 0400
+      - source: worker_client_key
+        target: worker_client_key
+        uid: "0"
+        gid: "0"
+        mode: 0400
+    volumes:
+      - vuln_data:/vuln-data:ro
+      - worker_runtime:/runtime
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    networks:
+      - worker_net
+
+volumes:
+  pg_data:
+  server_reports:
+  vuln_data:
+  worker_runtime:
+
+networks:
+  control_net:
+    name: scanner-platform-control
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+  worker_net:
+    name: scanner-platform-worker
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.1.0/24
+
+secrets:
+  db_password:
+    file: ./secrets/db_password
+  postgres_dsn:
+    file: ./secrets/postgres_dsn
+  server_cert:
+    file: ./secrets/server_cert.pem
+  server_key:
+    file: ./secrets/server_key.pem
+  node_client_ca:
+    file: ./secrets/node_client_ca.pem
+  node_tokens:
+    file: ./secrets/node_tokens
+  worker_token:
+    file: ./secrets/worker.token
+  worker_client_cert:
+    file: ./secrets/worker-client-cert.pem
+  worker_client_key:
+    file: ./secrets/worker-client-key.pem
+  updater_token:
+    file: ./secrets/updater.token
+  updater_client_cert:
+    file: ./secrets/updater-client-cert.pem
+  updater_client_key:
+    file: ./secrets/updater-client-key.pem
+  bundle_public_key:
+    file: ./secrets/bundle-signing-public-key.pem

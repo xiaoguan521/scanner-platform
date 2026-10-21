@@ -1,0 +1,16 @@
+.git
+.github
+runtime
+vuln-data
+deploy/secrets
+bin
+dist
+test
+web/node_modules
+web/dist
+*.db
+*.sqlite
+*.log
+.env
+.env.*
+!.env.example

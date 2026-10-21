@@ -460,94 +460,23 @@ sec-portable/
 
 ---
 
-## 10. 部署骨架(Docker Compose,需按环境补全)
+## 10. 部署契约(Docker Compose)
 
-> 这是骨架,不是可直接上线的最终文件。多主机部署需补充 TLS 证书、secrets、节点副本生成脚本。
+仓库提供 `deploy/Dockerfile` 的 Server、Worker、Updater 三个 BuildKit
+目标，以及 `deploy/compose.production.yaml` 的生产部署契约。Compose
+不包含 `build:`，所有服务镜像必须由发布流程生成并固定为
+`@sha256:...`；凭据、证书、令牌、DSN 和规则公钥只能通过
+`deploy/secrets/` 的 owner-managed 文件挂载。`deploy/README.md` 记录镜像
+构建、秘密文件和门禁顺序。该文件可以作为真实部署输入，但不能替代
+隔离 Linux 的 namespace、cgroup、DROP 计数和范围外抓包验收。
 
-```yaml
-services:
-  postgres:
-    image: postgres:16-alpine
-    restart: always
-    environment:
-      POSTGRES_USER: secadmin
-      POSTGRES_DB: sec_platform
-      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
-    secrets: [db_password]
-    volumes: [pg_data:/var/lib/postgresql/data]
-    networks: [control_net]
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U secadmin -d sec_platform"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+启动前先完成静态门禁和秘密文件预检；实际启动由部署环境执行：
 
-  sec-server:
-    build: { context: ., dockerfile: deploy/Dockerfile.server }
-    restart: always
-    depends_on:
-      postgres: { condition: service_healthy }
-    environment:
-      UI_LISTEN_ADDR: ":8080"
-      INTERNAL_NODE_LISTEN_ADDR: ":8443"      # 仅内部网络,不发布
-      TLS_CERT_FILE: /run/secrets/server_cert
-      TLS_KEY_FILE: /run/secrets/server_key
-    secrets: [db_password, server_cert, server_key]
-    ports:
-      - "127.0.0.1:8080:8080"                 # 由宿主机前置反向代理提供 HTTPS
-    networks: [control_net, worker_net]
-
-  sec-updater:
-    build: { context: ., dockerfile: deploy/Dockerfile.updater }
-    restart: always
-    user: "10001:10001"                       # 宿主机目录需预先 chown
-    depends_on: [sec-server]
-    environment:
-      SERVER_INTERNAL_URL: https://sec-server:8443
-      NODE_ID: updater-primary
-      NODE_TOKEN_FILE: /run/secrets/updater_token
-      ARTIFACT_REGISTRY_URL: ${ARTIFACT_REGISTRY_URL:?required}
-      BUNDLE_VERIFY_PUBKEY_FILE: /run/secrets/bundle_pubkey
-      GC_GRACE_PERIOD: "2h"
-    secrets: [updater_token, bundle_pubkey]
-    volumes:
-      - /var/lib/sec-agent/vuln-data:/vuln-data:rw
-    networks: [worker_net]
-
-  sec-worker-1:
-    build: { context: ., dockerfile: deploy/Dockerfile.worker }
-    restart: always
-    depends_on: [sec-server]
-    cap_add: [NET_ADMIN, SETUID, SETGID]       # 仅 supervisor 使用,拉起引擎前全部丢弃
-    environment:
-      SERVER_INTERNAL_URL: https://sec-server:8443
-      NODE_ID: worker-node-1
-      NODE_TOKEN_FILE: /run/secrets/worker1_token
-      SCANNER_UID: "10001"
-      MAX_CONCURRENT_TASKS: "1"
-      # 精确到 IP:端口,不要写整个网段
-      INFRA_ALLOWLIST: "${SERVER_IP}:8443,${DNS_IP}:53,${HARBOR_IP}:443,${ARTIFACT_IP}:443"
-      HOME: /runtime/home
-    secrets: [worker1_token]
-    volumes:
-      - /var/lib/sec-agent/vuln-data:/vuln-data:ro
-      - /var/lib/sec-agent/runtime/worker-1:/runtime:rw   # 每个 Worker 独立私有
-    networks: [worker_net]
-
-networks:
-  control_net: {}
-  worker_net: {}
-
-volumes:
-  pg_data: {}
-
-secrets:
-  db_password: { file: ./secrets/db_password }
-  server_cert: { file: ./secrets/server.crt }
-  server_key: { file: ./secrets/server.key }
-  updater_token: { file: ./secrets/updater.token }
-  worker1_token: { file: ./secrets/worker1.token }
-  bundle_pubkey: { file: ./secrets/bundle_ed25519.pub }
+```text
+set -a; . ./deploy/production.env; set +a
+DEPLOY_COMPOSE_FILE=deploy/compose.production.yaml make verify-deploy
+docker compose --env-file deploy/production.env \\
+  -f deploy/compose.production.yaml up -d
 ```
 
 > 二期的 ZAP sidecar 通过独立 profile 启用,且必须强制设置 API Key。
@@ -559,7 +488,8 @@ secrets:
 引用、Server 回环端口、Worker/Updater/PostgreSQL 端口发布，以及 Worker
 规则目录只读和私有 runtime 可写约束；每个服务还必须使用审批过的
 `@sha256` 镜像，不能直接使用未固定的 tag 或 `build:` 上下文。它不替代实际 namespace、nftables、
-cgroup、DROP 计数和范围外抓包验收；本节 Compose 仍是按环境补全的部署骨架。
+cgroup、DROP 计数和范围外抓包验收；镜像 digest、证书 SAN、秘密文件和
+Worker cgroup 挂载仍必须由部署环境按实际节点值复核。
 
 ---
 

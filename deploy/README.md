@@ -1,10 +1,54 @@
 # Deployment status and runtime contract
 
-This directory does not yet contain production Dockerfiles or a production
-Compose file. The Compose fragment in `docs/architecture-v3.2.md` remains a
-design skeleton and must not be started as-is. The executable entry points and
-the security boundaries they require are implemented; deployment orchestration
-and its isolated-Linux acceptance are still pending.
+This directory contains the production image build targets and a deployment
+Compose contract. The Compose file requires immutable image digests and
+owner-managed secret files; it has no build directives and must not be used
+with placeholder values from `production.env.example`. The executable entry
+points and security boundaries are implemented, while real remote service
+orchestration and isolated-Linux acceptance remain deployment-stage checks.
+
+## Build immutable service images
+
+Build and publish each target with BuildKit, then record the resulting digest
+in an owner-managed environment file. The build downloads only the SHA-256
+pinned Nuclei and Trivy distributions from `config/engines.lock.json`:
+
+```text
+docker buildx build --platform linux/amd64 --target server \
+  --tag registry.example.invalid/scanner-platform-server:VERSION \
+  --push -f deploy/Dockerfile .
+docker buildx build --platform linux/amd64 --target worker \
+  --tag registry.example.invalid/scanner-platform-worker:VERSION \
+  --push -f deploy/Dockerfile .
+docker buildx build --platform linux/amd64 --target updater \
+  --tag registry.example.invalid/scanner-platform-updater:VERSION \
+  --push -f deploy/Dockerfile .
+```
+
+Use the registry's returned `@sha256:...` references in a copied
+`production.env.example`. Never put registry credentials, private keys, node
+tokens or populated environment files in the repository.
+
+## Prepare and validate the deployment
+
+Create `deploy/secrets/` with owner-only files. The files must contain the
+PostgreSQL DSN, database password, Server/node certificates and keys, the
+role-scoped Worker/Updater credentials, and the Ed25519 rule public key. The
+Server certificate must have the numeric SAN `172.30.1.10` used by the
+Compose worker network. Before starting anything, run:
+
+```text
+set -a; . ./deploy/production.env; set +a
+DEPLOY_COMPOSE_FILE=deploy/compose.production.yaml make verify-deploy
+docker compose --env-file deploy/production.env \
+  -f deploy/compose.production.yaml config --quiet
+```
+
+The static gate checks immutable images, explicit networks, secret references,
+loopback-only web publishing, no host namespace or privileged mode, the
+Worker capability allowlist, read-only rule data, and private writable
+runtime. It does not replace the Linux namespace, cgroup, DROP-counter,
+range-capture or service-manager acceptance tests.
 
 ## Supported local modes
 

@@ -54,6 +54,14 @@
 
 ## 当前边界和优先缺口
 
+2026-10-21 补充：生产镜像构建目标已统一放在 `deploy/Dockerfile`，
+`deploy/compose.production.yaml` 提供不含 `build:` 的部署契约。它要求
+不可变镜像 digest、显式命名网络和 owner-managed secret 文件；Worker 的
+规则目录只读、私有 runtime、Linux cgroup 挂载与能力白名单均已写入配置。
+静态门禁已用临时 secret fixture 和 digest 形式的镜像引用通过。真实镜像
+推送、证书/令牌注入、远程服务管理、Linux namespace/cgroup/DROP 抓包仍需
+在隔离部署环境验收。
+
 安全扫描仍只处理用户明确指定且已登记/审批的目标；TCP 端口探测限定单台已登记主机，ICMP 只向已登记主机发送一次有界 echo。端口探测开放结果不会直接授权漏洞扫描。
 
 ## 2026-10-21：PostgreSQL 连接与迁移基础

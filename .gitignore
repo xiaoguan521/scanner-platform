@@ -17,6 +17,7 @@
 /runtime/
 /vuln-data/
 /secrets/
+/deploy/secrets/
 /.trash/
 *.log
 
