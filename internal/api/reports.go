@@ -15,6 +15,8 @@ func reportStoreError(w http.ResponseWriter, err error) bool {
 	switch {
 	case errors.Is(err, reporting.ErrInvalid):
 		runtimeJSON(w, 400, APIError{Error: "invalid_report", Message: err.Error()})
+	case errors.Is(err, repo.ErrInvalidReportListQuery):
+		runtimeJSON(w, 400, APIError{Error: "invalid_report_list_query", Message: "报告分页、筛选或排序条件无效"})
 	case errors.Is(err, repo.ErrReportNotFound):
 		runtimeJSON(w, 404, APIError{Error: "report_not_found", Message: "报告或模板不存在"})
 	case errors.Is(err, repo.ErrReportConflict):
@@ -53,6 +55,21 @@ func registerReportHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui fun
 		}
 	}))
 	mux.HandleFunc("GET /api/v1/reports", ui(false, func(w http.ResponseWriter, r *http.Request) {
+		if query, paged, ok := parseReportListQuery(r); paged {
+			if !ok {
+				bad(w, http.StatusBadRequest, "invalid_report_list_query")
+				return
+			}
+			page, err := store.ListReportsPage(r.Context(), query)
+			if errors.Is(err, repo.ErrInvalidReportListQuery) {
+				bad(w, http.StatusBadRequest, "invalid_report_list_query")
+				return
+			}
+			if !reportStoreError(w, err) {
+				runtimeJSON(w, http.StatusOK, ReportPageResponse{Items: page.Items, Total: page.Total, Page: page.Page, PageSize: page.PageSize})
+			}
+			return
+		}
 		items, err := store.ListReports(r.Context())
 		if !reportStoreError(w, err) {
 			runtimeJSON(w, 200, ListResponse[reporting.Job]{Items: items, Total: len(items)})

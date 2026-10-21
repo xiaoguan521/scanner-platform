@@ -4,7 +4,7 @@ import { Alert, Button, Card, Checkbox, DatePicker, Drawer, Dropdown, Empty, For
 import type { Dayjs } from 'dayjs';
 import { DownloadOutlined, FileTextOutlined, SettingOutlined, UploadOutlined } from '@ant-design/icons';
 import { useCollection } from '../../api/hooks';
-import { requestJSON } from '../../api/client';
+import { apiClient, requestJSON } from '../../api/client';
 import { CollectionNotice } from '../../api/CollectionNotice';
 import { useAuth } from '../../auth/AuthProvider';
 import type { ReportJob, ReportScope, ReportTemplate } from './types';
@@ -37,6 +37,13 @@ export const ReportsPage: React.FC = () => {
   const { data: tasks, loading: tasksLoading, error: tasksError } = useCollection('tasks');
   const [templates, setTemplates] = useState<ReportTemplate[]>([]);
   const [jobs, setJobs] = useState<ReportJob[]>([]);
+  const [reportPage, setReportPage] = useState(1);
+  const [reportPageSize, setReportPageSize] = useState(10);
+  const [reportTotal, setReportTotal] = useState(0);
+  const [reportSearch, setReportSearch] = useState('');
+  const [reportStatus, setReportStatus] = useState('ALL');
+  const [reportFormat, setReportFormat] = useState('ALL');
+  const [reportLoading, setReportLoading] = useState(true);
   const [templateId, setTemplateId] = useState('default');
   const [format, setFormat] = useState<ReportJob['format']>('xlsx');
   const [assetId, setAssetId] = useState<string>();
@@ -63,15 +70,18 @@ export const ReportsPage: React.FC = () => {
   }, [tasks, scopedAssets, businessGroup, assetId]);
   const selectedTemplate = templates.find(t => t.id === templateId);
   const reload = useCallback(async (signal?: AbortSignal) => {
+    setReportLoading(true);
     try {
       const [reports, nextTemplates] = await Promise.all([
-        requestJSON<{ items: ReportJob[] }>(endpoint, 'GET', undefined, signal),
+        apiClient.reportsPage<ReportJob>(reportPage, reportPageSize, { search: reportSearch, status: reportStatus, format: reportFormat }, signal),
         requestJSON<{ items: ReportTemplate[] }>(templatesEndpoint, 'GET', undefined, signal),
       ]);
-      if (!signal?.aborted) { setJobs(reports.items); setTemplates(nextTemplates.items); setError(null); }
+      if (!signal?.aborted) { setJobs(reports.items); setReportTotal(reports.total); setTemplates(nextTemplates.items); setError(null); }
     } catch (cause) { if (!signal?.aborted) setError(cause instanceof Error ? cause.message : '报告服务不可用'); }
-  }, []);
+    finally { if (!signal?.aborted) setReportLoading(false); }
+  }, [reportPage, reportPageSize, reportSearch, reportStatus, reportFormat]);
   useEffect(() => { const controller = new AbortController(); let loading = false; const load = async () => { if (loading) return; loading = true; await reload(controller.signal); loading = false; }; void load(); const timer = window.setInterval(() => void load(), 2000); return () => { controller.abort(); window.clearInterval(timer); }; }, [reload]);
+  useEffect(() => { if (reportPage !== 1) setReportPage(1); }, [reportSearch, reportStatus, reportFormat]);
   const generate = async () => {
     const scope: ReportScope = { assetId, businessGroup, taskId, from: range?.[0]?.startOf('day').toISOString(), to: range?.[1]?.endOf('day').toISOString() };
     setBusy(true);
@@ -87,7 +97,7 @@ export const ReportsPage: React.FC = () => {
     catch (cause) { if (cause instanceof Error) message.error(cause.message); }
   };
   return <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-    <CollectionNotice loading={assetsLoading || tasksLoading} error={assetsError || tasksError || error} />
+    <CollectionNotice loading={assetsLoading || tasksLoading || reportLoading} error={assetsError || tasksError || error} />
     <Alert showIcon type="info" message="后台生成与历史记录" description="每次生成冻结一份带版本的数据快照，HTML、Excel、Word、PDF、CSV 与 JSON 使用相同数据与统计规则。CSV 为漏洞明细平面文件，JSON 为完整快照。弱口令本次未启用，登录入口单独统计。报告上限 64 MiB，失败可用原快照重试。" />
     <Card title={<Space><FileTextOutlined />生成安全报告</Space>} extra={<Button icon={<SettingOutlined />} disabled={!canWrite || !selectedTemplate} onClick={editTemplate}>配置模板</Button>}>
       <Space wrap align="end">
@@ -101,8 +111,13 @@ export const ReportsPage: React.FC = () => {
       </Space>
       <Typography.Paragraph type="secondary" style={{ marginTop: 14, marginBottom: 0 }}>任务范围使用该任务的历史观察记录；失败、取消或尚未完成的任务会保留状态说明。未知字段显示“未采集”或“未知”。</Typography.Paragraph>
     </Card>
+    <Space wrap>
+      <Input aria-label="报告历史搜索" placeholder="搜索报告名称、创建人或快照" allowClear value={reportSearch} onChange={event => setReportSearch(event.target.value)} style={{ width: 280 }} />
+      <Select aria-label="报告状态筛选" value={reportStatus} onChange={setReportStatus} style={{ width: 150 }} options={[{ value: 'ALL', label: '全部状态' }, ...Object.entries(stateNames).map(([value, label]) => ({ value, label }))]} />
+      <Select aria-label="报告格式筛选" value={reportFormat} onChange={setReportFormat} style={{ width: 190 }} options={[{ value: 'ALL', label: '全部格式' }, ...Object.entries(formatNames).map(([value, label]) => ({ value, label }))]} />
+    </Space>
     <Card title="报告历史" extra={<Button onClick={() => void reload()}>刷新</Button>}>
-      <DataTable<ReportJob> rowKey="id" dataSource={jobs} scroll={{ x: 1300 }} pagination={{ pageSize: 10 }} locale={{ emptyText: <Empty description="暂无报告，选择范围后生成" /> }} columns={[
+      <DataTable<ReportJob> rowKey="id" dataSource={jobs} loading={reportLoading} scroll={{ x: 1300 }} pagination={{ current: reportPage, pageSize: reportPageSize, total: reportTotal, showSizeChanger: true, pageSizeOptions: [10, 20, 50], showTotal: total => `共 ${total} 项`, onChange: (page, size) => { if (size !== reportPageSize) { setReportPageSize(size); setReportPage(1); } else setReportPage(page); } }} locale={{ emptyText: <Empty description="暂无报告，选择范围后生成" /> }} columns={[
         { title: '报告名称', dataIndex: 'name', width: 330, ellipsis: true, render: (value: string, job) => <span title={`${value}\n快照 ${job.snapshotId}`}>{value}</span> },
         { title: '格式', dataIndex: 'format', width: 85, render: (value: ReportJob['format']) => formatNames[value] },
         { title: '状态', dataIndex: 'status', width: 190, render: (value: ReportJob['status'], job) => <div><Tag color={value === 'READY' ? 'success' : value === 'FAILED' ? 'error' : 'processing'}>{stateNames[value]}</Tag>{value === 'GENERATING' && <Progress size="small" percent={job.progress} />}{job.error && <Text type="danger">{job.error}</Text>}</div> },

@@ -350,20 +350,11 @@ func (s *RuntimeStore) GetReport(ctx context.Context, id string) (reporting.Job,
 	return readReport(s.db.QueryRowContext(ctx, `SELECT data,status,file_path FROM report_jobs WHERE id=?`, id))
 }
 func (s *RuntimeStore) ListReports(ctx context.Context) ([]reporting.Job, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT data,status,file_path FROM report_jobs ORDER BY created_at DESC,id`)
+	page, err := s.ListReportsPage(ctx, ReportListQuery{Page: 1})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	items := []reporting.Job{}
-	for rows.Next() {
-		job, err := readReport(rows)
-		if err != nil {
-			return nil, err
-		}
-		items = append(items, job)
-	}
-	return items, rows.Err()
+	return page.Items, nil
 }
 func (s *RuntimeStore) ReportSnapshot(ctx context.Context, id string) (reporting.Snapshot, error) {
 	var snap reporting.Snapshot

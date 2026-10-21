@@ -20,7 +20,7 @@ UI 使用 HttpOnly 的 `scanner_session` Cookie，所有写请求携带 `X-Reque
 - `/assets/{id}/port-requests/batch`：对已探测到的开放候选一次提交 1–1024 个独立端口申请。操作使用事务，任意端口已申请、跳过或隔离时整批拒绝；该接口不批准申请，也不直接授予扫描权限。
 - `/tasks/{id}/cancel`：取消待处理或执行中任务。`/findings/{id}` 可更新 `OPEN/IN_PROGRESS/FALSE_POSITIVE/ACCEPTED_RISK`；不提供手工 FIXED 或从 FIXED 手工修改，拒绝重复状态。接受风险仅允许 OPEN/REOPENED/IN_PROGRESS，需 `reason`（trim 后 1–500 UTF-8 字节，无控制字符）和 `acceptedUntil`（RFC3339，未来 365 天内）；活动接受风险只能撤销到 OPEN。到期或历史无期限自动恢复 OPEN。`GET /findings/{id}/events` 返回状态时间线，原因纯文本展示，审计仅记录事件 ID/状态。
 - `/tasks/{id}/archive` 与 `/restore`：归档或恢复终态任务，并分别写入审计日志。`DELETE /tasks/{id}` 仅允许管理员删除终态且没有关联发现项的任务；操作写入审计日志，已生成的冻结报告快照保留。
-- `/report-templates`、`/reports`:持久化模板、冻结快照、异步生成 HTML/XLSX/DOCX/PDF/CSV/JSON、查询历史、下载和失败重试;CSV 是漏洞明细平面文件，JSON 是完整冻结快照;已就绪报告可通过 `POST /reports/{id}/formats` 复用同一冻结快照导出其他格式;生成不调用扫描器。见 [报告使用说明](../product/report-usage.md)。
+- `/report-templates`、`/reports`:持久化模板、冻结快照、异步生成 HTML/XLSX/DOCX/PDF/CSV/JSON、查询历史、下载和失败重试;CSV 是漏洞明细平面文件，JSON 是完整冻结快照;已就绪报告可通过 `POST /reports/{id}/formats` 复用同一冻结快照导出其他格式;生成不调用扫描器。`GET /reports` 不带查询参数时保留完整历史兼容响应；带 `page`、`page_size`、`q`、`status`、`format` 或 `sort` 时由 Server 返回有界分页、搜索、筛选和稳定排序。见 [报告使用说明](../product/report-usage.md)。
 - `/detection-capabilities`、`/vulnerability-categories`、`/scan-policy`、`/knowledge`:检测能力状态、32 类字典、管理员端口策略、规范 JSON 知识库维护与导入;不自动抓取外部数据。
 - `POST /port-quarantines/release`:管理员填写复核原因后解除隔离并审计。
 - `/schedules`：首次运行时间、分钟间隔（0=单次）、显式目标、时间窗；`PUT /schedules/{id}` 修改，`PATCH` 启停，`DELETE` 删除后续调度，返回最近任务及错误。

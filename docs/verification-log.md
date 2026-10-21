@@ -2,6 +2,12 @@
 
 记录待核对项的来源、锁定版本、验证日期、结果和未决风险。未经实际验证的项目不得标记为已确认。
 
+## 2026-10-21：报告历史服务端分页与筛选
+
+- `GET /api/v1/reports` 无查询参数时继续返回兼容的完整历史；带 `page`、`page_size`、`q`、`status`、`format` 或 `sort` 时由 Server 执行有界分页、搜索、筛选和稳定排序。报告名称、创建人和快照 ID 仅作为归一化历史字段搜索，不读取或返回原始证据。
+- `/reports` 页面使用 Server 分页结果，提供报告名称/创建人/快照搜索、状态和格式筛选、分页大小选择及加载状态；筛选改变时回到第一页，刷新和异步生成后保留当前查询。
+- 已新增仓储、API 和前端源码契约测试，覆盖排序白名单、SQLite LIKE 转义、空结果分页大小、格式/状态筛选、重复/未知查询参数拒绝及页面响应字段。已通过 `make test`（含 race）、`make lint`、`make build`、`npm --prefix web run build`、`node web/src/pages/Reports/list.test.mjs`、Ruby OpenAPI YAML 解析和 `git diff --check`；真实浏览器交互仍需 `make test-browser`。
+
 ## 2026-10-21：漏洞清册服务端分页与筛选
 
 - `/api/v1/findings` 保留无查询参数时的兼容完整响应；带分页参数或筛选条件时由 Server 执行有界分页、稳定排序、搜索和分类计数。筛选只覆盖归一化发现字段，前端不再一次加载全部发现项；跨页批量选择继续携带状态/指派快照，由 Server 做最终并发校验。

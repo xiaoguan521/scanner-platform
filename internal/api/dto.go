@@ -5,6 +5,7 @@ import (
 	"scanner-platform/internal/approvals"
 	"scanner-platform/internal/assets"
 	"scanner-platform/internal/repo"
+	"scanner-platform/internal/reporting"
 	"scanner-platform/internal/rules"
 	"scanner-platform/internal/scanplans"
 	"scanner-platform/internal/scheduler"
@@ -37,6 +38,12 @@ type FindingPageResponse struct {
 	Page     int                    `json:"page"`
 	PageSize int                    `json:"pageSize"`
 	Counts   repo.FindingListCounts `json:"counts"`
+}
+type ReportPageResponse struct {
+	Items    []reporting.Job `json:"items"`
+	Total    int             `json:"total"`
+	Page     int             `json:"page"`
+	PageSize int             `json:"pageSize"`
 }
 type APIError struct {
 	Error   string `json:"error"`

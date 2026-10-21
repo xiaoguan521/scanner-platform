@@ -2817,13 +2817,24 @@ paths:
   "/api/v1/reports":
     get:
       summary: "List report jobs"
+      description: "Without query parameters this keeps the legacy complete list response. With any query parameter, the Server returns a bounded page with optional search, status, format and stable sort."
       security: [{sessionCookie: []}]
+      parameters:
+        - {in: query, name: page, schema: {type: integer, minimum: 1, default: 1}}
+        - {in: query, name: page_size, schema: {type: integer, minimum: 1, maximum: 100, default: 20}}
+        - {in: query, name: q, schema: {type: string, maxLength: 160}, description: "Search report name, creator or snapshot ID"}
+        - {in: query, name: status, schema: {type: string, enum: [QUEUED, GENERATING, READY, FAILED, ALL]}}
+        - {in: query, name: format, schema: {type: string, enum: [html, xlsx, docx, csv, json, pdf, ALL]}}
+        - {in: query, name: sort, schema: {type: string, enum: [created_at, -created_at, name, -name, status, -status, format, -format]}}
       responses:
         "200":
-          description: "List report jobs"
+          description: "List report jobs; legacy complete list without query parameters, bounded page otherwise"
           content:
             application/json:
-              schema: {"type": "object", "properties": {"items": {"type": "array", "items": {"$ref": "#/components/schemas/ReportJob"}}, "total": {"type": "integer"}}, "required": ["items", "total"]}
+              schema:
+                oneOf:
+                  - {"type": "object", "properties": {"items": {"type": "array", "items": {"$ref": "#/components/schemas/ReportJob"}}, "total": {"type": "integer"}}, "required": ["items", "total"]}
+                  - {"$ref": "#/components/schemas/ReportPage"}
         "400": {description: Invalid input}
         "403": {description: Insufficient role or invalid same-origin mutation header}
     post:
@@ -4956,3 +4967,11 @@ components:
         fileSize: {"type": "integer", "format": "int64"}
         snapshotVersion: {"type": "integer"}
         attempts: {"type": "integer"}
+    ReportPage:
+      type: object
+      required: [items, total, page, pageSize]
+      properties:
+        items: {type: array, items: {$ref: "#/components/schemas/ReportJob"}}
+        total: {type: integer, minimum: 0}
+        page: {type: integer, minimum: 1}
+        pageSize: {type: integer, minimum: 1, maximum: 100}
