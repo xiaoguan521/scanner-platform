@@ -488,6 +488,75 @@ paths:
               schema: {type: string, format: binary}
         '400': {description: Invalid or repeated search filter}
         '401': {description: Unauthenticated}
+  "/api/v1/business-groups":
+    get:
+      tags: [assets]
+      summary: List persisted asset business groups
+      description: Returns business-group names and current asset counts without exposing asset addresses or scan data.
+      security: [{sessionCookie: []}]
+      responses:
+        '200':
+          description: Business group list
+          content:
+            application/json:
+              schema:
+                allOf:
+                - "$ref": "#/components/schemas/Pagination"
+                - type: object
+                  properties:
+                    items:
+                      type: array
+                      items: {"$ref": "#/components/schemas/BusinessGroup"}
+        '401': {description: Unauthenticated}
+    post:
+      tags: [assets]
+      summary: Create an empty asset business group
+      security: [{sessionCookie: []}]
+      parameters:
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema: {type: string, enum: [XMLHttpRequest]}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties:
+                name: {type: string, minLength: 1, maxLength: 100}
+      responses:
+        '201':
+          description: Business group created
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/BusinessGroup"}
+        '400': {description: Invalid group name}
+        '401': {description: Unauthenticated}
+        '403': {description: Admin or security_engineer role required}
+        '409': {description: Business group already exists}
+  "/api/v1/assets/import-history":
+    get:
+      tags: [assets]
+      summary: List safe asset import history summaries
+      description: Returns only actor, counts and timestamps; CSV rows, addresses and names are never returned. The result is limited to the latest 200 imports.
+      security: [{sessionCookie: []}]
+      responses:
+        '200':
+          description: Import history list
+          content:
+            application/json:
+              schema:
+                allOf:
+                - "$ref": "#/components/schemas/Pagination"
+                - type: object
+                  properties:
+                    items:
+                      type: array
+                      items: {"$ref": "#/components/schemas/AssetImportHistory"}
+        '401': {description: Unauthenticated}
   "/api/v1/assets/reachability-test":
     post:
       tags:
@@ -3155,6 +3224,22 @@ components:
           - EXCLUDED_PROXY
         source:
           type: string
+    BusinessGroup:
+      type: object
+      required: [name, assetCount, createdAt]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 100}
+        assetCount: {type: integer, minimum: 0}
+        createdAt: {type: string, format: date-time}
+    AssetImportHistory:
+      type: object
+      required: [id, actor, imported, total, createdAt]
+      properties:
+        id: {type: string}
+        actor: {type: string}
+        imported: {type: integer, minimum: 1}
+        total: {type: integer, minimum: 1}
+        createdAt: {type: string, format: date-time}
     PortQuarantine:
       type: object
       required:

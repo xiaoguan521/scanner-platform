@@ -74,6 +74,20 @@ export interface Asset extends AssetProfile {
   reachabilityCheckedAt?: string;
 }
 
+export interface BusinessGroup {
+  name: string;
+  assetCount: number;
+  createdAt: string;
+}
+
+export interface AssetImportHistory {
+  id: string;
+  actor: string;
+  imported: number;
+  total: number;
+  createdAt: string;
+}
+
 export interface TimeWindow {
   weekdays: number[]; // 0=Sunday, 1=Monday...
   start: string; // HH:MM

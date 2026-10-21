@@ -20,7 +20,7 @@ export interface NavigationGroup {
  */
 export const navigationGroups: readonly NavigationGroup[] = [
   { key: 'overview', label: '总览', defaultPath: '/', children: [{ key: '/', label: '态势总览' }] },
-  { key: 'assets', label: '资产', defaultPath: '/assets', children: [{ key: '/assets', label: '资产列表' }] },
+  { key: 'assets', label: '资产', defaultPath: '/assets', children: [{ key: '/assets', label: '资产列表' }, { key: '/business-groups', label: '业务组' }, { key: '/asset-import-history', label: '导入记录' }] },
   { key: 'scans', label: '扫描', defaultPath: '/tasks', children: [{ key: '/tasks', label: '扫描任务与计划' }] },
   { key: 'findings', label: '漏洞', defaultPath: '/findings', children: [{ key: '/findings', label: '漏洞列表' }] },
   { key: 'reports', label: '报告', defaultPath: '/reports', children: [{ key: '/reports', label: '报告中心' }] },

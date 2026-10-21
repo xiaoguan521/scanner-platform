@@ -4,6 +4,8 @@ import { ThemeProvider } from './context/ThemeContext';
 import { AppLayout } from './components/Layout/AppLayout';
 import { DashboardPage } from './pages/Dashboard';
 import { AssetsPage } from './pages/Assets';
+import { BusinessGroupsPage } from './pages/BusinessGroups';
+import { AssetImportHistoryPage } from './pages/AssetImportHistory';
 import { ScopesPage } from './pages/Scopes';
 import { TasksPage } from './pages/Tasks';
 import { FindingsPage } from './pages/Findings';
@@ -25,6 +27,8 @@ const AuthenticatedRoutes: React.FC = () => {
           <Routes>
             <Route path="/" element={<DashboardPage />} />
             <Route path="/assets" element={<AssetsPage />} />
+            <Route path="/business-groups" element={<BusinessGroupsPage />} />
+            <Route path="/asset-import-history" element={<AssetImportHistoryPage />} />
             <Route path="/scopes" element={<ScopesPage />} />
             <Route path="/tasks" element={<TasksPage />} />
             <Route path="/findings" element={<FindingsPage />} />

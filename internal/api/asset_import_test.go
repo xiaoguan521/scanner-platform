@@ -103,6 +103,18 @@ func TestAssetImportAPIAuthorizationAndConfirmation(t *testing.T) {
 	if got := send("POST", "/api/v1/assets/import/confirm", body, "application/json", cookies["admin"], true); got.Code != 201 {
 		t.Fatalf("confirm=%d %s", got.Code, got.Body.String())
 	}
+	if got := send("GET", "/api/v1/business-groups", "", "", cookies["viewer"], false); got.Code != 200 {
+		t.Fatalf("viewer groups=%d %s", got.Code, got.Body.String())
+	}
+	if got := send("POST", "/api/v1/business-groups", `{"name":"临时组"}`, "application/json", cookies["viewer"], true); got.Code != 403 {
+		t.Fatalf("viewer group create=%d", got.Code)
+	}
+	if got := send("POST", "/api/v1/business-groups", `{"name":"临时组"}`, "application/json", cookies["admin"], true); got.Code != 201 {
+		t.Fatalf("admin group create=%d %s", got.Code, got.Body.String())
+	}
+	if got := send("GET", "/api/v1/assets/import-history", "", "", cookies["viewer"], false); got.Code != 200 {
+		t.Fatalf("viewer import history=%d %s", got.Code, got.Body.String())
+	}
 	if got := send("POST", "/api/v1/assets/import/confirm", body, "application/json", cookies["admin"], true); got.Code != 409 {
 		t.Fatalf("repeat=%d", got.Code)
 	}

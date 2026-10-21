@@ -161,6 +161,10 @@ func NewWithPinger(db *sql.DB, pinger Pinger) (*Store, error) {
     owner TEXT NOT NULL,created_at TEXT NOT NULL,
     UNIQUE(kind,address))`,
 		`CREATE TABLE IF NOT EXISTS asset_import_previews(id TEXT PRIMARY KEY,actor TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,rows_json TEXT NOT NULL,expires_at INTEGER NOT NULL,state TEXT NOT NULL CHECK(state IN ('PENDING','CONFIRMED')))`,
+		`CREATE TABLE IF NOT EXISTS asset_business_groups(id TEXT PRIMARY KEY,name TEXT NOT NULL UNIQUE,created_by TEXT NOT NULL,created_at TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS asset_import_history(id TEXT PRIMARY KEY,actor TEXT NOT NULL,imported INTEGER NOT NULL CHECK(imported > 0),total INTEGER NOT NULL CHECK(total >= imported),created_at TEXT NOT NULL)`,
+		`CREATE INDEX IF NOT EXISTS idx_asset_business_groups_name ON asset_business_groups(name)`,
+		`CREATE INDEX IF NOT EXISTS idx_asset_import_history_created_at ON asset_import_history(created_at DESC,id DESC)`,
 		`CREATE TABLE IF NOT EXISTS asset_profiles(asset_id TEXT PRIMARY KEY REFERENCES assets(id) ON DELETE CASCADE,data TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS asset_services(asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,port INTEGER NOT NULL,data TEXT NOT NULL,PRIMARY KEY(asset_id,port))`,
 		`CREATE TABLE IF NOT EXISTS asset_login_entries(asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,entry_key TEXT NOT NULL,data TEXT NOT NULL,PRIMARY KEY(asset_id,entry_key))`,
@@ -201,6 +205,14 @@ func NewWithPinger(db *sql.DB, pinger Pinger) (*Store, error) {
 		if _, err := db.Exec(stmt); err != nil {
 			return nil, fmt.Errorf("initialize asset schema: %w", err)
 		}
+	}
+	// Keep groups as a first-class resource while preserving assets registered
+	// by older versions of the local runtime.
+	if _, err := db.Exec(`INSERT INTO asset_business_groups(id,name,created_by,created_at)
+SELECT lower(hex(randomblob(16))),business_group,'',MIN(created_at)
+FROM assets GROUP BY business_group
+ON CONFLICT(name) DO NOTHING`); err != nil {
+		return nil, fmt.Errorf("backfill asset business groups: %w", err)
 	}
 	if pinger == nil {
 		pinger = systemPing
@@ -443,6 +455,9 @@ func (s *Store) Create(ctx context.Context, actor string, in Input) (Asset, erro
 		}
 		return Asset{}, fmt.Errorf("create asset: %w", err)
 	}
+	if err := ensureBusinessGroupTx(ctx, tx, actor, in.BusinessGroup, createdAt); err != nil {
+		return Asset{}, fmt.Errorf("register business group: %w", err)
+	}
 	if err := storeRequests(ctx, tx, id, actor, in.RequestedPorts); err != nil {
 		return Asset{}, err
 	}
@@ -517,6 +532,9 @@ func (s *Store) Update(ctx context.Context, actor, id string, edit Edit) (Asset,
 			return Asset{}, ErrDuplicate
 		}
 		return Asset{}, err
+	}
+	if err := ensureBusinessGroupTx(ctx, tx, actor, normalized.BusinessGroup, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		return Asset{}, fmt.Errorf("register business group: %w", err)
 	}
 	if addressChanged {
 		for _, table := range []string{"asset_services", "asset_login_entries", "port_quarantine"} {

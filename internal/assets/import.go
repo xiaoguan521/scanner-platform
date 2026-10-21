@@ -237,6 +237,9 @@ func (s *Store) ConfirmImport(ctx context.Context, actor, id string) (ImportResu
 		if err := saveProfile(ctx, tx, assetID, in); err != nil {
 			return ImportResult{}, fmt.Errorf("insert imported profile: %w", err)
 		}
+		if err := ensureBusinessGroupTx(ctx, tx, actor, in.BusinessGroup, created); err != nil {
+			return ImportResult{}, fmt.Errorf("register imported business group: %w", err)
+		}
 	}
 	// Audit only the count, never CSV contents, filenames, target addresses or names.
 	auditID, err := newID()
@@ -246,6 +249,13 @@ func (s *Store) ConfirmImport(ctx context.Context, actor, id string) (ImportResu
 	detail := fmt.Sprintf(`{"imported":%d}`, len(rows))
 	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_logs(id,actor,action,object_type,object_id,detail,created_at) VALUES(?,?,'import_assets','asset_import','',?,?)`, auditID, actor, detail, created); err != nil {
 		return ImportResult{}, fmt.Errorf("audit asset import: %w", err)
+	}
+	historyID, err := newID()
+	if err != nil {
+		return ImportResult{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO asset_import_history(id,actor,imported,total,created_at) VALUES(?,?,?,?,?)`, historyID, actor, len(rows), len(rows), created); err != nil {
+		return ImportResult{}, fmt.Errorf("record asset import history: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, "UPDATE asset_import_previews SET rows_json='[]' WHERE id=?", id); err != nil {
 		return ImportResult{}, fmt.Errorf("clear confirmed import: %w", err)
