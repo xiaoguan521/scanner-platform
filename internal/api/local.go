@@ -22,6 +22,10 @@ func registerLocalHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui func
 		if !runtimeDecode(w, r, &body) {
 			return
 		}
+		if nodeID := AuthenticatedNodeID(r); nodeID != "" && body.ID != nodeID {
+			bad(w, http.StatusUnauthorized, "node_identity_mismatch")
+			return
+		}
 		if !runtimeWorkerID.MatchString(body.ID) || (body.Kind != "worker" && body.Kind != "updater") || len(body.CurrentTask) > 128 || len(body.LocalRuleVersion) > 200 || body.LocalRuleVersion != "" && !rules.ValidateVersion(body.LocalRuleVersion) {
 			bad(w, 400, "invalid_node")
 			return

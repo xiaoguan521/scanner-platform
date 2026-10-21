@@ -177,6 +177,10 @@ func NewRuntimeHandler(store *repo.RuntimeStore, fallback http.Handler, uiDir st
 		if !runtimeDecode(w, r, &body) {
 			return
 		}
+		if nodeID := AuthenticatedNodeID(r); nodeID != "" && body.WorkerID != nodeID {
+			bad(w, http.StatusUnauthorized, "node_identity_mismatch")
+			return
+		}
 		if !runtimeWorkerID.MatchString(body.WorkerID) {
 			runtimeJSON(w, http.StatusBadRequest, APIError{Error: "invalid_worker", Message: "Worker ID 格式无效"})
 			return
@@ -224,6 +228,10 @@ func NewRuntimeHandler(store *repo.RuntimeStore, fallback http.Handler, uiDir st
 		if !runtimeDecodeLimit(w, r, &report, taskflow.MaxReportBytes) {
 			return
 		}
+		if nodeID := AuthenticatedNodeID(r); nodeID != "" && report.WorkerID != nodeID {
+			bad(w, http.StatusUnauthorized, "node_identity_mismatch")
+			return
+		}
 		if !runtimeStoreError(w, store.CompleteRuntimeTask(r.Context(), report)) {
 			if runtimeStoreError(w, store.TouchNode(r.Context(), report.WorkerID, "worker", "")) {
 				return
@@ -238,6 +246,10 @@ func NewRuntimeHandler(store *repo.RuntimeStore, fallback http.Handler, uiDir st
 			PinnedRuleVersion string `json:"pinnedRuleVersion"`
 		}
 		if !runtimeDecode(w, r, &body) {
+			return
+		}
+		if nodeID := AuthenticatedNodeID(r); nodeID != "" && body.WorkerID != nodeID {
+			bad(w, http.StatusUnauthorized, "node_identity_mismatch")
 			return
 		}
 		if !runtimeWorkerID.MatchString(body.WorkerID) || body.TaskID == "" || len(body.TaskID) > 128 || body.PinnedRuleVersion == "" || len(body.PinnedRuleVersion) > 200 {

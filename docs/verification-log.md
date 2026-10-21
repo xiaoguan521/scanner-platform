@@ -1,5 +1,17 @@
 # Verification log
 
+## 2026-10-21：隔离 PostgreSQL 验证夹具
+
+- `lab/orbstack-target/compose-postgres.yaml` 新增独立 PostgreSQL 16.4 Bookworm 服务；端口仅绑定 `127.0.0.1:15432`，数据使用命名卷，健康检查使用 `pg_isready`，密码必须由环境变量提供，不提交凭据或卷数据。
+- `lab/orbstack-target/README.md` 补充启动、owner-only DSN 文件、`make migrate-postgres` 和清理命令。该夹具用于迁移/Repository 回归，不会自动创建业务用户、资产、规则或扫描结果。
+- 当前只完成 Compose 配置和启动说明；完整 PostgreSQL Repository 运行时仍未接入，因此不能把迁移成功等同于平台已切换 PostgreSQL。
+
+## 2026-10-21：节点协议令牌认证基础
+
+- Server 新增 `--node-token-file`，读取 owner-only 普通文件中的 `node-id=token` 注册表；拒绝符号链接、组/其他用户可读文件、空/重复节点、短令牌和不可见字符。Worker/Updater 新增各自的单令牌文件参数，并在节点请求中携带 `Authorization: Bearer ...` 与 `X-Node-ID`。
+- Server 对 `/api/v1/nodes/heartbeat`、`/api/v1/worker/*` 和 `/api/v1/updater/*` 做恒时令牌比较，并把令牌对应的节点身份与 JSON 请求体中的节点 ID 再校验；浏览器 UI 和人工会话接口不受影响。未配置令牌时仅保留回环开发兼容模式。
+- 已新增 API、Worker、Updater 单测，覆盖缺失/错误/未知节点、身份不匹配、文件权限/符号链接/重复项和凭据不回显。尚未宣称独立节点监听端口、TLS/mTLS 或多节点生产部署完成；这些是下一阶段安全部署工作。
+
 ## 2026-10-21：PostgreSQL 连接与迁移执行基础
 
 - 新增 `internal/repo/postgres.go`，使用锁定版本 `pgx/v5`（MIT）注册 `database/sql` 驱动；迁移 SQL 嵌入 Server 二进制，按文件名验证顺序后执行。

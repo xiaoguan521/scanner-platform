@@ -50,6 +50,7 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 	reportDir := flags.String("report-dir", "", "Private generated report directory (defaults beside the SQLite database)")
 	postgresDSNFile := flags.String("postgres-dsn-file", "", "Owner-only file containing the PostgreSQL connection string (migration check only)")
 	migratePostgres := flags.Bool("migrate-postgres", false, "Apply embedded PostgreSQL migrations and exit")
+	nodeTokenFile := flags.String("node-token-file", "", "Owner-only Server registry with one node-id=token entry per line")
 	devUI := flags.Bool("dev-ui", false, "Compatibility alias for the unified local Server")
 	status := flags.Bool("status", false, "Show local runtime capabilities")
 	if err := flags.Parse(args); err != nil {
@@ -59,7 +60,7 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if *status {
-		if *migratePostgres || *postgresDSNFile != "" {
+		if *migratePostgres || *postgresDSNFile != "" || *nodeTokenFile != "" {
 			fmt.Fprintln(stderr, "--status cannot be combined with PostgreSQL migration flags")
 			return 2
 		}
@@ -67,7 +68,7 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	if *migratePostgres {
-		if *postgresDSNFile == "" || *devUI || *reportDir != "" || flags.NArg() != 0 {
+		if *postgresDSNFile == "" || *nodeTokenFile != "" || *devUI || *reportDir != "" || flags.NArg() != 0 {
 			fmt.Fprintln(stderr, "--migrate-postgres requires only --postgres-dsn-file")
 			return 2
 		}
@@ -194,6 +195,14 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 		}
 	}()
 	handler := api.NewRuntimeHandler(store, api.NewDevelopmentHandler(accounts, assetStore, approvalsStore), *uiDir, accounts)
+	if *nodeTokenFile != "" {
+		tokens, err := api.ReadNodeTokenSetFile(*nodeTokenFile)
+		if err != nil {
+			fmt.Fprintln(stderr, "read node token registry:", err)
+			return 1
+		}
+		handler = api.NodeAuthMiddleware(handler, tokens)
+	}
 	server := &http.Server{Addr: *addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		<-ctx.Done()

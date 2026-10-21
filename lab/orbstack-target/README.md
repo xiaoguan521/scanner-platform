@@ -83,3 +83,30 @@ Trivy 结果由构建时 Debian 软件包版本和 Worker 本地漏洞库决定�
 ```bash
 docker compose -f lab/orbstack-target/compose.yaml down
 ```
+
+## 启动 PostgreSQL 验证库
+
+`compose-postgres.yaml` 是与 Linux 靶机分开的本地 PostgreSQL 夹具，只把端口绑定到宿主机回环地址，不写入初始业务数据。密码必须由调用者提供，仓库不保存 `.env`、DSN 或数据库卷内容：
+
+```bash
+export SCANNER_POSTGRES_PASSWORD="$(openssl rand -hex 24)"
+docker compose -f lab/orbstack-target/compose-postgres.yaml up -d
+docker compose -f lab/orbstack-target/compose-postgres.yaml ps
+```
+
+等待 `postgres` 的健康状态为 `healthy` 后，创建 owner-only DSN 文件并执行嵌入式迁移：
+
+```bash
+mkdir -p runtime/postgres
+umask 077
+printf 'postgres://scanner:%s@127.0.0.1:15432/scanner_platform?sslmode=disable\n' "$SCANNER_POSTGRES_PASSWORD" > runtime/postgres/dsn
+POSTGRES_DSN_FILE="$PWD/runtime/postgres/dsn" make migrate-postgres
+```
+
+迁移命令只创建/更新 schema journal，不创建用户、资产、规则或测试结果。验证完成后可以删除夹具和卷：
+
+```bash
+docker compose -f lab/orbstack-target/compose-postgres.yaml down -v
+rm -f runtime/postgres/dsn
+unset SCANNER_POSTGRES_PASSWORD
+```

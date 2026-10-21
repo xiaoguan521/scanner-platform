@@ -1,0 +1,31 @@
+name: scanner-lab-postgres
+
+# Local PostgreSQL fixture for migration and Repository integration tests.
+# The password is supplied by the caller; no credential is stored in Git.
+services:
+  postgres:
+    image: postgres:16.4-bookworm
+    environment:
+      POSTGRES_USER: ${SCANNER_POSTGRES_USER:-scanner}
+      POSTGRES_DB: ${SCANNER_POSTGRES_DB:-scanner_platform}
+      POSTGRES_PASSWORD: ${SCANNER_POSTGRES_PASSWORD:?set SCANNER_POSTGRES_PASSWORD in the environment}
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    ports:
+      - target: 5432
+        published: ${SCANNER_POSTGRES_PORT:-15432}
+        host_ip: 127.0.0.1
+        protocol: tcp
+    volumes:
+      - type: volume
+        source: postgres-data
+        target: /var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: "no"
+
+volumes:
+  postgres-data:
+    name: scanner-lab-postgres-data

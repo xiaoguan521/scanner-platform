@@ -166,6 +166,10 @@ func registerRuleHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui func(
 		if !runtimeDecode(w, r, &body) {
 			return
 		}
+		if nodeID := AuthenticatedNodeID(r); nodeID != "" && body.NodeID != nodeID {
+			bad(w, http.StatusUnauthorized, "node_identity_mismatch")
+			return
+		}
 		if !runtimeWorkerID.MatchString(body.NodeID) {
 			bad(w, 400, "invalid_node")
 			return
@@ -191,6 +195,10 @@ func registerRuleHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui func(
 		if !runtimeDecodeLimit(w, r, &body, 2<<20) {
 			return
 		}
+		if nodeID := AuthenticatedNodeID(r); nodeID != "" && body.NodeID != nodeID {
+			bad(w, http.StatusUnauthorized, "node_identity_mismatch")
+			return
+		}
 		if !runtimeWorkerID.MatchString(body.NodeID) {
 			bad(w, 400, "invalid_node")
 			return
@@ -205,6 +213,10 @@ func registerRuleHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui func(
 			Bundles []rules.Bundle `json:"bundles"`
 		}
 		if !runtimeDecodeLimit(w, r, &body, 2<<20) {
+			return
+		}
+		if nodeID := AuthenticatedNodeID(r); nodeID != "" && body.NodeID != nodeID {
+			bad(w, http.StatusUnauthorized, "node_identity_mismatch")
 			return
 		}
 		if !runtimeWorkerID.MatchString(body.NodeID) {

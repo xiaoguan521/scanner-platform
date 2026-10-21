@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"scanner-platform/internal/api"
 	"scanner-platform/internal/executor"
 	"scanner-platform/internal/sshcollect"
 	"syscall"
@@ -24,6 +25,7 @@ func RunWorker(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("sec-worker", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	server := flags.String("server", "http://127.0.0.1:8080", "Local Server URL")
+	nodeTokenFile := flags.String("node-token-file", "", "Owner-only bearer token file for the Worker node API")
 	id := flags.String("id", "worker-local", "Worker identifier")
 	once := flags.Bool("once", false, "Process at most one queued task and exit")
 	interval := flags.Duration("interval", time.Second, "Queue polling interval")
@@ -62,14 +64,26 @@ func RunWorker(args []string, stdout, stderr io.Writer) int {
 	}
 
 	endpoint, err := url.Parse(*server)
-	if err != nil || endpoint.Scheme != "http" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" || (endpoint.Path != "" && endpoint.Path != "/") || !isNumericLoopback(endpoint.Host) || *id == "" || *interval <= 0 || *delay < 0 || flags.NArg() != 0 {
-		fmt.Fprintln(stderr, "provide a local numeric loopback http:// Server URL, worker ID and valid timing flags")
+	if err != nil || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.Host == "" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" || (endpoint.Path != "" && endpoint.Path != "/") || endpoint.Scheme == "http" && !isNumericLoopback(endpoint.Host) || *id == "" || *interval <= 0 || *delay < 0 || flags.NArg() != 0 {
+		fmt.Fprintln(stderr, "provide an http loopback or HTTPS Server URL, worker ID and valid timing flags")
 		return 2
+	}
+	if endpoint.Scheme == "https" && *nodeTokenFile == "" {
+		fmt.Fprintln(stderr, "HTTPS Server URL requires --node-token-file")
+		return 2
+	}
+	nodeToken := ""
+	if *nodeTokenFile != "" {
+		nodeToken, err = api.ReadNodeTokenFile(*nodeTokenFile)
+		if err != nil {
+			fmt.Fprintln(stderr, "read node token file:", err)
+			return 2
+		}
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	worker := taskflow.Worker{
-		ServerURL: *server, ID: *id, Interval: *interval, Delay: *delay,
+		ServerURL: *server, ID: *id, NodeToken: nodeToken, Interval: *interval, Delay: *delay,
 		Execute: runner.Execute, ProbePorts: runner.ProbePorts, AutoScan: runner.AutoScan, EngineStatus: runner.Status,
 		CurrentRuleVersion: runner.CurrentRuleVersion,
 		RequireLeases:      true,

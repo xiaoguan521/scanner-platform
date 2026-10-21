@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"scanner-platform/internal/api"
 	"scanner-platform/internal/executor"
 	"scanner-platform/internal/rules"
 	"syscall"
@@ -20,6 +21,7 @@ func RunUpdater(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("sec-updater", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	server := flags.String("server", "http://127.0.0.1:8080", "Local Server URL")
+	nodeTokenFile := flags.String("node-token-file", "", "Owner-only bearer token file for the Updater node API")
 	id := flags.String("id", "updater-local", "Updater identifier")
 	root := flags.String("rules-dir", "vuln-data", "Updater-owned rule directory")
 	trustedKey := flags.String("trusted-rule-public-key", "", "External Ed25519 PUBLIC KEY PEM file for rule import and activation")
@@ -42,9 +44,21 @@ func RunUpdater(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	endpoint, err := url.Parse(*server)
-	if err != nil || endpoint.Scheme != "http" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" || (endpoint.Path != "" && endpoint.Path != "/") || !isNumericLoopback(endpoint.Host) || *id == "" || flags.NArg() != 0 {
-		fmt.Fprintln(stderr, "provide a local numeric loopback Server URL and updater ID")
+	if err != nil || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.Host == "" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" || (endpoint.Path != "" && endpoint.Path != "/") || endpoint.Scheme == "http" && !isNumericLoopback(endpoint.Host) || *id == "" || flags.NArg() != 0 {
+		fmt.Fprintln(stderr, "provide an http loopback or HTTPS Server URL and updater ID")
 		return 2
+	}
+	if endpoint.Scheme == "https" && *nodeTokenFile == "" {
+		fmt.Fprintln(stderr, "HTTPS Server URL requires --node-token-file")
+		return 2
+	}
+	nodeToken := ""
+	if *nodeTokenFile != "" {
+		nodeToken, err = api.ReadNodeTokenFile(*nodeTokenFile)
+		if err != nil {
+			fmt.Fprintln(stderr, "read node token file:", err)
+			return 2
+		}
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -107,7 +121,7 @@ func RunUpdater(args []string, stdout, stderr io.Writer) int {
 		}
 		return 0
 	}
-	agent := rules.Agent{ServerURL: *server, ID: *id, Manager: manager}
+	agent := rules.Agent{ServerURL: *server, ID: *id, NodeToken: nodeToken, Manager: manager}
 	if err := agent.Run(ctx, *once); err != nil && !errors.Is(err, context.Canceled) {
 		fmt.Fprintf(stderr, "updater stopped: %v\n", err)
 		return 1

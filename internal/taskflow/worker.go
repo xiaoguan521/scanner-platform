@@ -19,8 +19,11 @@ import (
 )
 
 type Worker struct {
-	ServerURL    string
-	ID           string
+	ServerURL string
+	ID        string
+	// NodeToken is an optional bearer credential for the authenticated node
+	// protocol. Local loopback development may leave it empty.
+	NodeToken    string
 	Client       *http.Client
 	Delay        time.Duration
 	Interval     time.Duration
@@ -399,6 +402,10 @@ func (w *Worker) post(ctx context.Context, path string, payload, result any) (in
 		return 0, fmt.Errorf("create worker request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if w.NodeToken != "" {
+		req.Header.Set("Authorization", "Bearer "+w.NodeToken)
+		req.Header.Set("X-Node-ID", w.ID)
+	}
 	client := w.Client
 	if client == nil {
 		client = &http.Client{Timeout: 5 * time.Second}

@@ -15,6 +15,9 @@ import (
 type Agent struct {
 	ServerURL string
 	ID        string
+	// NodeToken is an optional bearer credential for the authenticated node
+	// protocol. Local loopback development may leave it empty.
+	NodeToken string
 	Manager   *Manager
 	Client    *http.Client
 }
@@ -29,6 +32,10 @@ func (a *Agent) post(ctx context.Context, path string, body, result any) (int, e
 		return 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if a.NodeToken != "" {
+		req.Header.Set("Authorization", "Bearer "+a.NodeToken)
+		req.Header.Set("X-Node-ID", a.ID)
+	}
 	client := a.Client
 	if client == nil {
 		client = &http.Client{Timeout: 2 * time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }, Transport: &http.Transport{Proxy: nil}}

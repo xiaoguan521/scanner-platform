@@ -5,8 +5,9 @@ info:
   version: 0.7.0
   description: 'Same-origin local development API. UI mutations require X-Requested-With:
     XMLHttpRequest and admin/security_engineer unless stated otherwise. Accounts use
-    HttpOnly session cookies. Worker/Updater endpoints are loopback-only local development
-    protocols. Synthetic tasks never contact targets. Explicitly authorized numeric targets can run bounded read-only checks. Worker report JSON is limited to 32 MiB; report snapshot 32 MiB, artifact 64 MiB. Rule integrity
+    HttpOnly session cookies. Worker/Updater endpoints are loopback-compatible node
+    protocols; when node token authentication is enabled, clients send an opaque Bearer
+    token and X-Node-ID, and the Server binds that identity to the JSON body. Synthetic tasks never contact targets. Explicitly authorized numeric targets can run bounded read-only checks. Worker report JSON is limited to 32 MiB; report snapshot 32 MiB, artifact 64 MiB. Rule integrity
     validation is not signature or engine compatibility validation.'
 servers:
 - url: "/"
@@ -2592,6 +2593,9 @@ paths:
   "/api/v1/worker/claim":
     post:
       summary: Local-only worker/claim
+      security:
+      - nodeBearer: []
+      - {}
       responses:
         '200':
           description: Local operation result
@@ -2623,6 +2627,9 @@ paths:
     post:
       summary: Local-only worker/report
       description: JSON body limit 32 MiB; at most 2000 normalized findings.
+      security:
+      - nodeBearer: []
+      - {}
       responses:
         '200':
           description: Local operation result
@@ -2636,6 +2643,9 @@ paths:
     post:
       summary: Local-only worker lease renewal
       description: Renews the existing Server-issued task lease for the same worker and pinned rule version. The Server never accepts a requested expiration and caps the renewal at the task hard deadline.
+      security:
+      - nodeBearer: []
+      - {}
       responses:
         '200':
           description: New bounded lease expiration
@@ -2656,6 +2666,9 @@ paths:
   "/api/v1/updater/claim":
     post:
       summary: Local-only updater/claim
+      security:
+      - nodeBearer: []
+      - {}
       responses:
         '200':
           description: Local operation result
@@ -2679,6 +2692,9 @@ paths:
   "/api/v1/updater/report":
     post:
       summary: Local-only updater/report
+      security:
+      - nodeBearer: []
+      - {}
       responses:
         '200':
           description: Local operation result
@@ -2707,6 +2723,9 @@ paths:
   "/api/v1/updater/state":
     post:
       summary: Local-only updater/state
+      security:
+      - nodeBearer: []
+      - {}
       responses:
         '200':
           description: Local operation result
@@ -2727,6 +2746,9 @@ paths:
   "/api/v1/nodes/heartbeat":
     post:
       summary: Local-only nodes/heartbeat
+      security:
+      - nodeBearer: []
+      - {}
       responses:
         '200':
           description: Heartbeat acknowledged; taskStatus is returned for the owned
@@ -3306,6 +3328,10 @@ components:
       type: apiKey
       in: cookie
       name: scanner_session
+    nodeBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
   responses:
     NotImplemented:
       description: Phase 0 does not expose this operation

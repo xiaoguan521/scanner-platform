@@ -6,6 +6,8 @@
 
 默认 SQLite 为 `runtime/platform.db`，规则目录为 `vuln-data/`；两者均不会提交到 Git。初始管理员也可通过 `sec-server --init-admin admin` 在终端交互创建。旧的 `--dev-ui` 是统一 Server 的兼容参数；使用旧账号库时，请显式传入该库的绝对 `--db` 路径，程序不会擅自复制其他位置的账号或资产。
 
+多进程节点的本地认证可显式启用：Server 的 `--node-token-file` 使用 owner-only 文件，每行写一个 `node-id=token`；Worker/Updater 分别使用自己的 `--node-token-file` 单令牌文件。令牌至少 16 个可打印 ASCII 字节，服务端会同时校验 `X-Node-ID`、Bearer 令牌和请求体中的节点 ID。当前回环开发模式仍可不配置令牌；生产部署还需要独立节点监听端口和 TLS 配置。
+
 资产/端口、跳过标记、任务、定时、规则包和验证命令详见 [本地功能](local-functions.md)。运行 `make engines` 安装固定的 Nuclei/Trivy/ZAP 与默认规则后，可在任务页选择真实引擎。详见 [引擎操作指南](engines.md)；真实服务器探测另行验证。
 
 ## 资产画像与报告
