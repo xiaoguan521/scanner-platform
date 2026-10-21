@@ -14,6 +14,12 @@
 - 在隔离 PostgreSQL 夹具上分别运行 `POSTGRES_DSN_FILE="$PWD/runtime/postgres/dsn" go test -tags lab ./internal/account -run '^TestPostgresAccountRepositoryLab$' -count=1` 和 `POSTGRES_DSN_FILE="$PWD/runtime/postgres/dsn" go test -tags lab ./internal/assets -run '^TestPostgresAssetRepositoryLab$' -count=1`，实际验证管理员登录/会话失效、用户生命周期、资产登记/端口/可达性/编辑/删除。
 - 这些适配器仍未接入当前 Server 启动路径；审批、导入/业务组扩展、任务投影、发现项/报告和 PostgreSQL 后端选择仍待完成。
 
+## 2026-10-21：PostgreSQL 授权范围与端口审批适配器
+
+- 新增 `internal/approvals/postgres.go`，覆盖授权范围申请/编辑/撤销/删除/审批、端口请求列表/分页和人工批准/拒绝；审批状态、独立审批人、过期筛选、排除端口和审计写入均在 Server 事务内完成。
+- 在隔离 PostgreSQL 夹具上运行 `POSTGRES_DSN_FILE="$PWD/runtime/postgres/dsn" go test -tags lab ./internal/approvals -run '^TestPostgresApprovalRepositoryLab$' -count=1`，验证范围生命周期、过期筛选、端口分页、批准/拒绝和二次审批冲突；与其他三个 PostgreSQL lab 包并行运行也通过。
+- 适配器尚未接入当前 SQLite Server 启动路径；资产导入/业务组扩展、任务投影、发现项/报告和 PostgreSQL 后端选择仍待完成。
+
 ## 2026-10-21：独立节点 HTTPS 监听器
 
 - Server 新增独立的 `--node-listen`、`--node-tls-cert` 和 `--node-tls-key` 参数；监听地址必须是明确数字 IP:端口，拒绝主机名、未指定地址、组播地址和非法端口。网页仍使用单独的数字回环监听地址。
