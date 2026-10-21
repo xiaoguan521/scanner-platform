@@ -16,9 +16,12 @@ import (
 type Protocol string
 
 const (
-	TCP        Protocol = "tcp"
-	UDP        Protocol = "udp"
-	maxPermits          = 512
+	TCP Protocol = "tcp"
+	UDP Protocol = "udp"
+	// A single explicitly authorized full-TCP-port task contains up to 65535
+	// target permits. Keep room for the fixed infrastructure allowlist while
+	// retaining a hard upper bound on generated rule size.
+	maxPermits = 65535 + 512
 )
 
 // Permit is a precise protocol+numeric-IP+port authorization.
@@ -33,6 +36,10 @@ type Permit struct {
 type Plan struct {
 	Decision       scope.Decision
 	Infrastructure []Permit
+	// Offline permits a local, non-network engine task to run with only the
+	// control-plane/infrastructure allowlist. It is set by the trusted worker
+	// adapter, never by task JSON received from the Server.
+	Offline bool
 }
 
 func checkedEndpoint(e scope.Endpoint) (netip.Addr, error) {
@@ -56,8 +63,11 @@ func Rules(p Plan, now time.Time) (RuleSet, error) {
 	if p.Decision.Status != "READY" || !p.Decision.HardDeadline.After(now) {
 		return RuleSet{}, errors.New("worker was not admitted or deadline expired")
 	}
-	if len(p.Decision.Targets) == 0 || len(p.Infrastructure) == 0 {
-		return RuleSet{}, errors.New("targets and explicit infrastructure permits required")
+	if len(p.Infrastructure) == 0 {
+		return RuleSet{}, errors.New("explicit infrastructure permits required")
+	}
+	if len(p.Decision.Targets) == 0 && !p.Offline {
+		return RuleSet{}, errors.New("targets required for network task")
 	}
 	if len(p.Decision.Targets)+len(p.Infrastructure) > maxPermits {
 		return RuleSet{}, errors.New("permit count exceeds fixed safety limit")

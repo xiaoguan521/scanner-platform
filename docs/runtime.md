@@ -32,3 +32,7 @@ sec-server --listen 127.0.0.1:8080 \
 ```
 
 `--node-listen` 只接受明确的数字 IP 和端口，不能使用未指定地址、组播地址或主机名；私钥必须是 owner-only 普通文件。指定 `--node-tls-client-ca` 后，Server 会要求并校验节点客户端证书；Bearer 令牌仍保留，用于节点 ID 绑定和吊销。独立端口只路由 Worker、Updater 和 heartbeat 协议路径，强制 TLS 1.3，网页路径返回 404。Worker/Updater 的 `--server` 应指向 `https://` 节点地址，并使用各自的 owner-only 单令牌文件；需要自建 CA 时，额外传 `--node-ca-cert`，需要 mTLS 时再传成对的 `--node-client-cert` 与 `--node-client-key`。Server 收到 `SIGHUP` 会原子重载证书、客户端 CA 和节点令牌；新文件解析失败会保留上一份有效配置。客户端证书轮换后重启对应 Worker/Updater。节点生命周期首阶段由管理员显式注册/吊销，Server 根据心跳记录在线、离线和恢复事件并生成平台内离线通知。管理员可在节点清册为已登记节点签发一次性令牌；签发时原子更新 owner-only 注册表并写入审计，明文只返回一次，远程部署和证书自动签发仍由运维完成。
+
+## Linux 围栏 Worker
+
+Linux 生产执行器需要使用 `sec-worker --fence --once --fence-parent-netns-fd <fd>`，并由可信启动器在进入专属 network namespace 前打开父 namespace 文件句柄。该模式会在当前 namespace 安装精确 nftables 默认拒绝规则，随后以 uid 10001、无 capabilities、`no_new_privs` 的子进程执行任务；Server 地址自动加入白名单，其他 DNS/Harbor/制品库地址必须逐项通过 `--fence-infra IP:port` 提供。每个 Worker 只处理一个任务并退出，不能在同一 namespace 复用规则。详细前置条件、SSH 文件权限和隔离验收见 [Linux Worker 围栏运行约定](worker-fence.md)。本地回环模式和 macOS/Windows 仍只提供应用层范围校验，不能替代 Linux namespace 验收。

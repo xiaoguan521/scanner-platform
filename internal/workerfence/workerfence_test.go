@@ -264,3 +264,32 @@ func TestRestrictedExecRejectsUnexpectedCommands(t *testing.T) {
 		}
 	}
 }
+
+func TestUnprivilegedWorkerArgsAreFixedAndShellFree(t *testing.T) {
+	argv, err := UnprivilegedWorkerArgs("/usr/bin/setpriv", "/opt/scanner/bin/sec-worker", []string{"--fence-child"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"--reuid=10001", "--regid=10001", "--clear-groups",
+		"--inh-caps=-all", "--ambient-caps=-all", "--bounding-set=-all",
+		"--no-new-privs", "--", "/opt/scanner/bin/sec-worker", "--fence-child",
+	}
+	if strings.Join(argv, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("argv = %q, want %q", argv, want)
+	}
+	for _, input := range []struct {
+		setpriv    string
+		executable string
+		args       []string
+	}{
+		{setpriv: "setpriv", executable: "/opt/scanner/bin/sec-worker"},
+		{setpriv: "/usr/bin/setpriv", executable: "sec-worker"},
+		{setpriv: "/usr/bin/setpriv", executable: "/opt/scanner/bin/sec-worker", args: []string{"--bad\narg"}},
+		{setpriv: "/usr/bin/setpriv", executable: "/opt/scanner/bin/sec-worker", args: []string{""}},
+	} {
+		if _, err := UnprivilegedWorkerArgs(input.setpriv, input.executable, input.args); err == nil {
+			t.Fatalf("unsafe worker argv accepted: %+v", input)
+		}
+	}
+}

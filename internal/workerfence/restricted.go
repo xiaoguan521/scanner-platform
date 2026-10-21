@@ -19,6 +19,30 @@ type RestrictedExec struct {
 	verified bool
 }
 
+// UnprivilegedWorkerArgs returns the fixed setpriv argv used when the trusted
+// Linux supervisor re-execs the worker task child. It is deliberately separate
+// from RestrictedExec: engines have an additional allowlist, while the worker
+// child is the already built, operator-owned executable.
+func UnprivilegedWorkerArgs(setprivPath, executable string, args []string) ([]string, error) {
+	if !filepath.IsAbs(setprivPath) || filepath.Clean(setprivPath) != setprivPath {
+		return nil, errors.New("setpriv path must be absolute/canonical")
+	}
+	if !filepath.IsAbs(executable) || filepath.Clean(executable) != executable {
+		return nil, errors.New("worker executable must be absolute/canonical")
+	}
+	for _, arg := range args {
+		if arg == "" || strings.ContainsAny(arg, "\x00\r\n") {
+			return nil, errors.New("worker argv contains empty or invalid argument")
+		}
+	}
+	argv := []string{
+		"--reuid=10001", "--regid=10001", "--clear-groups",
+		"--inh-caps=-all", "--ambient-caps=-all", "--bounding-set=-all",
+		"--no-new-privs", "--", executable,
+	}
+	return append(argv, args...), nil
+}
+
 // Only the built-in restricted launcher satisfies the supervisor launch gate.
 func (RestrictedExec) restrictedWorkerLauncher() {}
 

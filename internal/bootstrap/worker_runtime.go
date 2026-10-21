@@ -7,11 +7,13 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"scanner-platform/internal/api"
 	"scanner-platform/internal/executor"
 	"scanner-platform/internal/sshcollect"
@@ -22,6 +24,9 @@ import (
 )
 
 func RunWorker(args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "--fence-child" {
+		return runFencedChild(stdout, stderr)
+	}
 	flags := flag.NewFlagSet("sec-worker", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	server := flags.String("server", "http://127.0.0.1:8080", "Local Server URL")
@@ -38,6 +43,11 @@ func RunWorker(args []string, stdout, stderr io.Writer) int {
 	runtimeDir := flags.String("runtime-dir", "runtime/worker", "Private engine runtime and cache")
 	inputsDir := flags.String("inputs-dir", "runtime/inputs", "Local Trivy input root")
 	sshConfigPath := flags.String("ssh-config", "", "Worker-local SSH public-key profile and known-hosts JSON")
+	fence := flags.Bool("fence", false, "Enable Linux network-namespace firewall supervisor mode")
+	fenceParentFD := flags.Int("fence-parent-netns-fd", -1, "Trusted inherited fd for the parent network namespace (Linux fence mode)")
+	fenceNftPath := flags.String("fence-nft-path", "/usr/sbin/nft", "Absolute nft path used by Linux fence supervisor")
+	fenceSetprivPath := flags.String("fence-setpriv-path", "/usr/bin/setpriv", "Absolute setpriv path used by Linux fence supervisor")
+	fenceInfra := flags.String("fence-infra", "", "Comma-separated exact TCP/UDP IP:port infrastructure permits; tcp:// and udp:// prefixes are supported")
 	rate := flags.Int("rate", 5, "Nuclei requests per second (1-100)")
 	timeout := flags.Int("request-timeout", 10, "HTTP request timeout in seconds (1-60)")
 	status := flags.Bool("status", false, "Print worker mode and exit")
@@ -75,6 +85,58 @@ func RunWorker(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "HTTPS Server URL requires --node-token-file")
 		return 2
 	}
+	var fenced *fencedTaskRunner
+	if *fence {
+		if runtime.GOOS != "linux" {
+			fmt.Fprintln(stderr, "--fence is supported only on Linux")
+			return 2
+		}
+		if !*once {
+			fmt.Fprintln(stderr, "--fence requires --once; restart a fresh worker namespace for each task")
+			return 2
+		}
+		if os.Geteuid() != 0 {
+			fmt.Fprintln(stderr, "--fence requires a root supervisor process")
+			return 2
+		}
+		if endpoint.Scheme != "https" {
+			fmt.Fprintln(stderr, "--fence requires an HTTPS Server URL")
+			return 2
+		}
+		serverHost, _, splitErr := net.SplitHostPort(endpoint.Host)
+		if splitErr != nil || net.ParseIP(serverHost) == nil {
+			fmt.Fprintln(stderr, "--fence requires a numeric Server IP:port")
+			return 2
+		}
+		infrastructure, err := parseFenceInfrastructure(endpoint.Host, *fenceInfra)
+		if err != nil {
+			fmt.Fprintln(stderr, "invalid --fence-infra:", err)
+			return 2
+		}
+		executable, err := os.Executable()
+		if err != nil {
+			fmt.Fprintln(stderr, "resolve worker executable:", err)
+			return 2
+		}
+		executable, err = filepath.Abs(executable)
+		if err != nil {
+			fmt.Fprintln(stderr, "resolve worker executable:", err)
+			return 2
+		}
+		fencedSSHConfig := ""
+		if *sshConfigPath != "" {
+			fencedSSHConfig = absolute(*sshConfigPath)
+		}
+		fenced, err = newFencedTaskRunner(fencedRunnerConfig{
+			Executable: executable, NftPath: absolute(*fenceNftPath), SetprivPath: absolute(*fenceSetprivPath), ParentNetNSFD: *fenceParentFD,
+			Infrastructure: infrastructure, BinDir: runner.BinDir, RulesDir: runner.RulesDir, RuntimeDir: runner.RuntimeDir, InputsDir: runner.InputsDir,
+			SSHConfigPath: fencedSSHConfig, Rate: runner.Rate, Timeout: runner.Timeout,
+		})
+		if err != nil {
+			fmt.Fprintln(stderr, "configure worker fence:", err)
+			return 2
+		}
+	}
 	if endpoint.Scheme == "http" && (*nodeCACert != "" || *nodeClientCert != "" || *nodeClientKey != "") {
 		fmt.Fprintln(stderr, "node TLS client flags require an HTTPS Server URL")
 		return 2
@@ -94,9 +156,13 @@ func RunWorker(args []string, stdout, stderr io.Writer) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	execute, probePorts, autoScan := runner.Execute, runner.ProbePorts, runner.AutoScan
+	if fenced != nil {
+		execute, probePorts, autoScan = fenced.Execute, fenced.ProbePorts, fenced.AutoScan
+	}
 	worker := taskflow.Worker{
 		ServerURL: *server, ID: *id, NodeToken: nodeToken, Interval: *interval, Delay: *delay,
-		Execute: runner.Execute, ProbePorts: runner.ProbePorts, AutoScan: runner.AutoScan, EngineStatus: runner.Status,
+		Execute: execute, ProbePorts: probePorts, AutoScan: autoScan, EngineStatus: runner.Status,
 		CurrentRuleVersion: runner.CurrentRuleVersion,
 		RequireLeases:      true,
 		Client: &http.Client{

@@ -9,7 +9,9 @@
 - `internal/workerfence/supervisor.go`：先生成围栏并应用成功，才调用受限启动接口；单 Worker 单任务、不可重入、同一网络命名空间不可重复使用；围栏失败时启动次数必须为 0，硬截止时间由本地 context 控制。
 - `internal/workerfence/nft_linux.go`：Linux 上只允许绝对路径的 `nft -f -` 一次性批量应用；**必须提供可信启动器在隔离前打开的父网络 namespace 文件句柄**，并校验 NSFS 类型与当前网络命名空间不同；非 root 或验收失败时拒绝执行。此检查不足以单独证明隔离环境正确，还必须由部署层约束禁止 `hostNetwork`，确保专属 netns。
 - `internal/workerfence/restricted_linux.go`：预备经 `setpriv` 清除 UID/GID、附加组、inheritable/ambient/bounding capabilities，并设置 `no_new_privs` 后启动经信任的引擎；参数切片而非 shell，运行目录和环境变量私有化，原始 stdout/stderr 不直通日志，截止时间后杀进程组。Linux 镜像需内置并锁定 `nft`、`setpriv` 的版本与绝对路径。
-- 非 Linux 系统明确返回“不支持 Linux 围栏/受限启动”；`cmd/worker` **仍然是拒绝启动的占位入口**，并未调用以上模块，更没有直接运行引擎。
+- `internal/bootstrap` 已把 Linux 围栏接入真实 `taskflow.Worker` 执行回调。显式传入 `--fence --once --fence-parent-netns-fd <fd>` 时，Worker 在每个新建的专属网络命名空间中先应用精确 nftables 规则，再通过固定 `setpriv` 参数以 uid 10001 重启 `--fence-child`；端口探测、自动综合扫描和离线 Trivy 都走这条路径。普通回环开发模式和非 Linux 系统仍明确不启用 Linux 围栏。
+- 围栏模式要求每个 Worker 进程只处理一个任务并随后退出；可信启动器必须在进入专属网络命名空间前打开父 namespace 文件句柄并把它以 fd 传入，部署层还必须禁止 `hostNetwork`。Server 节点地址会自动进入基础设施白名单，DNS、Harbor 或制品库只能通过 `--fence-infra` 逐项提供精确 IP:端口。
+- 代码路径已经接入，但尚未把它标记为生产验收通过：真实 Linux namespace、nftables DROP 计数、uid/capabilities/no-new-privs 和后代进程回收仍需隔离实验验证。
 - **启动器额外硬闸**：版本和参数白名单尚未由 `internal/executor` 核实，`RestrictedExec.Launch` 默认拒绝所有真实引擎启动（包括包含 `-code` 的参数）。`setpriv` 参数和取消逻辑目前仅用于代码级核查，不能声称实际降权已验证。
 
 ## 本地模拟测试（不执行网络命令）
@@ -41,9 +43,9 @@ LAB_ENV=isolated make test-lab
 1. 在真实受限容器/netns 内校验应用的 nftables 规则、DROP 计数可观测性和真实范围外发包被拒；**单纯规则字符串测试不证明网络隔离有效**。
 2. 在同一环境验证子进程实际 UID=10001、GID=10001、有效/继承/环境/边界 capabilities 全为 0，`NoNewPrivs=1`；确认运行目录可由 UID10001 写入。
 3. 部署网络命名空间隔离及 Worker 单任务生命周期、Server 节点 API 身份和授权信息可信传递；扫描目标只能取自服务端固定清单，不能从未验证的 Task 直接构造 `Plan`。
-4. 与 `internal/executor` 参数白名单完成联调；锁定 Nuclei/Trivy 和 `nft`/`setpriv` 实际版本并执行 `make verify-flags`。在此之前**禁止启用生产扫描启动链**。
+4. 与 `internal/executor` 参数白名单完成联调；锁定 Nuclei/Trivy 和 `nft`/`setpriv` 实际版本并执行 `make verify-flags`。Worker 围栏入口只允许 Server 预先下发的任务回调，未通过本项前**禁止在生产环境启用围栏扫描启动链**。
 5. 确认进程组杀死子进程外，是否还需要 worker cgroup 终止所有后代；以及 Docker/Linux 内外 namespace 的流量路径、Nginx stream 代理的请求预算和熔断。
 6. 独立校对内网 DNS、Harbor、制品库、Server 的白名单精确 IP:端口及协议；禁止通过 `0.0.0.0/0`、无协议端口、自动解析或宽网段临时放行来修复连接问题。
 
-**状态：PoC #1 代码骨架与模拟测试已实现，隔离实验和生产集成尚未验收，不得视为 PoC 通过。**
+**状态：PoC #1 的计划生成、失败关闭测试和真实 Worker 接入已实现；隔离实验和生产部署验收尚未完成，不得视为 PoC 通过。**
 

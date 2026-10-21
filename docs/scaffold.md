@@ -1,4 +1,6 @@
-# Phase 0 项目骨架
+# Phase 0 项目骨架（历史说明）
+
+> 本文记录最初的入口骨架，不能代表当前实现状态。当前功能和差距以 [`docs/product/current-state.md`](product/current-state.md)、[`docs/runtime.md`](runtime.md) 与 [`docs/verification-log.md`](verification-log.md) 为准。
 
 当前代码优先完成模块边界与开发调试入口，不代表实际的扫描平台已经运行。
 
@@ -8,11 +10,11 @@
 | --- | --- | --- |
 | `cmd/server` | UI API、节点 API、调度和唯一数据库连接方 | `--status`、手动启用只读本地调试 API |
 | `cmd/updater` | 规则验签、发布、回收 | 只有 `--status`；真实激活/删除未开启 |
-| `cmd/worker` | 领取任务、租约、围栏、执行引擎 | 只有 `--status`；不会启动扫描器 |
+| `cmd/worker` | 领取任务、租约、围栏、执行引擎 | 普通模式可领取真实任务；Linux 显式 `--fence --once` 时先安装专属 namespace 围栏并以 uid 10001 执行子进程，隔离实验仍待验收 |
 | `cmd/portable` | 未来的嵌入式单进程客户端 | `--status`、手动启用只读本地调试 API；不连接数据库 |
 | `web/src/pages/Users` | 未来的用户与权限管理 | 仅样例列表/角色展示，所有账号写入及权限调整禁用；Server `GET /api/v1/users` 现为 501 |
 
-`internal/bootstrap` 定义统一启动参数与默认拒绝启动策略；`internal/api` 当前仅暴露诊断路由；`internal/repo` 保留 SQLite / PostgreSQL 的共同接口。
+`internal/bootstrap` 定义统一启动参数、节点 TLS/令牌和 Linux 围栏入口；`internal/api` 与 `internal/repo` 已提供 SQLite/显式 PostgreSQL 运行时。本文后续的“占位/501/readyz 503”描述仅适用于最初提交时的骨架。
 
 ## 最小启动方式（仅开发用途）
 

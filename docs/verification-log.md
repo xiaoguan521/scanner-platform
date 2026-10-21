@@ -1,5 +1,12 @@
 # Verification log
 
+## 2026-10-21：Linux Worker 围栏接入真实执行路径（代码回归）
+
+- `internal/bootstrap` 已把 Linux `--fence` 模式接入现有 `taskflow.Worker` 的执行、端口探测和自动综合扫描回调。任务由 Server 固定为数字 IP 与端口后，root 阶段只生成精确 nftables 规则；应用成功后通过固定 `setpriv` 参数重新执行 `--fence-child`，子进程以 uid 10001、无 capabilities 和 `no_new_privs` 运行现有执行器。`--once` 强制每个专属 network namespace 只处理一个任务，避免复用旧规则。端口进度通过独立继承 fd 回传到现有 heartbeat，隐藏子进程入口还绑定了任务摘要 capability，避免伪造环境变量后改写任务。
+- 离线 Trivy 任务不生成目标网络许可，只保留明确的控制面/基础设施白名单；Server 地址自动加入白名单，额外 DNS/制品库必须使用逐项 `--fence-infra IP:port`。主机名、CIDR、未指定地址和未知操作在子进程协议层拒绝。
+- 新增围栏计划、离线任务、无解析目标、输入尾随数据和受限 argv 失败路径覆盖。已运行 `go test -race ./internal/bootstrap ./internal/workerfence`、`go vet ./internal/bootstrap ./internal/workerfence`、`GOOS=linux GOARCH=amd64 go build ./cmd/worker`、Linux bootstrap 测试二进制交叉编译和 `git diff --check`；未在 macOS 上伪造 Linux nftables 结果。
+- 仍待隔离 Linux 实验：真实父/子 network namespace、nftables DROP 计数、范围外发包、uid/capabilities/no-new-privs、SSH 文件对 uid 10001 的权限、cgroup 后代回收和禁止 `hostNetwork`。因此 PoC #1 和生产部署仍未验收。
+
 ## 2026-10-21：统一 API 错误契约与请求编号
 
 - Server、节点协议和早期 scaffold 的 JSON 失败响应统一补充稳定 `code`、安全操作提示 `hint` 和服务端生成的 `request_id`；`X-Request-ID` 响应头与响应体保持一致。旧 `error` 字段保留为兼容别名，不含凭据、目标证据或引擎输出。
@@ -206,7 +213,7 @@
 | 引擎参数白名单 | 已安装版本核验通过 | `make verify-flags` 对实际帮助核对；2026-10-19 新增 rootfs 与 OS 包类型参数，不代表真实服务器已验收。 |
 | Phase 0 PoC | 未运行 | 真实扫描、防火墙和抓包验证只允许在隔离实验环境开展。 |
 | PoC #1 应用层准入（2026-10-16） | 单元测试通过，实验验收未运行 | 显式 IP:端口、审批/到期、端口隔离、时间窗均为纯逻辑验证；网络围栏、降权、DROP 告警和隔离靶场验收未做。 |
-| PoC #1 Linux 围栏与受限启动预备代码（2026-10-16） | 本地模拟通过，实验待验证 | nftables 原子规则、默认 DROP、精确协议+IP:端口白名单，netns 父句柄检查及 setpriv 去特权启动参数已实现；未接入 cmd/worker，未在 Linux 实测 nft 和 setpriv。必须人工核对 Linux 工具版本、ns 隔离有效性、内核行为、实际无外联和 DROP 统计。 |
+| PoC #1 Linux 围栏与受限启动预备代码（2026-10-16，历史记录） | 本地模拟通过，实验待验证 | 当时记录为尚未接入 cmd/worker；当前接入状态见本文件顶部 2026-10-21 条目。Linux nft/setpriv、namespace 隔离、实际无外联和 DROP 统计仍必须人工核对。 |
 | 引擎受限启动硬闸（2026-10-16） | 默认阻断，待参数验证 | 未接入 `internal/executor` 经版本锁定的参数白名单前，`RestrictedExec.Launch` 显式拒绝真正运行 Nuclei/Trivy；当前 setpriv 仅验证参数构造，未实测进程 UID/capabilities。 |
 | GitHub Actions 六平台 CI / Release（2026-10-16） | 本地检查及 GitHub 云端 CI 通过；Release 未发布 | 提交 `798f832` 的 CI 已通过前端、race 测试、lint 和 Linux/macOS/Windows 六平台构建。标签构建只有完整 CI 通过才打包；发布权限仅 Release Job，标签仅创建 Draft + Pre-release。漏洞库手工工作流需另看当前签名步骤结果。 |
 | 漏洞库 Ed25519 签名与平台验签 | 本地平台实现、隔离测试和当前主分支 GitHub Actions 均通过 | 当前工作流使用 `vulnerability-data-signing` 环境、`BUNDLE_SIGNING_PRIVATE_KEY_PEM` 密钥和 `BUNDLE_SIGNING_PUBLIC_KEY_PEM` 变量；云端已完成 8 个文件完整性校验、Ed25519 签名/验签和 `vulnerability-data` 制品上传。Updater 现支持 2 GiB 以内的已签名本地/HTTPS 流式导入，网页 multipart 仍为 256 MiB；单公钥轮换、多密钥过渡与完整引擎兼容矩阵仍未完成。 |
