@@ -6,7 +6,7 @@ ifeq ($(GOOS),windows)
 EXE_EXT := .exe
 endif
 
-.PHONY: build test lint verify-flags test-lab web-install web-dev web-build dev dev-postgres test-local test-browser engines engines-zap engines-java test-engines-local migrate-postgres
+.PHONY: build test lint verify-flags test-lab test-fence-lab web-install web-dev web-build dev dev-postgres test-local test-browser engines engines-zap engines-java test-engines-local migrate-postgres
 
 dev:
 	bash scripts/dev.sh
@@ -71,6 +71,15 @@ test-lab:
 		exit 2; \
 	fi
 	$(GO) test -tags=lab ./...
+
+test-fence-lab:
+	@if [ "$${LAB_ENV:-}" != "isolated" ]; then \
+		printf '%s\n' 'Blocked: set LAB_ENV=isolated only after confirming this is a restricted lab environment.' >&2; \
+		exit 2; \
+	fi
+	@test "$(GOOS)" = linux || { printf '%s\n' 'test-fence-lab must run on Linux; cross-compile the Worker and test binary first.' >&2; exit 2; }
+	@test -n "$${LAB_WORKER_BIN:-}" || { printf '%s\n' 'LAB_WORKER_BIN must point to the matching Linux sec-worker binary.' >&2; exit 2; }
+	$(GO) test -tags=lab ./pocs/01 -run 'Test(IsolatedFenceInstall|FencedWorkerTask)$$' -v
 
 test-local: build web-build
 	python3 scripts/test_local.py

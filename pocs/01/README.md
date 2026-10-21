@@ -30,13 +30,23 @@ GOOS=windows GOARCH=amd64 go build ./...
 
 ## Linux 隔离实验（单独执行，未在 macOS 运行）
 
-`pocs/01/fence_lab_test.go` 采用 `//go:build linux && lab`。只有在运维批准的 Linux 隔离实验机/CI 中才运行：
+`pocs/01/fence_lab_test.go` 和 `pocs/01/worker_lab_test.go` 采用 `//go:build linux && lab`。只有在运维批准的 Linux 隔离实验机/CI 中才运行：
 
 ```bash
 LAB_ENV=isolated make test-lab
+# 真实 Worker 围栏联调需要先编译 Linux Worker，并显式提供它：
+LAB_GOARCH=$(go env GOARCH)
+GOOS=linux GOARCH=$LAB_GOARCH go build -o /tmp/sec-worker ./cmd/worker
+GOOS=linux GOARCH=$LAB_GOARCH go test -tags=lab -c -o /tmp/poc01-lab.test ./pocs/01
+LAB_ENV=isolated LAB_WORKER_BIN=/tmp/sec-worker \
+  /tmp/poc01-lab.test -test.run='Test(IsolatedFenceInstall|FencedWorkerTask)$' -test.v
 ```
 
+在已经编译好的 Linux 工作区也可以直接运行 `LAB_ENV=isolated LAB_WORKER_BIN=/path/to/sec-worker make test-fence-lab`；该目标会拒绝在 macOS/Windows 上执行。
+
 此测试使用 `unshare --user --map-root-user --net` 创建**新的网络命名空间**后，才安装临时 nftables 表并读取验证规则；由父进程经 fd 3 传递隔离前 netns 句柄。需要 Linux 开启用户/网络 namespace 并具备 util-linux `unshare`、nftables。测试使用文档保留地址，不运行扫描器、也不接触真实资产。Linux 发行版中的 `nft` 路径可通过 `LAB_NFT_PATH` 设置绝对路径。
+
+`worker_lab_test.go` 还会在新的 network namespace 中启动真实 `sec-worker --fence-child`，通过 fd 3/4 传递父 namespace 和进度通道，执行一项仅探测 `127.0.0.1:1` 的端口任务，确认 nft 安装、setpriv 降权、任务摘要 capability 和 heartbeat 进度回传均能连通。它不连接靶机，也不运行 Nuclei/Trivy；必须在容器或实验机中以 root 运行，不能把该测试输出解释为真实目标扫描验收。
 
 ## 仍需人工及隔离环境验收
 

@@ -5,6 +5,7 @@
 - `internal/bootstrap` 已把 Linux `--fence` 模式接入现有 `taskflow.Worker` 的执行、端口探测和自动综合扫描回调。任务由 Server 固定为数字 IP 与端口后，root 阶段只生成精确 nftables 规则；应用成功后通过固定 `setpriv` 参数重新执行 `--fence-child`，子进程以 uid 10001、无 capabilities 和 `no_new_privs` 运行现有执行器。`--once` 强制每个专属 network namespace 只处理一个任务，避免复用旧规则。端口进度通过独立继承 fd 回传到现有 heartbeat，隐藏子进程入口还绑定了任务摘要 capability，避免伪造环境变量后改写任务。
 - 离线 Trivy 任务不生成目标网络许可，只保留明确的控制面/基础设施白名单；Server 地址自动加入白名单，额外 DNS/制品库必须使用逐项 `--fence-infra IP:port`。主机名、CIDR、未指定地址和未知操作在子进程协议层拒绝。
 - 新增围栏计划、离线任务、无解析目标、输入尾随数据和受限 argv 失败路径覆盖。已运行 `go test -race ./internal/bootstrap ./internal/workerfence`、`go vet ./internal/bootstrap ./internal/workerfence`、`GOOS=linux GOARCH=amd64 go build ./cmd/worker`、Linux bootstrap 测试二进制交叉编译和 `git diff --check`；未在 macOS 上伪造 Linux nftables 结果。
+- 在一次性 OrbStack Linux 特权实验容器中安装临时 nftables，并运行 `pocs/01` 的 `TestIsolatedFenceInstall` 与 `TestFencedWorkerTask`：两个测试均通过。后者实际启动 Linux arm64 `sec-worker --fence-child`，验证新 network namespace、真实 nftables 配置、setpriv 子进程、任务摘要 fd capability 和端口进度 fd；任务目标仅为 namespace 内的 `127.0.0.1:1`，没有访问当前靶机或 PostgreSQL。该证据覆盖代码路径联调，不替代生产容器的 namespace、DROP 计数和后代回收验收。
 - 仍待隔离 Linux 实验：真实父/子 network namespace、nftables DROP 计数、范围外发包、uid/capabilities/no-new-privs、SSH 文件对 uid 10001 的权限、cgroup 后代回收和禁止 `hostNetwork`。因此 PoC #1 和生产部署仍未验收。
 
 ## 2026-10-21：统一 API 错误契约与请求编号
