@@ -76,6 +76,7 @@ type RuntimeBackend interface {
 	TouchNodeLifecycle(ctx context.Context, id, kind string) error
 	RefreshNodeLifecycle(ctx context.Context, now time.Time) error
 	ListNodeLifecycleEvents(ctx context.Context, id string) ([]NodeLifecycleEvent, error)
+	RecordNodeCredentialIssued(ctx context.Context, id, actor string) error
 	ListNodesPage(ctx context.Context, in NodeListQuery) (NodeListPage, error)
 	ListNotificationDeliveries(ctx context.Context, limit, offset int) (NotificationDeliveryList, error)
 	ListNotifications(ctx context.Context, unreadOnly bool) (NotificationList, error)

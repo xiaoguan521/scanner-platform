@@ -19,6 +19,14 @@ var runtimeWorkerID = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$`)
 // NewRuntimeHandler serves the early local task flow and existing API routes.
 // Synthetic tasks never start a scan or connect to their displayed targets.
 func NewRuntimeHandler(store repo.RuntimeBackend, fallback http.Handler, uiDir string, accounts ...account.Repository) http.Handler {
+	return NewRuntimeHandlerWithNodeIssuer(store, fallback, uiDir, nil, accounts...)
+}
+
+// NewRuntimeHandlerWithNodeIssuer is the production constructor used when the
+// Server has a protected token registry and can issue credentials for an
+// explicitly registered node. The default constructor keeps test and local
+// compatibility modes issuance-disabled.
+func NewRuntimeHandlerWithNodeIssuer(store repo.RuntimeBackend, fallback http.Handler, uiDir string, issuer NodeCredentialIssuer, accounts ...account.Repository) http.Handler {
 	mux := http.NewServeMux()
 	if fallback == nil {
 		fallback = NewScaffoldHandler("sec-server")
@@ -114,7 +122,7 @@ func NewRuntimeHandler(store repo.RuntimeBackend, fallback http.Handler, uiDir s
 	}
 	registerProductHandlers(mux, store, ui, admin, adminRead, actor)
 	registerReportHandlers(mux, store, ui, actor)
-	registerLocalHandlers(mux, store, ui, admin, actor)
+	registerLocalHandlers(mux, store, ui, admin, actor, issuer)
 	registerFindingWorkHandlers(mux, store, ui, actor, accounts...)
 	registerFindingRetestHandlers(mux, store, ui, actor)
 	registerRuleHandlers(mux, store, ui, actor)

@@ -689,3 +689,9 @@
 - SQLite 与 PostgreSQL 的节点分页投影会合并已登记但尚未产生心跳的生命周期记录，保留 `REGISTERED`/`ONLINE`/`OFFLINE`/`REVOKED` 状态字段；搜索、排序和既有运行节点列表语义保持不变。
 - 验证：`make build`、`make lint`、`make test`（Go race 与 Python 18 项采集测试）、`node web/src/pages/Nodes/pagination.test.mjs`、`npm --prefix web run build`、OpenAPI YAML 解析、`git diff --check` 均通过；`POSTGRES_DSN_FILE="$PWD/runtime/postgres/dsn" go test -tags=lab -count=1 ./internal/repo` 通过。并补充 SQLite 注册-only 节点分页测试和 PostgreSQL lab 节点清册投影测试。
 
+## 2026-10-21：节点凭据显式签发闭环
+
+- 节点清册新增管理员“签发令牌”操作。签发只针对已登记且未吊销的节点，生成 32 字节随机 URL-safe Bearer 令牌；Server 在同一进程锁下原子更新既有 owner-only 注册表，审计只记录 `issue_node_credential` 动作，不保存明文令牌。响应设置 `Cache-Control: no-store`，页面只显示一次并提示写入节点 owner-only 文件；重复签发被拒绝，轮换继续通过运维替换注册表并发送 SIGHUP 完成。
+- 新增 `POST /api/v1/nodes/{id}/issue` OpenAPI 契约、SQLite/PostgreSQL 审计适配和失败回滚；数据库只保存节点生命周期与审计状态，令牌仍属于受保护的文件注册表。远程部署、自动证书签发和客户端自动注册仍未实现。
+- 验证：`make build`、`make lint`、`make test`（Go race 与 Python 18 项采集测试）、`node --test $(find web/src -name '*.test.mjs' -print)`（36 项）、`npm --prefix web run build`、`POSTGRES_DSN_FILE="$PWD/runtime/postgres/dsn" go test -tags=lab -count=1 ./internal/repo`、OpenAPI YAML 解析和 `git diff --check` 均通过；新增 API 测试覆盖成功签发、owner-only 注册表写入、审计记录、重复签发、审计失败回滚和 `no-store` 响应。测试使用临时数据库、隔离 PostgreSQL、文档保留地址和临时令牌，未写入真实凭据或资产。
+

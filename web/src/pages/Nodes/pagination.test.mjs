@@ -8,6 +8,7 @@ const [page, client] = await Promise.all([
 
 assert.match(client, /nodesPage<T>\(page:number,pageSize:number/);
 assert.match(client, /registerNode\(input:Pick<NodeLifecycle/);
+assert.match(client, /issueNodeCredential\(id:string\)/);
 assert.match(client, /nodeLifecycleEvents\(id:string/);
 assert.match(client, /rulesPage<T>\(page:number,pageSize:number/);
 assert.match(client, /ruleJobsPage<T>\(page:number,pageSize:number/);
@@ -18,6 +19,8 @@ assert.match(page, /apiClient\.nodesPage<NodeInfo>\(nodePage,nodePageSize/);
 assert.match(page, /登记节点/);
 assert.match(page, /showNodeLifecycle/);
 assert.match(page, /confirmNodeRevoke/);
+assert.match(page, /签发令牌/);
+assert.match(page, /令牌只显示这一次/);
 assert.match(page, /apiClient\.rulesPage<RuleBundle>\(rulePage,rulePageSize/);
 assert.match(page, /apiClient\.ruleJobsPage<RuleJob>\(jobPage,jobPageSize/);
 assert.match(page, /apiClient\.customRulesPage<CustomRule>\(customPage,customPageSize/);

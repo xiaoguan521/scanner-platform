@@ -362,6 +362,13 @@ export interface NodeLifecycleEvent {
   generation: number;
   createdAt: string;
 }
+export interface NodeCredential {
+  id: string;
+  kind: 'worker' | 'updater';
+  hostId: string;
+  serverUrl?: string;
+  token: string;
+}
 
 export interface RuleBundle {
   version: string;

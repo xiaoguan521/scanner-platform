@@ -2,13 +2,18 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/subtle"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"scanner-platform/internal/repo"
@@ -30,6 +35,7 @@ type NodeTokenSet map[string]string
 // last known-good credentials when a replacement file is malformed.
 type NodeTokenRegistry struct {
 	value atomic.Value // stores NodeTokenSet
+	mu    sync.Mutex
 }
 
 func NewNodeTokenRegistry(tokens NodeTokenSet) *NodeTokenRegistry {
@@ -39,6 +45,12 @@ func NewNodeTokenRegistry(tokens NodeTokenSet) *NodeTokenRegistry {
 }
 
 func (r *NodeTokenRegistry) Replace(tokens NodeTokenSet) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.replace(tokens)
+}
+
+func (r *NodeTokenRegistry) replace(tokens NodeTokenSet) {
 	copySet := make(NodeTokenSet, len(tokens))
 	for id, token := range tokens {
 		copySet[id] = token
@@ -47,6 +59,123 @@ func (r *NodeTokenRegistry) Replace(tokens NodeTokenSet) {
 		copySet = NodeTokenSet{}
 	}
 	r.value.Store(copySet)
+}
+
+// issueFile atomically adds a newly generated token to the owner-only server
+// registry and runs commit while the registry lock is held. If commit fails,
+// the file and in-memory registry are restored before the error is returned.
+// The plaintext token is never logged or persisted outside the registry file.
+func (r *NodeTokenRegistry) issueFile(path, nodeID string, commit func(string) error) (string, error) {
+	if r == nil {
+		return "", fmt.Errorf("%w: registry is not configured", ErrInvalidNodeTokenFile)
+	}
+	if !runtimeWorkerID.MatchString(nodeID) {
+		return "", fmt.Errorf("%w: invalid node id", ErrInvalidNodeTokenFile)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	previous, err := ReadNodeTokenSetFile(path)
+	if err != nil {
+		return "", err
+	}
+	if _, exists := previous[nodeID]; exists {
+		return "", repo.ErrNodeCredentialExists
+	}
+	bytes := make([]byte, 32)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", fmt.Errorf("generate node credential: %w", err)
+	}
+	token := base64.RawURLEncoding.EncodeToString(bytes)
+	next := make(NodeTokenSet, len(previous)+1)
+	for id, value := range previous {
+		next[id] = value
+	}
+	next[nodeID] = token
+	if err := writeNodeTokenSetFile(path, next); err != nil {
+		return "", err
+	}
+	r.replace(next)
+	if commit != nil {
+		if err := commit(token); err != nil {
+			if rollbackErr := writeNodeTokenSetFile(path, previous); rollbackErr != nil {
+				return "", fmt.Errorf("commit node credential: %w; rollback registry: %v", err, rollbackErr)
+			}
+			r.replace(previous)
+			return "", err
+		}
+	}
+	return token, nil
+}
+
+// ReloadFile reads and swaps a complete owner-only registry under the same
+// lock used by credential issuance, so SIGHUP cannot interleave with a
+// failed issuance rollback.
+func (r *NodeTokenRegistry) ReloadFile(path string) error {
+	if r == nil {
+		return fmt.Errorf("%w: registry is not configured", ErrInvalidNodeTokenFile)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	tokens, err := ReadNodeTokenSetFile(path)
+	if err != nil {
+		return err
+	}
+	r.replace(tokens)
+	return nil
+}
+
+func writeNodeTokenSetFile(path string, tokens NodeTokenSet) error {
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("%w: path is required", ErrInvalidNodeTokenFile)
+	}
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
+		return fmt.Errorf("%w: file must be a regular owner-only file", ErrInvalidNodeTokenFile)
+	}
+	ids := make([]string, 0, len(tokens))
+	for id, token := range tokens {
+		if !runtimeWorkerID.MatchString(id) {
+			return fmt.Errorf("%w: invalid node id", ErrInvalidNodeTokenFile)
+		}
+		if _, err := normalizeNodeToken([]byte(token)); err != nil {
+			return fmt.Errorf("%w: invalid token for %s", ErrInvalidNodeTokenFile, id)
+		}
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return fmt.Errorf("%w: empty registry", ErrInvalidNodeTokenFile)
+	}
+	sort.Strings(ids)
+	var content strings.Builder
+	for _, id := range ids {
+		content.WriteString(id)
+		content.WriteByte('=')
+		content.WriteString(tokens[id])
+		content.WriteByte('\n')
+	}
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".node-tokens-*")
+	if err != nil {
+		return fmt.Errorf("%w: create replacement", ErrInvalidNodeTokenFile)
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if err := tmp.Chmod(0600); err == nil {
+		_, err = tmp.WriteString(content.String())
+	}
+	if err == nil {
+		err = tmp.Sync()
+	}
+	if closeErr := tmp.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return fmt.Errorf("%w: write replacement", ErrInvalidNodeTokenFile)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("%w: replace registry", ErrInvalidNodeTokenFile)
+	}
+	return nil
 }
 
 func (r *NodeTokenRegistry) snapshot() NodeTokenSet {

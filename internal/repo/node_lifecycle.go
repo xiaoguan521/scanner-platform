@@ -15,6 +15,7 @@ var (
 	ErrNodeLifecycleExists   = errors.New("node already registered")
 	ErrNodeLifecycleNotFound = errors.New("node is not registered")
 	ErrNodeRevoked           = errors.New("node is revoked")
+	ErrNodeCredentialExists  = errors.New("node credential already exists")
 	nodeLifecycleID          = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$`)
 )
 
@@ -268,6 +269,33 @@ func listNodeLifecycleEvents(ctx context.Context, db *sql.DB, postgres bool, id 
 	return items, rows.Err()
 }
 
+func recordNodeCredentialIssued(ctx context.Context, db *sql.DB, postgres bool, id, actor string) error {
+	if !nodeLifecycleID.MatchString(id) || actor == "" {
+		return ErrInvalidNodeLifecycle
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin node credential audit: %w", err)
+	}
+	defer tx.Rollback()
+	var status string
+	if err := tx.QueryRowContext(ctx, nodeSQL(postgres, `SELECT status FROM node_lifecycle WHERE id=?`), id).Scan(&status); errors.Is(err, sql.ErrNoRows) {
+		return ErrNodeLifecycleNotFound
+	} else if err != nil {
+		return fmt.Errorf("read node credential state: %w", err)
+	}
+	if status == "REVOKED" {
+		return ErrNodeRevoked
+	}
+	if err := nodeAuditTx(ctx, tx, postgres, actor, "issue_node_credential", id, nodeTime(time.Now())); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit node credential audit: %w", err)
+	}
+	return nil
+}
+
 func (s *RuntimeStore) RegisterNodeLifecycle(ctx context.Context, in NodeLifecycle, actor string) (NodeLifecycle, error) {
 	return registerNodeLifecycle(ctx, s.db, false, in, actor)
 }
@@ -303,4 +331,12 @@ func (s *RuntimeStore) ListNodeLifecycleEvents(ctx context.Context, id string) (
 }
 func (s *PostgresRuntimeStore) ListNodeLifecycleEvents(ctx context.Context, id string) ([]NodeLifecycleEvent, error) {
 	return listNodeLifecycleEvents(ctx, s.db, true, id)
+}
+
+func (s *RuntimeStore) RecordNodeCredentialIssued(ctx context.Context, id, actor string) error {
+	return recordNodeCredentialIssued(ctx, s.db, false, id, actor)
+}
+
+func (s *PostgresRuntimeStore) RecordNodeCredentialIssued(ctx context.Context, id, actor string) error {
+	return recordNodeCredentialIssued(ctx, s.db, true, id, actor)
 }

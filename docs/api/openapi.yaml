@@ -1521,6 +1521,37 @@ paths:
         '403': {description: Admin role or mutation header required}
         '409': {description: Node ID already registered}
         '503': {description: Storage capability unavailable}
+  "/api/v1/nodes/{id}/issue":
+    post:
+      tags:
+      - system
+      summary: Issue a one-time node bearer credential
+      description: "Admin-only issuance for an already registered node. The Server atomically updates its owner-only token registry and returns the plaintext token once; it does not generate certificates or execute remote deployment commands."
+      security:
+      - sessionCookie: []
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema: {type: string, pattern: "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$"}
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema: {type: string, enum: [XMLHttpRequest]}
+      responses:
+        '201':
+          description: Credential returned once; never persisted in the database or audit detail
+          headers:
+            Cache-Control: {schema: {type: string, enum: [no-store]}}
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/NodeCredential"}
+        '400': {description: Invalid node ID}
+        '401': {description: Unauthenticated}
+        '403': {description: Admin role or mutation header required}
+        '404': {description: Node is not registered}
+        '409': {description: Node is revoked or already has a credential}
+        '503': {description: Protected token registry or storage capability unavailable}
   "/api/v1/nodes/{id}/revoke":
     post:
       tags:
@@ -4835,6 +4866,16 @@ components:
         kind: {type: string, enum: [REGISTERED, ONLINE, OFFLINE, RECOVERED, REVOKED]}
         generation: {type: integer, minimum: 0}
         createdAt: {type: string, format: date-time}
+    NodeCredential:
+      type: object
+      required: [id, kind, hostId, token]
+      additionalProperties: false
+      properties:
+        id: {type: string}
+        kind: {type: string, enum: [worker, updater]}
+        hostId: {type: string}
+        serverUrl: {type: string, format: uri}
+        token: {type: string, minLength: 16, writeOnly: true}
     NodePage:
       type: object
       required: [items, total, page, pageSize]

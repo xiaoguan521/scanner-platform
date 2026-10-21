@@ -342,9 +342,8 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 			}
 		}()
 	}
-	baseHandler := api.NewRuntimeHandler(store, api.NewDevelopmentHandler(accounts, assetStore, approvalsStore), *uiDir, accounts)
-	handler := http.Handler(baseHandler)
 	var nodeTokenRegistry *api.NodeTokenRegistry
+	var nodeIssuer api.NodeCredentialIssuer
 	if *nodeTokenFile != "" {
 		tokens, err := api.ReadNodeTokenSetFile(*nodeTokenFile)
 		if err != nil {
@@ -352,6 +351,13 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		nodeTokenRegistry = api.NewNodeTokenRegistry(tokens)
+		if *nodeListen != "" {
+			nodeIssuer = api.NewFileNodeCredentialIssuer(store, nodeTokenRegistry, *nodeTokenFile, "https://"+*nodeListen)
+		}
+	}
+	baseHandler := api.NewRuntimeHandlerWithNodeIssuer(store, api.NewDevelopmentHandler(accounts, assetStore, approvalsStore), *uiDir, nodeIssuer, accounts)
+	handler := http.Handler(baseHandler)
+	if nodeTokenRegistry != nil {
 		handler = api.NodeAuthMiddlewareWithRegistry(api.NodeLifecycleMiddleware(handler, store), nodeTokenRegistry)
 	}
 	server := &http.Server{Addr: *addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
@@ -385,11 +391,9 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 					return
 				case <-reloadSignals:
 					if *nodeTokenFile != "" {
-						tokens, err := api.ReadNodeTokenSetFile(*nodeTokenFile)
-						if err != nil {
+						if err := nodeTokenRegistry.ReloadFile(*nodeTokenFile); err != nil {
 							slog.Error("node token rotation rejected", "error", err)
 						} else {
-							nodeTokenRegistry.Replace(tokens)
 							slog.Info("node token registry reloaded")
 						}
 					}
