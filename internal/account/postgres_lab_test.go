@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"golang.org/x/crypto/bcrypt"
+
 	"scanner-platform/internal/repo"
 )
 
@@ -32,11 +34,12 @@ func TestPostgresAccountRepositoryLab(t *testing.T) {
 	}
 	const adminName = "pgacctadmin"
 	const userName = "pgacctuser"
+	const adminID = "lab-postgres-account-admin"
 	cleanup := func() {
 		_, _ = db.ExecContext(ctx, `DELETE FROM audit_logs WHERE actor IN
 			(SELECT id FROM users WHERE username IN ($1,$2)) OR object_id IN
 			(SELECT id FROM users WHERE username IN ($1,$2))`, adminName, userName)
-		_, _ = db.ExecContext(ctx, `DELETE FROM users WHERE username IN ($1,$2)`, adminName, userName)
+		_, _ = db.ExecContext(ctx, `DELETE FROM users WHERE id=$1 OR username IN ($2,$3)`, adminID, adminName, userName)
 	}
 	cleanup()
 	defer cleanup()
@@ -45,7 +48,12 @@ func TestPostgresAccountRepositoryLab(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.InitAdmin(ctx, adminName, "Admin-Password-123"); err != nil {
+	hash, err := bcrypt.GenerateFromPassword([]byte("Admin-Password-123"), bcrypt.DefaultCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO users(id,username,role,is_active,password_hash)
+		VALUES ($1,$2,'admin',TRUE,$3)`, adminID, adminName, string(hash)); err != nil {
 		t.Fatal(err)
 	}
 	admin, token, err := store.Authenticate(ctx, adminName, "Admin-Password-123")
