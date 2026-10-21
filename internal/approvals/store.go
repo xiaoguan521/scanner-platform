@@ -34,6 +34,7 @@ type Scope struct {
 	ApprovalTicket string       `json:"approvalTicket"`
 	ExpiresAt      string       `json:"expiresAt"`
 	IsActive       bool         `json:"isActive"`
+	ExpiryState    string       `json:"expiryState"`
 	Status         string       `json:"status"`
 	ReviewNote     string       `json:"reviewNote"`
 }
@@ -144,8 +145,24 @@ func readScope(row interface{ Scan(...any) error }) (Scope, error) {
 	if err != nil {
 		return Scope{}, err
 	}
-	a.IsActive = a.Status == "APPROVED" && expires.After(time.Now())
+	a.ExpiryState = scopeExpiryState(a.Status, expires, time.Now())
+	a.IsActive = a.ExpiryState == "ACTIVE" || a.ExpiryState == "EXPIRING"
 	return a, nil
+}
+
+const scopeExpiryWarning = 7 * 24 * time.Hour
+
+func scopeExpiryState(status string, expires, now time.Time) string {
+	if status != "APPROVED" {
+		return "NOT_APPLICABLE"
+	}
+	if !expires.After(now) {
+		return "EXPIRED"
+	}
+	if !expires.After(now.Add(scopeExpiryWarning)) {
+		return "EXPIRING"
+	}
+	return "ACTIVE"
 }
 
 const scopeFields = "id,asset_id,cidr_or_host,max_targets,time_windows,requested_by,approved_by,approval_ticket,expires_at,status,review_note"
@@ -211,7 +228,7 @@ func (s *Store) RequestScope(ctx context.Context, actor string, input ScopeInput
 	}
 	return Scope{ID: id, AssetID: in.AssetID, CIDROrHost: address, MaxTargets: 1,
 		TimeWindows: in.TimeWindows, RequestedBy: actor, ApprovedBy: "", ApprovalTicket: "",
-		ExpiresAt: in.ExpiresAt, IsActive: false, Status: "PENDING", ReviewNote: ""}, nil
+		ExpiresAt: in.ExpiresAt, IsActive: false, ExpiryState: "NOT_APPLICABLE", Status: "PENDING", ReviewNote: ""}, nil
 }
 
 // UpdateScope replaces a request and resets its approval to PENDING. This
@@ -274,6 +291,7 @@ func (s *Store) UpdateScope(ctx context.Context, actor, id string, input ScopeIn
 	current.ApprovalTicket = ""
 	current.ReviewNote = ""
 	current.IsActive = false
+	current.ExpiryState = "NOT_APPLICABLE"
 	return current, nil
 }
 
@@ -334,6 +352,7 @@ func (s *Store) RevokeScope(ctx context.Context, actor, id string) (Scope, error
 	}
 	scope.Status = "REVOKED"
 	scope.IsActive = false
+	scope.ExpiryState = "NOT_APPLICABLE"
 	return scope, nil
 }
 
@@ -391,6 +410,7 @@ func (s *Store) ReviewScope(ctx context.Context, actor, id string, d Decision) (
 	scope.ApprovedBy = actor
 	scope.ApprovalTicket = strings.TrimSpace(d.ApprovalTicket)
 	scope.ReviewNote = d.Note
-	scope.IsActive = status == "APPROVED"
+	scope.ExpiryState = scopeExpiryState(status, expiry, time.Now())
+	scope.IsActive = scope.ExpiryState == "ACTIVE" || scope.ExpiryState == "EXPIRING"
 	return scope, nil
 }

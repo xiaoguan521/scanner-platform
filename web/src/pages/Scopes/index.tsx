@@ -7,6 +7,7 @@ import { CollectionNotice } from '../../api/CollectionNotice';
 import { useAuth } from '../../auth/AuthProvider';
 import { mockAssets, mockScopes } from '../../mock/data';
 import type { ApprovalDecision, AuthorizedScope, PortRequest, ReviewStatus, TimeWindow } from '../../types';
+import { filterScopesByExpiry, scopeExpiryLabel, scopeExpiryState, type ScopeExpiryFilter } from './expiry';
 
 const { Text } = Typography;
 const weekdays = [
@@ -39,6 +40,7 @@ export const ScopesPage: React.FC = () => {
   const [requestOpen, setRequestOpen] = useState(false);
   const [editingScope, setEditingScope] = useState<AuthorizedScope|null>(null);
   const [reviewTarget, setReviewTarget] = useState<ReviewTarget | null>(null);
+  const [expiryFilter, setExpiryFilter] = useState<ScopeExpiryFilter>('all');
   const [busy, setBusy] = useState(false);
   const [requestForm] = Form.useForm<ScopeForm>();
   const [reviewForm] = Form.useForm<ApprovalDecision>();
@@ -46,6 +48,14 @@ export const ScopesPage: React.FC = () => {
   const hostAssets = useMemo(() => assets.filter(asset => asset.kind === 'host'), [assets]);
   const scopeStatus = (scope: AuthorizedScope): ReviewStatus | 'REVOKED' =>
     scope.status ?? (scope.isActive ? 'APPROVED' : 'PENDING');
+  const now = Date.now();
+  const expiryCounts = useMemo(() => scopes.reduce((counts, scope) => {
+    const state = scopeExpiryState(scope, now);
+    if (state === 'EXPIRING') counts.expiring += 1;
+    if (state === 'EXPIRED') counts.expired += 1;
+    return counts;
+  }, { expiring: 0, expired: 0 }), [scopes, now]);
+  const visibleScopes = useMemo(() => filterScopesByExpiry(scopes, expiryFilter, now), [scopes, expiryFilter, now]);
 
   const requestScope = async (values: ScopeForm) => {
     if (!canRequest) return;
@@ -135,13 +145,22 @@ export const ScopesPage: React.FC = () => {
 
   return <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
     <CollectionNotice loading={loading || portsLoading} error={error || portsError} />
+    {expiryCounts.expired > 0
+      ? <Alert showIcon type="error" message={`有 ${expiryCounts.expired} 条已批准授权已过期`} description="过期授权不会被用于扫描；请重新申请并完成审批。" />
+      : expiryCounts.expiring > 0
+        ? <Alert showIcon type="warning" message={`有 ${expiryCounts.expiring} 条授权将在 7 天内到期`} description="请提前续期并重新完成审批，避免任务因授权失效而无法领取。" />
+        : null}
     <Alert showIcon type="warning" message="审批记录不等于扫描执行许可"
       description="当前只保存已登记主机 IP 的授权申请及端口人工审核结果。审批记录用于管理台账；早期开发模式中，任务按明确登记的端口和任务时间窗执行，跳过端口不会下发。当前仅模拟执行。" />
     <Card title="扫描授权范围与执行时间窗" extra={
-      <Button type="primary" icon={<PlusOutlined />} disabled={!canRequest}
-        onClick={() => setRequestOpen(true)}>申请范围授权</Button>
+      <Space>
+        <Select aria-label="授权期限筛选" value={expiryFilter} onChange={setExpiryFilter} style={{width:150}}
+          options={[{value:'all',label:'全部期限'},{value:'expiring',label:'7 天内到期'},{value:'expired',label:'已过期'}]} />
+        <Button type="primary" icon={<PlusOutlined />} disabled={!canRequest}
+          onClick={() => setRequestOpen(true)}>申请范围授权</Button>
+      </Space>
     }>
-      <Table<AuthorizedScope> dataSource={scopes} rowKey="id" loading={loading}
+      <Table<AuthorizedScope> dataSource={visibleScopes} rowKey="id" loading={loading}
         scroll={{ x: 1200 }} pagination={{ pageSize: 10 }}
         columns={[
           { title: '目标 IP', dataIndex: 'cidrOrHost', render: (v: string) => <Tag>{v}</Tag> },
@@ -160,7 +179,8 @@ export const ScopesPage: React.FC = () => {
           { title: '状态', render: (_: unknown, scope: AuthorizedScope) =>
             <Space direction="vertical">
               {renderDecision(scopeStatus(scope), {kind:'scope',id:scope.id,requestedBy:scope.requestedBy})}
-              {scopeStatus(scope) === 'APPROVED' && !scope.isActive && <Tag>已过期</Tag>}
+              {(() => { const expiry = scopeExpiryState(scope); return expiry !== 'NOT_APPLICABLE' &&
+                <Tag color={expiry === 'EXPIRED' ? 'error' : expiry === 'EXPIRING' ? 'warning' : 'success'}>{scopeExpiryLabel[expiry]}</Tag>; })()}
             </Space> },
           { title:'操作',width:200,fixed:'right',render:(_:unknown,scope:AuthorizedScope)=>{
             const status=scopeStatus(scope);

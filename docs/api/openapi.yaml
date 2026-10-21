@@ -3169,6 +3169,10 @@ components:
           format: date-time
         isActive:
           type: boolean
+        expiryState:
+          type: string
+          enum: [NOT_APPLICABLE, ACTIVE, EXPIRING, EXPIRED]
+          description: Server-derived approval expiry state; EXPIRING means the approval expires within seven days.
         status:
           type: string
           enum:

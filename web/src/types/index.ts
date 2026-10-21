@@ -87,6 +87,7 @@ export interface AuthorizedScope {
   approvalTicket: string;
   expiresAt: string;
   isActive: boolean;
+  expiryState?: 'NOT_APPLICABLE' | 'ACTIVE' | 'EXPIRING' | 'EXPIRED';
   status?: ReviewStatus | 'REVOKED';
   reviewNote?: string;
 }

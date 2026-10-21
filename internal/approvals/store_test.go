@@ -51,7 +51,7 @@ func TestScopeEditResetsApprovalAndRevocationIsAudited(t *testing.T) {
 		t.Fatal(err)
 	}
 	scope, err = store.ReviewScope(ctx, ops.ID, scope.ID, Decision{Decision: "APPROVE", ApprovalTicket: "SEC-100", Note: "approved"})
-	if err != nil || scope.Status != "APPROVED" {
+	if err != nil || scope.Status != "APPROVED" || scope.ExpiryState != "EXPIRING" {
 		t.Fatalf("approve scope=%+v err=%v", scope, err)
 	}
 	if err := assetStore.Delete(ctx, admin.ID, asset.ID); !errors.Is(err, assets.ErrInUse) {

@@ -31,7 +31,7 @@ export function useCollection<K extends keyof Resources>(name: K, demoFixtures: 
     });
     };
     load();
-    const pollInterval = name === 'assets' ? 10_000 : ['tasks','findings','nodes','rules','schedules','rule-jobs','custom-rules'].includes(name) ? 1000 : undefined;
+    const pollInterval = name === 'assets' ? 10_000 : name === 'scopes' ? 60_000 : ['tasks','findings','nodes','rules','schedules','rule-jobs','custom-rules'].includes(name) ? 1000 : undefined;
     const timer = pollInterval === undefined ? undefined : window.setInterval(load, pollInterval);
     return () => {
       controller.abort();
