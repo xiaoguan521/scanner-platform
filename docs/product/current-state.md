@@ -34,6 +34,8 @@
 
 业务页面统一通过 Server API 读取与写入，API 失败只显示错误状态，不回退到浏览器数据；演示种子和 `VITE_DATA_MODE` 已移除，验证必须使用隔离靶机或空数据库。资产、任务、漏洞、报告、节点、规则、知识库、业务组、导入历史、通知、授权范围和端口审批清册已经使用 Server 端分页与主要筛选；审计等低频列表仍保留兼容的有界清单响应。API 失败响应现统一为 `code/message/hint/request_id`，并保留 `error` 兼容别名；请求编号同时通过 `X-Request-ID` 返回，见 `docs/api/error-codes.md`。OpenAPI DTO 和前端类型仍手工维护，尚未将分页参数统一覆盖所有列表或引入 OpenAPI 类型生成。
 
+发布包工作流默认只安装并打包 SHA-256 固定的 Nuclei 与 Trivy；手动触发时显式选择 `include_zap=true` 才会额外下载和打包被动分析用途的 ZAP。该选项不影响本地 SSH/Trivy/Nuclei 主链路。
+
 ## 规划阶段对照
 
 | 规划阶段 | 现状 | 主要差距 |

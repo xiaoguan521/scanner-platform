@@ -2,6 +2,12 @@ name: Build & Release Artifacts
 
 on:
   workflow_dispatch:
+    inputs:
+      include_zap:
+        description: 'Include the optional passive ZAP engine in platform packages'
+        required: false
+        default: false
+        type: boolean
   push:
     tags:
       - 'v*'
@@ -117,6 +123,7 @@ jobs:
         env:
           TARGET_GOOS: ${{ matrix.goos }}
           TARGET_GOARCH: ${{ matrix.goarch }}
+          INCLUDE_ZAP: ${{ github.event_name == 'workflow_dispatch' && inputs.include_zap == true }}
         run: |
           set -euo pipefail
           ext=""
@@ -124,15 +131,40 @@ jobs:
             ext=".exe"
           fi
           python3 scripts/install_engines.py \
+            --engine core \
             --platform "$TARGET_GOOS" \
             --arch "$TARGET_GOARCH" \
             --destination build_output/bin
           test -s "build_output/bin/nuclei${ext}"
           test -s "build_output/bin/trivy${ext}"
-          test -s build_output/bin/zap/zap-2.17.0.jar
           test -s build_output/bin/nuclei.installed.json
           test -s build_output/bin/trivy.installed.json
+
+      - name: Install optional SHA-256-pinned ZAP engine
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.include_zap == true }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/install_engines.py \
+            --engine zap \
+            --platform linux \
+            --arch amd64 \
+            --destination build_output/bin
+          test -s build_output/bin/zap/zap-2.17.0.jar
           test -s build_output/bin/zap.installed.json
+
+      - name: Verify optional engine selection
+        shell: bash
+        env:
+          INCLUDE_ZAP: ${{ github.event_name == 'workflow_dispatch' && inputs.include_zap == true }}
+        run: |
+          set -euo pipefail
+          if [[ "$INCLUDE_ZAP" == "true" ]]; then
+            test -s build_output/bin/zap/zap-2.17.0.jar
+          else
+            test ! -e build_output/bin/zap
+            test ! -e build_output/bin/zap.installed.json
+          fi
 
       - name: Download reviewed frontend bundle
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -233,7 +265,7 @@ jobs:
           prerelease: true
           body: |
             Early-development packages for local, single-host validation.
-            Each supported archive contains the Server, Updater, Worker, Server-mode web UI, and SHA-256-pinned Nuclei, Trivy, and ZAP engines. The archive also contains a quickstart README and checksum sidecar.
+            Each supported archive contains the Server, Updater, Worker, Server-mode web UI, and SHA-256-pinned Nuclei and Trivy engines. ZAP is included only when include_zap=true is selected for a manual workflow run. The archive also contains a quickstart README and checksum sidecar.
             Vulnerability data is available from the manually triggered Build Offline Vulnerability Data workflow as a separate downloadable artifact. It includes the built-in Nuclei HTTP baseline and Trivy vulnerability/Java databases; it does not install the full upstream Nuclei template library.
-            ZAP requires Java 17 or newer on PATH. The local Server, Worker, and Updater currently communicate over loopback; these packages are not a hardened multi-host production deployment.
+            When included, ZAP requires Java 17 or newer on PATH. The local Server, Worker, and Updater currently communicate over loopback; these packages are not a hardened multi-host production deployment.
             Publish this draft only after reviewing the validation record and target-platform requirements.

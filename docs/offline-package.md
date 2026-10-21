@@ -2,7 +2,7 @@
 
 GitHub Actions 的 `Build & Release Artifacts` 工作流提供 Linux amd64/arm64、macOS amd64/arm64 和 Windows amd64 压缩包。Windows arm64 暂不打包，因为当前锁定的 Nuclei 与 Trivy 版本没有该平台的官方二进制及 SHA-256 校验值。
 
-每个压缩包包含平台 Server、Worker、Updater、Server 模式网页（`web/dist/`）、Nuclei、Trivy、裁剪为被动分析用途的 ZAP、Linux 输入采集脚本、引擎版本/来源/许可证元数据，以及本文档。所有三个引擎的归档都按 `config/engines.lock.json` 中固定的 SHA-256 校验；压缩包另附整体 SHA-256 文件。ZAP 使用 Java 17 或更新版本，目标机需要预先安装 Java 并确保 `java` 在 PATH 中。
+每个压缩包包含平台 Server、Worker、Updater、Server 模式网页（`web/dist/`）、Nuclei、Trivy、Linux 输入采集脚本、引擎版本/来源/许可证元数据，以及本文档。Nuclei 和 Trivy 的归档按 `config/engines.lock.json` 中固定的 SHA-256 校验；手动触发 `Build & Release Artifacts` 时选择 `include_zap=true` 才会额外打包裁剪为被动分析用途的 ZAP。压缩包另附整体 SHA-256 文件。启用 ZAP 时需要 Java 17 或更新版本，目标机需要预先安装 Java 并确保 `java` 在 PATH 中。
 
 ## 准备漏洞库
 

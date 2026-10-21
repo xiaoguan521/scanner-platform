@@ -36,7 +36,7 @@ web-build:
 
 test:
 	$(GO) test -race ./...
-	PYTHONPATH=scripts python3 -m unittest scripts.test_collect_linux_inputs scripts.test_verify_compose_security
+	PYTHONPATH=scripts python3 -m unittest scripts.test_collect_linux_inputs scripts.test_verify_compose_security scripts.test_workflow_contracts
 
 lint:
 	@command -v $(GOFMT) >/dev/null 2>&1 || { echo 'gofmt unavailable' >&2; exit 1; }

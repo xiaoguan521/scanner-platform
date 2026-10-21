@@ -732,6 +732,11 @@
 
 证据：`python3 -m unittest scripts/test_verify_engine_flags.py`（2 项通过）、`python3 -m py_compile scripts/install_engines.py scripts/verify_engine_flags.py scripts/test_verify_engine_flags.py`、本机 `python3 scripts/verify_engine_flags.py`（Nuclei 23 项、Trivy 20 项通过，ZAP 明确跳过）；未执行任何扫描。
 
+## 2026-10-21：发布包 ZAP 可选化
+
+- `Build & Release Artifacts` 工作流现在默认只安装并打包 SHA-256 固定的 Nuclei 与 Trivy；手动触发时显式设置 `include_zap=true` 才运行 ZAP 下载和制品校验，避免 SSH/Trivy/Nuclei 主链路无条件下载 ZAP。
+- 同步离线包说明；新增无网络工作流契约测试，确认核心引擎、ZAP opt-in、未启用时目录不存在和包路径唯一。
+
 ## 2026-10-21：节点生命周期首阶段与 PostgreSQL 迁移回归
 
 - 新增 PostgreSQL 迁移 `0017_node_lifecycle.sql`，SQLite 同步创建节点生命周期和事件表。管理员可登记/吊销明确的 Worker 或 Updater 节点；心跳将已登记节点置为 `ONLINE`，十秒无心跳后由 Server Tick 置为 `OFFLINE`，恢复时记录 `RECOVERED`，重复刷新不会重复生成事件；登记/吊销写入审计。
