@@ -50,7 +50,7 @@ jobs:
         run: make test
 
   web:
-    name: Frontend typecheck & build
+    name: Frontend tests, typecheck & build
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -69,12 +69,10 @@ jobs:
       - name: Install locked frontend dependencies
         run: npm ci --prefix web
 
-      - name: Typecheck and build demo UI
-        run: npm run build --prefix web
+      - name: Run frontend contract tests
+        run: node --test $(find web/src -name '*.test.mjs' -print)
 
-      - name: Typecheck and build Server-mode UI
-        env:
-          VITE_DATA_MODE: server
+      - name: Typecheck and build Server UI
         run: npm run build --prefix web
 
   build-check:
