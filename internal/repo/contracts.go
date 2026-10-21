@@ -5,9 +5,10 @@ import (
 	"time"
 )
 
-// These are storage contracts only. SQL migrations, credentials, transactions
-// and backends are not connected in Phase 0. Only sec-server may own a
-// production Repository; Worker and Updater communicate via authenticated API.
+// These are storage contracts only. Only sec-server may own a production
+// Repository; Worker and Updater communicate via authenticated API. The
+// PostgreSQL queue adapter implements these contracts without exposing a
+// database handle to either execution process.
 
 type Asset struct {
 	ID            string
@@ -29,11 +30,14 @@ type AuthorizedScope struct {
 }
 
 type ScanTask struct {
-	ID           string
-	ScopeID      string
-	Status       string
-	HardDeadline time.Time
-	CreatedBy    string
+	ID                string
+	ScopeID           string
+	Status            string
+	HardDeadline      time.Time
+	CreatedBy         string
+	Engines           []string
+	Targets           []string
+	PinnedRuleVersion string
 }
 
 type TaskChunk struct {
@@ -42,6 +46,7 @@ type TaskChunk struct {
 	Status            string
 	WorkerNodeID      string
 	PinnedRuleVersion string
+	Targets           []string
 	LeaseExpiresAt    time.Time
 	CompletedFully    bool
 }

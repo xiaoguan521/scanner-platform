@@ -52,9 +52,9 @@
 
 ## 2026-10-21：PostgreSQL 连接与迁移基础
 
-`internal/repo/postgres.go` 将 PostgreSQL 迁移脚本嵌入 Server，并提供受保护 DSN 文件读取、连接池 Ping、单连接 advisory lock、空公共 schema 检查、未知/断档迁移日志拒绝和按版本执行。`lab/orbstack-target/compose-postgres.yaml` 提供只绑定回环地址的 PostgreSQL 16.4 隔离夹具，可通过 `POSTGRES_DSN_FILE=/path/to/dsn make migrate-postgres` 对新建数据库执行；命令不会创建数据库、写入演示数据或切换当前 SQLite Server。当前产品 Repository 仍是 SQLite，完整 PostgreSQL 账号、资产、审批、任务和结果适配器以及生产启动选择仍待后续工作。
+`internal/repo/postgres.go` 将 PostgreSQL 迁移脚本嵌入 Server，并提供受保护 DSN 文件读取、连接池 Ping、单连接 advisory lock、空公共 schema 检查、未知/断档迁移日志拒绝和按版本执行。`internal/repo/postgres_queue.go` 已补 Server 侧核心任务队列适配器：创建任务、`FOR UPDATE SKIP LOCKED` 领取、租约续期、完成和按规则版本统计，并在适配器边界拒绝主机名、CIDR、未指定/组播地址；`internal/account/postgres.go` 和 `internal/assets/postgres.go` 已补账号会话、资产登记、端口申请、删除和可达性核心适配。`lab/orbstack-target/compose-postgres.yaml` 提供只绑定回环地址的 PostgreSQL 16.4 隔离夹具，可通过 `POSTGRES_DSN_FILE=/path/to/dsn make migrate-postgres` 对新建数据库执行；命令不会创建数据库、写入演示数据或切换当前 SQLite Server。当前产品 Repository 仍是 SQLite，PostgreSQL 审批、资产导入/业务组扩展、任务投影、发现项、报告适配器以及生产启动选择仍待后续工作。
 
-整体推进顺序见 [产品开发路线图](./implementation-roadmap.md)：单一真实 API 通道、主要语义组件和系统管理闭环已经收敛，PostgreSQL 连接配置与嵌入式迁移执行基础已补上，节点协议已有独立 TLS 监听器；下一步补三条核心旅程的真实浏览器验收，再把迁移基础接入完整 Repository 运行时、补 mTLS/证书轮换和其他消息渠道。授权范围页已按服务端 `expiryState` 提供七天内到期/已过期提醒和筛选；通知中心将授权、接受风险和扫描失败压缩为安全摘要，读取不会触发探测或扫描；管理员可以让相同摘要通过默认关闭的 Webhook 异步投递，失败会限次重试并保留状态，读取不会返回响应正文；审计查询、任务详情/日志、暂停/恢复和计划运行历史已经提供安全只读投影；资产 CSV 预览/确认已经完成；报告页已经保留服务端历史和异步作业状态，节点、规则版本、规则操作和自定义规则清册也已改为有界分页，刷新或离开页面后仍可查看已有作业。
+整体推进顺序见 [产品开发路线图](./implementation-roadmap.md)：单一真实 API 通道、主要语义组件和系统管理闭环已经收敛，PostgreSQL 连接配置、迁移执行基础和核心任务队列适配器已补上，节点协议已有独立 TLS 监听器；下一步补账号/资产/审批与完整任务投影的 PostgreSQL 适配，再接入 Server 启动选择，之后补三条核心旅程的 PostgreSQL 浏览器回归、mTLS/证书轮换和其他消息渠道。授权范围页已按服务端 `expiryState` 提供七天内到期/已过期提醒和筛选；通知中心将授权、接受风险和扫描失败压缩为安全摘要，读取不会触发探测或扫描；管理员可以让相同摘要通过默认关闭的 Webhook 异步投递，失败会限次重试并保留状态，读取不会返回响应正文；审计查询、任务详情/日志、暂停/恢复和计划运行历史已经提供安全只读投影；资产 CSV 预览/确认已经完成；报告页已经保留服务端历史和异步作业状态，节点、规则版本、规则操作和自定义规则清册也已改为有界分页，刷新或离开页面后仍可查看已有作业。
 
 ## 2026-10-21：总览风险评分、趋势与下钻
 

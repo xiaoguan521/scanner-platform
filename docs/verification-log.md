@@ -1,5 +1,19 @@
 # Verification log
 
+## 2026-10-21：PostgreSQL 核心任务队列适配器
+
+- 新增 `internal/repo/postgres_queue.go`，实现 Server 侧 `TaskStore`/`LeaseRegistry` 的 PostgreSQL 版本：任务和精确数字 IP:端口目标写入、`FOR UPDATE SKIP LOCKED` 单块领取、租约续期、完整/失败完成和按规则版本统计。
+- 适配器在边界拒绝主机名、CIDR、未指定/组播地址、非法端口、空引擎和空目标；Worker/Updater 仍只有节点 API 凭据，不能直接取得数据库连接。
+- 默认单测覆盖输入边界和空连接；在隔离 PostgreSQL 夹具上运行 `POSTGRES_DSN_FILE="$PWD/runtime/postgres/dsn" go test -tags lab ./internal/repo -run '^TestPostgresTaskStoreLab$' -count=1`，实际验证创建、领取、续租、完成和运行计数。
+- 该适配器尚未替换当前 SQLite Server；账号、资产、审批、完整任务投影、发现项/报告适配器和启动选择仍待完成，不能把本记录解释为平台已切换 PostgreSQL。
+
+## 2026-10-21：PostgreSQL 账号与资产核心适配器
+
+- 新增 `internal/account/postgres.go` 和 `internal/assets/postgres.go`，覆盖账号认证/会话/管理员变更，以及主机资产登记、编辑、端口申请、删除、分页搜索和可达性检查；连接池仍只由 Server 持有。
+- 新增迁移 `0007_asset_catalog.sql`，补充业务组与 CSV 导入摘要所需的基础表；迁移目录和只读 schema inventory 已更新为 30 张业务表加 journal、七个版本。
+- 在隔离 PostgreSQL 夹具上分别运行 `POSTGRES_DSN_FILE="$PWD/runtime/postgres/dsn" go test -tags lab ./internal/account -run '^TestPostgresAccountRepositoryLab$' -count=1` 和 `POSTGRES_DSN_FILE="$PWD/runtime/postgres/dsn" go test -tags lab ./internal/assets -run '^TestPostgresAssetRepositoryLab$' -count=1`，实际验证管理员登录/会话失效、用户生命周期、资产登记/端口/可达性/编辑/删除。
+- 这些适配器仍未接入当前 Server 启动路径；审批、导入/业务组扩展、任务投影、发现项/报告和 PostgreSQL 后端选择仍待完成。
+
 ## 2026-10-21：独立节点 HTTPS 监听器
 
 - Server 新增独立的 `--node-listen`、`--node-tls-cert` 和 `--node-tls-key` 参数；监听地址必须是明确数字 IP:端口，拒绝主机名、未指定地址、组播地址和非法端口。网页仍使用单独的数字回环监听地址。
@@ -11,7 +25,7 @@
 
 - OrbStack 隔离靶机已重新构建并运行，SSH 与 HTTP 监听端口均完成本机连通性检查；靶机仅作为明确授权的扫描目标使用。
 - PostgreSQL 16.4 夹具已启动并通过 `pg_isready` 健康检查，DSN 保存在被 Git 忽略且 owner-only 的 `runtime/postgres/dsn` 中，密码未写入仓库或日志。
-- 在该隔离数据库上运行 `POSTGRES_DSN_FILE="$PWD/runtime/postgres/dsn" make migrate-postgres`，`0001_core` 至 `0006_task_pause` 六个迁移全部应用，并通过只读查询核对 `schema_migrations`。
+- 在该隔离数据库上运行 `POSTGRES_DSN_FILE="$PWD/runtime/postgres/dsn" make migrate-postgres`，`0001_core` 至 `0007_asset_catalog` 七个迁移全部应用，并通过只读查询核对 `schema_migrations`。
 - 这次验证只证明靶机连通性和 PostgreSQL 迁移执行；平台业务运行时仍使用 SQLite，完整 PostgreSQL Repository、Server 启动选择和生产节点部署仍未完成。
 
 ## 2026-10-21：隔离 PostgreSQL 验证夹具
