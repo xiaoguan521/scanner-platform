@@ -100,6 +100,21 @@ func NewRuntimeHandler(store *repo.RuntimeStore, fallback http.Handler, uiDir st
 	registerFindingRetestHandlers(mux, store, ui, actor)
 	registerRuleHandlers(mux, store, ui, actor)
 	mux.HandleFunc("GET /api/v1/tasks", ui(false, func(w http.ResponseWriter, r *http.Request) {
+		if query, paged, ok := parseTaskListQuery(r); paged {
+			if !ok {
+				bad(w, http.StatusBadRequest, "invalid_task_list_query")
+				return
+			}
+			page, err := store.ListRuntimeTasksPage(r.Context(), query)
+			if errors.Is(err, repo.ErrInvalidTaskListQuery) {
+				bad(w, http.StatusBadRequest, "invalid_task_list_query")
+				return
+			}
+			if !runtimeStoreError(w, err) {
+				runtimeJSON(w, http.StatusOK, TaskPageResponse{Items: page.Items, Total: page.Total, Page: page.Page, PageSize: page.PageSize, StatusCounts: page.StatusCounts})
+			}
+			return
+		}
 		archived := r.URL.Query().Get("archived")
 		if archived != "" && archived != "true" && archived != "false" && archived != "all" {
 			bad(w, http.StatusBadRequest, "invalid_archive_filter")

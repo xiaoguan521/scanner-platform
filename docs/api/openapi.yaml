@@ -1121,7 +1121,7 @@ paths:
           description: Already reviewed or quarantined
   "/api/v1/tasks":
     get:
-      summary: Authenticated local tasks with an optional archive-state filter
+      summary: Authenticated local tasks with archive, filter and pagination controls
       parameters:
       - in: query
         name: archived
@@ -1131,23 +1131,65 @@ paths:
           enum: ["true", "false", "all"]
           default: all
         description: true returns archived tasks, false returns active tasks, and all or omitted returns both.
+      - in: query
+        name: page
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          default: 1
+        description: Enables the bounded page response when any list query is supplied.
+      - in: query
+        name: page_size
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+      - in: query
+        name: q
+        required: false
+        schema:
+          type: string
+          maxLength: 160
+        description: Searches task ID, explicit targets and the Worker input path.
+      - in: query
+        name: status
+        required: false
+        schema:
+          type: string
+          enum: [PENDING, WAITING_WINDOW, RUNNING, PAUSED, PAUSED_WINDOW, COMPLETED, FAILED, CANCELED]
+      - in: query
+        name: engine
+        required: false
+        schema:
+          type: string
+          enum: [auto, port-probe, nuclei, trivy, zap, synthetic]
+      - in: query
+        name: sort
+        required: false
+        schema:
+          type: string
+          enum: [created_at, -created_at, status, -status, engine, -engine]
+          default: -created_at
       responses:
         '200':
-          description: Local operation result
+          description: Local operation result. Calls without list query parameters retain the legacy complete response; filtered calls return a bounded page and status counts.
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  items:
-                    type: array
+                oneOf:
+                - type: object
+                  properties:
                     items:
-                      "$ref": "#/components/schemas/ScanTask"
-                  total:
-                    type: integer
-                required:
-                - items
-                - total
+                      type: array
+                      items:
+                        "$ref": "#/components/schemas/ScanTask"
+                    total:
+                      type: integer
+                  required: [items, total]
+                - "$ref": "#/components/schemas/TaskPage"
       security:
       - sessionCookie: []
     post:
@@ -3117,6 +3159,29 @@ components:
           type: integer
           minimum: 1
           maximum: 100
+    TaskPage:
+      type: object
+      required: [items, total, page, pageSize, statusCounts]
+      properties:
+        items:
+          type: array
+          items:
+            "$ref": "#/components/schemas/ScanTask"
+        total:
+          type: integer
+          minimum: 0
+        page:
+          type: integer
+          minimum: 1
+        pageSize:
+          type: integer
+          minimum: 1
+          maximum: 100
+        statusCounts:
+          type: object
+          additionalProperties:
+            type: integer
+            minimum: 0
     LoginRequest:
       type: object
       required:

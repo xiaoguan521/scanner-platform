@@ -24,6 +24,13 @@ type PageListResponse[T any] struct {
 	Page     int `json:"page"`
 	PageSize int `json:"pageSize"`
 }
+type TaskPageResponse struct {
+	Items        []taskflow.Task `json:"items"`
+	Total        int             `json:"total"`
+	Page         int             `json:"page"`
+	PageSize     int             `json:"pageSize"`
+	StatusCounts map[string]int  `json:"statusCounts"`
+}
 type APIError struct {
 	Error   string `json:"error"`
 	Message string `json:"message"`

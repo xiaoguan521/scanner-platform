@@ -257,42 +257,11 @@ func readRuntimeTask(row rowScanner) (taskflow.Task, error) {
 }
 
 func (s *RuntimeStore) ListRuntimeTasks(ctx context.Context) ([]taskflow.Task, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+taskColumns+` FROM scan_tasks ORDER BY created_at DESC,id`)
-	if err != nil {
-		return nil, fmt.Errorf("list tasks: %w", err)
-	}
-	defer rows.Close()
-	items := []taskflow.Task{}
-	for rows.Next() {
-		item, err := readRuntimeTask(rows)
-		if err != nil {
-			return nil, err
-		}
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	counts, err := s.runtimeTaskFindingCounts(ctx)
+	page, err := s.ListRuntimeTasksPage(ctx, TaskListQuery{Page: 1, Archived: "all"})
 	if err != nil {
 		return nil, err
 	}
-	for index := range items {
-		items[index].FindingCount = counts[items[index].ID]
-	}
-	progress, err := s.runtimeTaskProgress(ctx)
-	if err != nil {
-		return nil, err
-	}
-	for index := range items {
-		if current, ok := progress[items[index].ID]; ok {
-			items[index].Progress = &current
-		}
-	}
-	return items, nil
+	return page.Items, nil
 }
 
 // GetRuntimeTask returns the same safe task projection as the task list, but

@@ -28,7 +28,7 @@ function validateProbeRanges(text?:string):void{
 export const TasksPage:React.FC=()=>{
   const {user}=useAuth();const canWrite=user?.role==='admin'||user?.role==='security_engineer';const canDelete=user?.role==='admin';
   const [showArchived,setShowArchived]=useState(false);
-  const {data:tasks,setData:setTasks,loading,error}=useCollection('tasks', showArchived?'?archived=true':'?archived=false');
+  const [tasks,setTasks]=useState<ScanTask[]>([]);const [taskLoading,setTaskLoading]=useState(true);const [taskError,setTaskError]=useState<string|null>(null);const [taskPage,setTaskPage]=useState(1);const [taskPageSize,setTaskPageSize]=useState(10);const [taskTotal,setTaskTotal]=useState(0);const [taskStatusCounts,setTaskStatusCounts]=useState<Record<string,number>>({});const [taskRevision,setTaskRevision]=useState(0);
   const {data:assets}=useCollection('assets');
   const {data:scanPlans,setData:setScanPlans,loading:scanPlansLoading,error:scanPlansError}=useCollection('scan-plans');
   const {data:customRules}=useCollection('custom-rules');
@@ -50,6 +50,19 @@ export const TasksPage:React.FC=()=>{
     if(!wizard||!selectedAsset||!policy)return null;
     try{return previewProbePorts(selectedAsset,{preset:portPreset,ranges:['custom','common-and-custom'].includes(portPreset)?parsePortRanges(watchedValues?.portRanges):[],exclusions:parsePortRanges(watchedValues?.portExclusions)},policy);}catch{return null;}
   },[wizard,selectedAsset,policy,portPreset,watchedValues?.portRanges,watchedValues?.portExclusions]);
+  useEffect(()=>{
+    const controller=new AbortController();let inFlight=false;
+    const load=()=>{
+      if(inFlight)return;
+      inFlight=true;setTaskLoading(true);
+      apiClient.tasksPage(taskPage,taskPageSize,{search:taskFilter,status:statusFilter,engine:engineFilter,archived:showArchived?'true':'false'},controller.signal).then(result=>{
+        if(!controller.signal.aborted){setTasks(result.items);setTaskTotal(result.total);setTaskStatusCounts(result.statusCounts);setTaskError(null);}
+      }).catch(cause=>{if(!controller.signal.aborted){setTasks([]);setTaskTotal(0);setTaskStatusCounts({});setTaskError(cause instanceof Error?cause.message:'扫描任务加载失败');}}).finally(()=>{inFlight=false;if(!controller.signal.aborted)setTaskLoading(false);});
+    };
+    load();const timer=window.setInterval(load,1000);
+    return()=>{controller.abort();window.clearInterval(timer);};
+  },[taskPage,taskPageSize,taskFilter,statusFilter,engineFilter,showArchived,taskRevision]);
+  useEffect(()=>{if(taskPage!==1)setTaskPage(1)},[taskFilter,statusFilter,engineFilter,showArchived]);
   useEffect(()=>{setWizardStep(0);},[engine,mode]);
   const nextWizardStep=async()=>{
     try{
@@ -66,14 +79,6 @@ export const TasksPage:React.FC=()=>{
     const target=(a.address.includes(':')?'['+a.address+']':a.address)+':'+item.port;
     return {value:target,label:target+'（已审批）'};
   }));
-  const filteredTasks=useMemo(()=>tasks.filter(task=>{
-    if(showArchived?!task.archived:Boolean(task.archived))return false;
-    const query=taskFilter.trim().toLowerCase();
-    const targetText=task.chunks?.flatMap(chunk=>chunk.targets).join(' ')??'';
-    return (!query||`${task.id} ${targetText} ${task.inputPath??''}`.toLowerCase().includes(query))&&
-      (statusFilter==='all'||task.status===statusFilter)&&
-      (engineFilter==='all'||task.engines?.[0]===engineFilter);
-  }),[tasks,taskFilter,statusFilter,engineFilter,showArchived]);
   useEffect(()=>{if(engine==='port-probe'&&mode==='schedule')form.setFieldValue('mode','now');},[engine,mode,form]);
   useEffect(()=>{
     const controller=new AbortController();
@@ -131,13 +136,13 @@ export const TasksPage:React.FC=()=>{
           const saved=await saveSchedule(scheduleInput);setSchedules(prev=>[saved,...prev]);
           message.success('定时任务已保存，到点由 Server 创建任务');
         }
-      }else{const task=await createTask(input);setTasks(prev=>[task,...prev]);message.success(task.status==='WAITING_WINDOW'?'已创建，等待允许的时间窗':'任务已入队');}
+      }else{const task=await createTask(input);setTaskRevision(value=>value+1);message.success(task.status==='WAITING_WINDOW'?'已创建，等待允许的时间窗':'任务已入队');}
       setOpen(false);setEditingSchedule(null);form.resetFields();
     }catch(e){message.error(e instanceof Error?e.message:'创建失败');}finally{setBusy(false);}
   };
-  const stop=async(id:string)=>{try{await cancelTask(id);setTasks(prev=>prev.map(t=>t.id===id?{...t,status:'CANCELED'}:t));message.success('任务已取消，不会写入成功结果');}catch(e){message.error(String(e));}};
-  const pause=async(task:ScanTask)=>Modal.confirm({title:'暂停扫描任务',content:`暂停 ${task.id} 后，Worker 会在下一次心跳停止执行，任务不会因时间窗自动恢复。之后可在详情中手动恢复。`,okText:'暂停',cancelText:'继续执行',onOk:async()=>{try{await pauseTask(task.id);setTasks(prev=>prev.map(item=>item.id===task.id?{...item,status:'PAUSED'}:item));setDetailTask(prev=>prev?.id===task.id?{...prev,status:'PAUSED'}:prev);message.success('任务已暂停');}catch(e){message.error(e instanceof Error?e.message:String(e));throw e;}}});
-  const resume=async(task:ScanTask)=>{try{const updated=await resumeTask(task.id);setTasks(prev=>prev.map(item=>item.id===task.id?{...item,status:updated.status}:item));setDetailTask(prev=>prev?.id===task.id?{...prev,status:updated.status}:prev);message.success('任务已恢复到队列，Server 会重新校验时间窗和规则状态');}catch(e){message.error(e instanceof Error?e.message:String(e));}};
+  const stop=async(id:string)=>{try{await cancelTask(id);setTaskRevision(value=>value+1);message.success('任务已取消，不会写入成功结果');}catch(e){message.error(String(e));}};
+  const pause=async(task:ScanTask)=>Modal.confirm({title:'暂停扫描任务',content:`暂停 ${task.id} 后，Worker 会在下一次心跳停止执行，任务不会因时间窗自动恢复。之后可在详情中手动恢复。`,okText:'暂停',cancelText:'继续执行',onOk:async()=>{try{await pauseTask(task.id);setTaskRevision(value=>value+1);setDetailTask(prev=>prev?.id===task.id?{...prev,status:'PAUSED'}:prev);message.success('任务已暂停');}catch(e){message.error(e instanceof Error?e.message:String(e));throw e;}}});
+  const resume=async(task:ScanTask)=>{try{const updated=await resumeTask(task.id);setTaskRevision(value=>value+1);setDetailTask(prev=>prev?.id===task.id?{...prev,status:updated.status}:prev);message.success('任务已恢复到队列，Server 会重新校验时间窗和规则状态');}catch(e){message.error(e instanceof Error?e.message:String(e));}};
   const openTaskDetail=(task:ScanTask)=>{setDetailTask(task);setDetailLogs([]);setDetailError('');};
   const downloadTaskResult=async(format:'json'|'csv')=>{
     if(!detailTask)return;
@@ -148,8 +153,8 @@ export const TasksPage:React.FC=()=>{
       message.success(`任务结果已导出为 ${format.toUpperCase()}`);
     }catch(cause){message.error(cause instanceof Error?cause.message:'任务结果导出失败');}finally{setDetailExporting(null);}
   };
-  const setArchived=async(id:string,archived:boolean)=>{try{if(archived)await archiveTask(id);else await restoreTask(id);setTasks(prev=>prev.filter(task=>task.id!==id));message.success(archived?'任务已归档':'任务已恢复到清册');}catch(e){message.error(e instanceof Error?e.message:String(e));}};
-  const removeTask=(task:ScanTask)=>Modal.confirm({title:'彻底删除扫描任务',content:`将永久删除任务 ${task.id}。仅允许删除已结束且没有关联发现项的任务；此操作不可撤销，已生成报告快照和审计记录会保留。`,okText:'彻底删除',okButtonProps:{danger:true},cancelText:'取消',onOk:async()=>{try{await deleteTask(task.id);setTasks(prev=>prev.filter(item=>item.id!==task.id));message.success('扫描任务已彻底删除');}catch(e){message.error(e instanceof Error?e.message:String(e));throw e;}}});
+  const setArchived=async(id:string,archived:boolean)=>{try{if(archived)await archiveTask(id);else await restoreTask(id);setTaskRevision(value=>value+1);message.success(archived?'任务已归档':'任务已恢复到清册');}catch(e){message.error(e instanceof Error?e.message:String(e));}};
+  const removeTask=(task:ScanTask)=>Modal.confirm({title:'彻底删除扫描任务',content:`将永久删除任务 ${task.id}。仅允许删除已结束且没有关联发现项的任务；此操作不可撤销，已生成报告快照和审计记录会保留。`,okText:'彻底删除',okButtonProps:{danger:true},cancelText:'取消',onOk:async()=>{try{await deleteTask(task.id);setTaskRevision(value=>value+1);message.success('扫描任务已彻底删除');}catch(e){message.error(e instanceof Error?e.message:String(e));throw e;}}});
   const openCreate=(selectedMode:'now'|'schedule')=>{
     setEditingSchedule(null);setWizardStep(0);
     form.resetFields();
@@ -183,7 +188,7 @@ export const TasksPage:React.FC=()=>{
     return `${task.completedChunks} / ${task.totalChunks}`;
   };
   return <div style={{display:'flex',flexDirection:'column',gap:16}}>
-    <CollectionNotice loading={loading||scheduleLoading||scanPlansLoading} error={error||scheduleError||scanPlansError}/>
+    <CollectionNotice loading={taskLoading||scheduleLoading||scanPlansLoading} error={taskError||scheduleError||scanPlansError}/>
     <Alert type="info" showIcon message="自动综合扫描" description="选择一台已登记主机并填写端口范围或排除端口，平台会并发探测范围内的 TCP 端口，再对开放的 HTTP(S) 服务自动执行只读基线和选中的自定义规则。Worker 配置了该主机的 SSH 只读档案、known_hosts 和密钥文件或 SSH Agent，且 SSH 端口包含在本次范围时，还会临时采集 Linux 软件包快照并用本地 Trivy 漏洞库分析。如还配置了 Java/Go 应用的具体部署目录，将逐个采集支持的产物并分析其依赖。SSH 凭据和部署目录只留在 Worker。"/>
     <Card title="扫描任务" extra={<Space wrap>
       <Button type="primary" icon={<PlusOutlined/>} disabled={!canWrite} onClick={()=>openCreate('now')}>创建扫描任务</Button>
@@ -194,9 +199,9 @@ export const TasksPage:React.FC=()=>{
         <Select value={statusFilter} onChange={setStatusFilter} style={{width:150}} options={[{value:'all',label:'所有状态'},...Object.entries(taskStatusMeta).map(([value,meta])=>({value,label:meta.label}))]}/>
         <Select value={engineFilter} onChange={setEngineFilter} style={{width:180}} options={[{value:'all',label:'所有扫描方案'},...['auto','port-probe','nuclei','trivy','zap','synthetic'].map(value=>({value,label:value==='auto'?'自动综合扫描':value==='port-probe'?'旧版 TCP 端口探测':value==='synthetic'?'模拟任务':`旧版 ${value.toUpperCase()}`}))]}/>
         <Button onClick={()=>setShowArchived(value=>!value)}>{showArchived?'返回任务清册':'查看归档'}</Button>
-        <Tag>{showArchived?'归档任务':'未归档任务'} {tasks.length}</Tag><Tag color="processing">执行中 {tasks.filter(task=>task.status==='RUNNING').length}</Tag><Tag color="gold">待执行 {tasks.filter(task=>['PENDING','WAITING_WINDOW','PAUSED_WINDOW'].includes(task.status)).length}</Tag><Tag color="default">已暂停 {tasks.filter(task=>task.status==='PAUSED').length}</Tag><Tag color="success">已完成 {tasks.filter(task=>task.status==='COMPLETED').length}</Tag>
+        <Tag>{showArchived?'归档任务':'未归档任务'} {taskTotal}</Tag><Tag color="processing">执行中 {taskStatusCounts.RUNNING??0}</Tag><Tag color="gold">待执行 {(['PENDING','WAITING_WINDOW','PAUSED_WINDOW'] as const).reduce((sum,status)=>sum+(taskStatusCounts[status]??0),0)}</Tag><Tag color="default">已暂停 {taskStatusCounts.PAUSED??0}</Tag><Tag color="success">已完成 {taskStatusCounts.COMPLETED??0}</Tag>
       </Space>
-      <DataTable<ScanTask> dataSource={filteredTasks} rowKey="id" loading={loading} tableLayout="fixed" scroll={{x:1420}} locale={{emptyText:taskFilter||statusFilter!=='all'||engineFilter!=='all'?'没有符合筛选条件的任务':showArchived?'暂无归档任务':'暂无任务，请从右上角创建扫描任务或定时任务'}} pagination={{pageSize:10,showSizeChanger:true,pageSizeOptions:[10,20,50],showTotal:total=>`共 ${total} 个任务`}}
+      <DataTable<ScanTask> dataSource={tasks} rowKey="id" loading={taskLoading} tableLayout="fixed" scroll={{x:1420}} locale={{emptyText:taskFilter||statusFilter!=='all'||engineFilter!=='all'?'没有符合筛选条件的任务':showArchived?'暂无归档任务':'暂无任务，请从右上角创建扫描任务或定时任务'}} pagination={{current:taskPage,pageSize:taskPageSize,total:taskTotal,showSizeChanger:true,pageSizeOptions:[10,20,50],showTotal:total=>`共 ${total} 个任务`,onChange:(page,size)=>{if(size!==taskPageSize){setTaskPageSize(size);setTaskPage(1)}else setTaskPage(page)}}}
         expandable={{expandedRowRender:t=><Space direction="vertical"><Typography.Text>下发目标：{(()=>{const all=t.chunks?.flatMap(c=>c.targets)??[];return all.length>20?`${all.slice(0,20).join('、')} ……（共 ${all.length} 个）`:all.join('、')||'无';})()}</Typography.Text>{(t.engines?.[0]==='port-probe'||t.engines?.[0]==='auto')&&<><Typography.Text>探测配置：{presetLabels[t.portProbeConfig?.preset??'common']}；范围 {showRanges(t.portProbeConfig?.ranges)}；任务排除 {showRanges(t.portProbeConfig?.exclusions)}；合并排除 {showRanges(t.effectiveExclusions??t.portProbeConfig?.exclusions)}；隔离端口 {summarizePorts(t.quarantinedPorts)}；强度 {({gentle:'温和',standard:'标准',aggressive:'积极'})[t.portProbeConfig?.intensity??'gentle']}</Typography.Text><Typography.Text>实际探测：{t.portProbePorts?.length??0} 个 TCP 端口；发现开放候选：{t.portProbeResults?.length??0} 个{t.portProbeResults?.length?`（${t.portProbeResults.slice(0,20).map(p=>p.port).join(', ')}${t.portProbeResults.length>20?' …':''}）`:''}</Typography.Text>{t.engines[0]==='auto'&&<><Typography.Text>HTTP(S) 服务：{t.serviceResults?.filter(item=>item.kind==='HTTP').length??0} 个；自定义规则：{t.customRuleCount??0} 条</Typography.Text><Typography.Text>Linux 系统包：{t.systemScanStatus??'等待 Worker 回报'}</Typography.Text><ApplicationCoverage task={t}/><Typography.Text type="secondary">开放端口候选仅用于这次明确授权的范围，不会自动登记成长期授权端口。</Typography.Text></>}</>}{t.inputKind&&<Typography.Text>离线输入：{t.inputKind==='rootfs'?'Linux 系统包':t.inputKind==='image-archive'?'Docker / OCI 镜像':t.inputKind==='artifact'?'已部署 JAR / Go 文件':'应用依赖清单'} · {t.inputPath}</Typography.Text>}<Typography.Text>跳过目标：{t.skippedTargets?.join('、')||'无'}</Typography.Text><Typography.Text>规则版本：{t.ruleVersion||'无需外部规则包'}</Typography.Text>{t.error&&<Alert type="error" message={t.error}/>}</Space>}}
         columns={[
           {title:'任务 ID',dataIndex:'id',width:230,ellipsis:true},

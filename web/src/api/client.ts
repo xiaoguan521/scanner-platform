@@ -13,6 +13,7 @@ export interface Capabilities { enabled: string[]; unavailable: string[] }
 export interface ApiErrorBody { error: string; message: string }
 export interface ListResponse<T> { items: T[]; total: number }
 export interface PagedListResponse<T> extends ListResponse<T> { page: number; pageSize: number }
+export interface TaskPageResponse<T> extends PagedListResponse<T> { statusCounts: Record<string, number> }
 export interface DashboardSummary {
   assetCount: number;
   taskCount: number;
@@ -76,7 +77,7 @@ export async function requestJSON<T>(path: string, method = 'GET', body?: unknow
     try {
       const err: ApiErrorBody = await response.json();
       if (typeof err.message === 'string') {
-        const messages:Record<string,string>={asset_import_unavailable:'预览已过期、已确认或被替换，请重新上传预览',asset_import_conflict:'资产在预览后发生冲突，整批未导入；请重新上传预览',invalid_user:'用户名、角色或密码不符合要求（密码 12–72 字节）',invalid_password:'新密码需为 12–72 字节',user_exists:'用户名已存在',invalid_asset:'请输入有效数字 IP、业务组、负责人和端口；跳过端口须属于目标端口',asset_exists:'资产已存在',asset_in_use_remove_authorization_first:'资产仍有授权范围，请先撤销或删除关联授权',host_asset_required:'仅支持对已登记主机检查 Ping 可达性',reachability_check_failed:'可达性检测失败，请稍后重试',invalid_port_request:'端口申请格式无效',port_request_conflict:'端口已申请、已跳过或处于隔离状态',invalid_asset_export_filter:'资产筛选条件无效，请勿重复填写且长度不要超过 160 字节',invalid_asset_list_query:'资产分页、搜索或排序条件无效',asset_pagination_unavailable:'当前 Server 不支持资产分页',invalid_scan_plan:'扫描方案字段或端口范围无效，请检查后重试',scan_plan_conflict:'预置方案不能修改或删除，方案可能已被其他人更新',task_not_found:'扫描任务不存在或已删除',task_not_terminal:'只能归档或删除已结束的任务',task_has_findings:'任务有关联发现，不能彻底删除；可以归档隐藏',task_state_conflict:'任务当前状态不支持暂停或恢复',invalid_task_export_format:'结果导出格式无效，请选择 JSON 或 CSV',invalid_archive_filter:'归档筛选条件无效',invalid_business_group:'请输入 1–100 个字符的业务组名称',business_group_exists:'业务组已存在',business_group_unavailable:'业务组管理暂不可用',asset_import_history_unavailable:'导入记录暂不可用',forbidden:'当前账号无权执行此操作',invalid_approval:'审批记录或时间窗格式不正确',approval_conflict:'记录已审核、已过期或端口被标记跳过',invalid_system_settings:'系统时区或会话时长无效，请检查后重试',db_error:'保存失败，请查看 Server 日志',already_initialized:'管理员已初始化，请直接登录'};
+        const messages:Record<string,string>={asset_import_unavailable:'预览已过期、已确认或被替换，请重新上传预览',asset_import_conflict:'资产在预览后发生冲突，整批未导入；请重新上传预览',invalid_user:'用户名、角色或密码不符合要求（密码 12–72 字节）',invalid_password:'新密码需为 12–72 字节',user_exists:'用户名已存在',invalid_asset:'请输入有效数字 IP、业务组、负责人和端口；跳过端口须属于目标端口',asset_exists:'资产已存在',asset_in_use_remove_authorization_first:'资产仍有授权范围，请先撤销或删除关联授权',host_asset_required:'仅支持对已登记主机检查 Ping 可达性',reachability_check_failed:'可达性检测失败，请稍后重试',invalid_port_request:'端口申请格式无效',port_request_conflict:'端口已申请、已跳过或处于隔离状态',invalid_asset_export_filter:'资产筛选条件无效，请勿重复填写且长度不要超过 160 字节',invalid_asset_list_query:'资产分页、搜索或排序条件无效',asset_pagination_unavailable:'当前 Server 不支持资产分页',invalid_task_list_query:'任务分页、筛选或排序条件无效',task_pagination_unavailable:'当前 Server 不支持任务分页',invalid_scan_plan:'扫描方案字段或端口范围无效，请检查后重试',scan_plan_conflict:'预置方案不能修改或删除，方案可能已被其他人更新',task_not_found:'扫描任务不存在或已删除',task_not_terminal:'只能归档或删除已结束的任务',task_has_findings:'任务有关联发现，不能彻底删除；可以归档隐藏',task_state_conflict:'任务当前状态不支持暂停或恢复',invalid_task_export_format:'结果导出格式无效，请选择 JSON 或 CSV',invalid_archive_filter:'归档筛选条件无效',invalid_business_group:'请输入 1–100 个字符的业务组名称',business_group_exists:'业务组已存在',business_group_unavailable:'业务组管理暂不可用',asset_import_history_unavailable:'导入记录暂不可用',forbidden:'当前账号无权执行此操作',invalid_approval:'审批记录或时间窗格式不正确',approval_conflict:'记录已审核、已过期或端口被标记跳过',invalid_system_settings:'系统时区或会话时长无效，请检查后重试',db_error:'保存失败，请查看 Server 日志',already_initialized:'管理员已初始化，请直接登录'};
         description=messages[err.error]??err.message;
       }
     } catch { /* Unknown error bodies stay generic. */ }
@@ -134,6 +135,13 @@ export const apiClient = {
     const params=new URLSearchParams({page:String(page),page_size:String(pageSize),sort});
     if(search.trim())params.set('q',search.trim());
     return requestJSON<PagedListResponse<Asset>>('/api/v1/assets?'+params.toString(),'GET',undefined,signal);
+  },
+  tasksPage(page:number,pageSize:number,options:{search?:string;status?:string;engine?:string;archived?:'true'|'false'|'all';sort?:string}={},signal?:AbortSignal) {
+    const params=new URLSearchParams({page:String(page),page_size:String(pageSize),archived:options.archived??'false',sort:options.sort??'-created_at'});
+    if(options.search?.trim())params.set('q',options.search.trim());
+    if(options.status&&options.status!=='all')params.set('status',options.status);
+    if(options.engine&&options.engine!=='all')params.set('engine',options.engine);
+    return requestJSON<TaskPageResponse<ScanTask>>('/api/v1/tasks?'+params.toString(),'GET',undefined,signal);
   },
   exportAssets(filter = '', signal?: AbortSignal) {
     const query = filter.trim() ? '?q=' + encodeURIComponent(filter.trim()) : '';
