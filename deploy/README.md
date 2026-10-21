@@ -46,6 +46,20 @@ written to logs. The separate listener only serves node protocol paths; the
 web UI remains on the loopback listener. See `docs/runtime.md` and
 `docs/api/README.md` for the complete flag and rotation contract.
 
+After a trusted deployment channel copies a generated material directory to a
+node, run the read-only preflight before restarting services:
+
+```text
+sec-node-provision --verify-dir /var/lib/scanner-platform/node-materials
+```
+
+The preflight does not need the CA private key and does not contact the
+Server. It rejects unlisted files, non-owner-only secret material, malformed
+token registries, mismatched keys, invalid certificate chains and a Server
+certificate whose numeric IP SAN differs from the manifest. A successful
+preflight is a material check, not evidence that remote service orchestration
+or Linux fence acceptance is complete.
+
 ## Linux fenced Worker contract
 
 The repository now includes `sec-fence-launcher` as the trusted Linux entry

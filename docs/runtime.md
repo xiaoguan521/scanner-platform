@@ -37,6 +37,14 @@ sec-server --listen 127.0.0.1:8080 \
 
 `sec-node-provision` 可以在部署机上离线生成一套 Server/Worker/Updater 的 TLS 和令牌文件。它只接受明确的数字 Server IP、节点 ID 和节点类型，不连接网络；输出目录必须不存在，已有文件不会被覆盖。CA 私钥留在单独的 CA 目录，不会复制到节点材料目录；私钥和令牌文件使用 owner-only 权限，命令的 JSON 输出只包含路径和节点元数据，不包含密钥或令牌。
 
+材料通过受信部署通道复制到节点后，可在目标机执行只读校验。校验不需要 CA 私钥，也不会连接 Server；它会检查 manifest、清单外文件、owner-only 目录/私钥/令牌权限、令牌注册表、证书链、证书与私钥匹配关系以及 Server IP SAN：
+
+```bash
+./dist/sec-node-provision --verify-dir /var/lib/scanner-platform/node-materials
+```
+
+校验成功只表示材料包适合交给服务管理器加载，不代表远程传输、服务编排、节点自动注册或 Linux 围栏已完成验收。
+
 首次建立专用 CA：
 
 ```bash

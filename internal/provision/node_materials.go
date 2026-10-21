@@ -85,6 +85,26 @@ type RotateOptions struct {
 	Now       func() time.Time
 }
 
+// VerifyOptions controls an offline verification of a transferred material
+// directory. Verification never needs the CA private key and never prints
+// bearer tokens or private key contents.
+type VerifyOptions struct {
+	OutputDir string
+	Now       func() time.Time
+}
+
+// VerifyResult contains only non-secret deployment metadata. It is safe for
+// the CLI to encode this structure as JSON for an operator or deployment
+// system.
+type VerifyResult struct {
+	OutputDir                 string    `json:"outputDir"`
+	ServerURL                 string    `json:"serverUrl"`
+	FileCount                 int       `json:"fileCount"`
+	NodeIDs                   []string  `json:"nodeIds"`
+	CACertificateNotAfter     time.Time `json:"caCertificateNotAfter"`
+	ServerCertificateNotAfter time.Time `json:"serverCertificateNotAfter"`
+}
+
 type manifestDocument struct {
 	Version   int          `json:"version"`
 	ServerURL string       `json:"serverUrl"`
@@ -315,6 +335,98 @@ func Rotate(opts RotateOptions) (Result, error) {
 	return result, nil
 }
 
+// Verify validates a node material directory after it has been copied to a
+// deployment host. It checks the manifest, exact file set, permissions,
+// token registry, certificate/key pairs and certificate chain. It does not
+// contact the Server or change any file.
+func Verify(opts VerifyOptions) (VerifyResult, error) {
+	now := time.Now
+	if opts.Now != nil {
+		now = opts.Now
+	}
+	when := now().UTC()
+	if strings.TrimSpace(opts.OutputDir) == "" {
+		return VerifyResult{}, errors.New("output directory is required")
+	}
+	outputDir, err := filepath.Abs(opts.OutputDir)
+	if err != nil {
+		return VerifyResult{}, fmt.Errorf("resolve output directory: %w", err)
+	}
+	info, err := os.Lstat(outputDir)
+	if err != nil {
+		return VerifyResult{}, fmt.Errorf("inspect output directory: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return VerifyResult{}, errors.New("output directory must be a regular non-symlink directory")
+	}
+	if info.Mode().Perm()&0077 != 0 {
+		return VerifyResult{}, errors.New("output directory must be owner-only")
+	}
+	manifest, _, err := readManifest(outputDir)
+	if err != nil {
+		return VerifyResult{}, err
+	}
+	serverIP, _, err := parseServerURL(manifest.ServerURL)
+	if err != nil {
+		return VerifyResult{}, err
+	}
+	if err := validateManifestFiles(outputDir, manifest); err != nil {
+		return VerifyResult{}, err
+	}
+	ca, err := readCertificateFile(filepath.Join(outputDir, "ca-cert.pem"), "CA certificate")
+	if err != nil {
+		return VerifyResult{}, err
+	}
+	if !ca.IsCA || !ca.BasicConstraintsValid || ca.CheckSignature(ca.SignatureAlgorithm, ca.RawTBSCertificate, ca.Signature) != nil {
+		return VerifyResult{}, errors.New("CA certificate is invalid")
+	}
+	if when.Before(ca.NotBefore) || !when.Before(ca.NotAfter) {
+		return VerifyResult{}, errors.New("CA certificate is expired or not yet valid")
+	}
+	serverCert, err := readCertificateFile(filepath.Join(outputDir, "server-cert.pem"), "server certificate")
+	if err != nil {
+		return VerifyResult{}, err
+	}
+	if serverCert.Subject.CommonName != "scanner-platform-server" || len(serverCert.IPAddresses) != 1 || serverCert.IPAddresses[0].String() != serverIP.String() {
+		return VerifyResult{}, errors.New("server certificate identity does not match the manifest")
+	}
+	if err := verifyLeafCertificate(serverCert, ca, x509.ExtKeyUsageServerAuth, when); err != nil {
+		return VerifyResult{}, fmt.Errorf("verify server certificate: %w", err)
+	}
+	if err := verifyPrivateKeyPair(filepath.Join(outputDir, "server-key.pem"), serverCert, "server key"); err != nil {
+		return VerifyResult{}, err
+	}
+	if err := validateNodeTokenRegistry(outputDir, manifest); err != nil {
+		return VerifyResult{}, err
+	}
+	nodeIDs := make([]string, 0, len(manifest.Nodes))
+	for _, node := range manifest.Nodes {
+		cert, err := readCertificateFile(filepath.Join(outputDir, node.ID+"-client-cert.pem"), node.ID+" client certificate")
+		if err != nil {
+			return VerifyResult{}, err
+		}
+		if cert.Subject.CommonName != node.ID || len(cert.IPAddresses) != 0 {
+			return VerifyResult{}, fmt.Errorf("client certificate identity for %s is invalid", node.ID)
+		}
+		if err := verifyLeafCertificate(cert, ca, x509.ExtKeyUsageClientAuth, when); err != nil {
+			return VerifyResult{}, fmt.Errorf("verify client certificate for %s: %w", node.ID, err)
+		}
+		if err := verifyPrivateKeyPair(filepath.Join(outputDir, node.ID+"-client-key.pem"), cert, node.ID+" client key"); err != nil {
+			return VerifyResult{}, err
+		}
+		nodeIDs = append(nodeIDs, node.ID)
+	}
+	sort.Strings(nodeIDs)
+	return VerifyResult{
+		OutputDir:                 outputDir,
+		ServerURL:                 manifest.ServerURL,
+		FileCount:                 len(manifest.Files),
+		NodeIDs:                   nodeIDs,
+		CACertificateNotAfter:     ca.NotAfter.UTC(),
+		ServerCertificateNotAfter: serverCert.NotAfter.UTC(),
+	}, nil
+}
+
 func validateOutputCACertificate(outputDir string, ca *x509.Certificate) error {
 	data, err := readRegular(filepath.Join(outputDir, "ca-cert.pem"), false)
 	if err != nil {
@@ -403,17 +515,134 @@ func validateManifestFiles(outputDir string, manifest manifestDocument) error {
 			return fmt.Errorf("provisioning manifest omits required file %q", required)
 		}
 	}
+	nodeIDs := make(map[string]struct{}, len(manifest.Nodes))
 	for _, node := range manifest.Nodes {
 		if len(node.ID) == 0 || !nodeIDPattern.MatchString(node.ID) || (node.Kind != "worker" && node.Kind != "updater") {
 			return errors.New("provisioning manifest contains an invalid node")
 		}
+		if _, exists := nodeIDs[node.ID]; exists {
+			return fmt.Errorf("provisioning manifest contains duplicate node %q", node.ID)
+		}
+		nodeIDs[node.ID] = struct{}{}
 		for _, name := range []string{node.ID + "-token", node.ID + "-client-cert.pem", node.ID + "-client-key.pem"} {
 			if _, ok := expected[name]; !ok {
 				return fmt.Errorf("provisioning manifest omits node file %q", name)
 			}
 		}
+		if filepath.Base(node.TokenFile) != node.ID+"-token" || filepath.Base(node.ClientCert) != node.ID+"-client-cert.pem" || filepath.Base(node.ClientKey) != node.ID+"-client-key.pem" {
+			return fmt.Errorf("provisioning manifest contains invalid paths for node %q", node.ID)
+		}
 	}
 	return nil
+}
+
+func readCertificateFile(path, description string) (*x509.Certificate, error) {
+	data, err := readRegular(path, false)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", description, err)
+	}
+	block, rest := pem.Decode(data)
+	if block == nil || block.Type != "CERTIFICATE" || len(strings.TrimSpace(string(rest))) != 0 {
+		return nil, fmt.Errorf("%s PEM is invalid", description)
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("parse %s: %w", description, err)
+	}
+	return cert, nil
+}
+
+func verifyLeafCertificate(cert, ca *x509.Certificate, usage x509.ExtKeyUsage, now time.Time) error {
+	if cert.IsCA || !cert.BasicConstraintsValid {
+		return errors.New("certificate is not a leaf certificate")
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(ca)
+	if _, err := cert.Verify(x509.VerifyOptions{Roots: roots, KeyUsages: []x509.ExtKeyUsage{usage}, CurrentTime: now}); err != nil {
+		return err
+	}
+	return nil
+}
+
+func verifyPrivateKeyPair(path string, cert *x509.Certificate, description string) error {
+	data, err := readOwnerOnly(path)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", description, err)
+	}
+	key, err := parsePrivateKey(data)
+	if err != nil {
+		return fmt.Errorf("parse %s: %w", description, err)
+	}
+	if !publicKeysEqual(&key.PublicKey, cert.PublicKey) {
+		return fmt.Errorf("%s does not match its certificate", description)
+	}
+	return nil
+}
+
+func validateNodeTokenRegistry(outputDir string, manifest manifestDocument) error {
+	data, err := readOwnerOnly(filepath.Join(outputDir, "node-tokens"))
+	if err != nil {
+		return fmt.Errorf("read node token registry: %w", err)
+	}
+	data = trimProvisionLineEnding(data)
+	if len(data) == 0 {
+		return errors.New("node token registry is empty")
+	}
+	expected := make(map[string]struct{}, len(manifest.Nodes))
+	for _, node := range manifest.Nodes {
+		expected[node.ID] = struct{}{}
+	}
+	seen := make(map[string]string, len(expected))
+	for lineNo, raw := range strings.Split(string(data), "\n") {
+		line := strings.TrimSuffix(raw, "\r")
+		if line == "" {
+			continue
+		}
+		id, token, ok := strings.Cut(line, "=")
+		if !ok || !nodeIDPattern.MatchString(id) || !validProvisionToken(token) {
+			return fmt.Errorf("node token registry entry on line %d is invalid", lineNo+1)
+		}
+		if _, ok := expected[id]; !ok {
+			return fmt.Errorf("node token registry contains unlisted node %q", id)
+		}
+		if _, ok := seen[id]; ok {
+			return fmt.Errorf("node token registry contains duplicate node %q", id)
+		}
+		seen[id] = token
+		fileToken, err := readOwnerOnly(filepath.Join(outputDir, id+"-token"))
+		if err != nil {
+			return fmt.Errorf("read token for %s: %w", id, err)
+		}
+		if value := strings.TrimSuffix(strings.TrimSuffix(string(fileToken), "\n"), "\r"); value != token {
+			return fmt.Errorf("token file for %s does not match the registry", id)
+		}
+	}
+	if len(seen) != len(expected) {
+		return errors.New("node token registry does not match the manifest nodes")
+	}
+	return nil
+}
+
+func validProvisionToken(token string) bool {
+	if len(token) < minTokenBytes || len(token) > 512 {
+		return false
+	}
+	for _, b := range []byte(token) {
+		if b < 0x21 || b > 0x7e {
+			return false
+		}
+	}
+	return true
+}
+
+func trimProvisionLineEnding(data []byte) []byte {
+	if len(data) > 0 && data[len(data)-1] == '\n' {
+		data = data[:len(data)-1]
+		if len(data) > 0 && data[len(data)-1] == '\r' {
+			data = data[:len(data)-1]
+		}
+	}
+	return data
 }
 
 func stageRotatedDirectory(outputDir string, manifest manifestDocument, originalManifest []byte, ca certificateAuthority, serverIP netip.Addr, serverPort uint16, lifetime time.Duration, when time.Time) error {

@@ -90,6 +90,79 @@ func TestProvisionGeneratesVerifiableMaterialWithoutSecretsInManifest(t *testing
 	if _, err := FileDigest(result.ServerCert); err != nil {
 		t.Fatalf("FileDigest() error = %v", err)
 	}
+	verified, err := Verify(VerifyOptions{OutputDir: outDir, Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if verified.FileCount != 11 || len(verified.NodeIDs) != 2 || verified.ServerURL != result.ServerURL {
+		t.Fatalf("unexpected verification result: %#v", verified)
+	}
+}
+
+func TestVerifyRejectsTamperedTransferredMaterial(t *testing.T) {
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	newFixture := func(t *testing.T) string {
+		t.Helper()
+		outDir := filepath.Join(t.TempDir(), "node-materials")
+		_, err := Provision(Options{
+			OutputDir: outDir, CADir: filepath.Join(filepath.Dir(outDir), "ca"), ServerIP: netip.MustParseAddr("192.0.2.10"),
+			Nodes: []NodeSpec{{ID: "worker-a", Kind: "worker"}}, ValidFor: 24 * time.Hour, CAValidFor: 48 * time.Hour,
+			GenerateCA: true, Now: func() time.Time { return now },
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return outDir
+	}
+
+	t.Run("extra file", func(t *testing.T) {
+		outDir := newFixture(t)
+		if err := os.WriteFile(filepath.Join(outDir, "unexpected.txt"), []byte("x"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Verify(VerifyOptions{OutputDir: outDir, Now: func() time.Time { return now }}); err == nil {
+			t.Fatal("Verify accepted an unlisted file")
+		}
+	})
+	t.Run("mismatched key", func(t *testing.T) {
+		outDir := newFixture(t)
+		clientKey, err := os.ReadFile(filepath.Join(outDir, "worker-a-client-key.pem"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(outDir, "server-key.pem"), clientKey, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Verify(VerifyOptions{OutputDir: outDir, Now: func() time.Time { return now }}); err == nil {
+			t.Fatal("Verify accepted a mismatched private key")
+		}
+	})
+	t.Run("mismatched token", func(t *testing.T) {
+		outDir := newFixture(t)
+		if err := os.WriteFile(filepath.Join(outDir, "worker-a-token"), []byte("wrong-token\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Verify(VerifyOptions{OutputDir: outDir, Now: func() time.Time { return now }}); err == nil {
+			t.Fatal("Verify accepted a mismatched token")
+		}
+	})
+	t.Run("insecure directory", func(t *testing.T) {
+		outDir := newFixture(t)
+		if err := os.Chmod(outDir, 0750); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Verify(VerifyOptions{OutputDir: outDir, Now: func() time.Time { return now }}); err == nil {
+			t.Fatal("Verify accepted a group-accessible directory")
+		}
+	})
+}
+
+func FuzzValidProvisionToken(f *testing.F) {
+	f.Add("a-token-with-printable-characters-01234567890123456789")
+	f.Add("short")
+	f.Fuzz(func(t *testing.T, token string) {
+		_ = validProvisionToken(token)
+	})
 }
 
 func TestProvisionReusesCAAndRefusesOverwrite(t *testing.T) {

@@ -1,5 +1,11 @@
 # Verification log
 
+## 2026-10-21：节点材料传输后只读预检
+
+- `sec-node-provision --verify-dir` 新增离线预检入口，不需要 CA 私钥、不连接 Server，也不修改材料目录。它严格校验 manifest、清单外文件、owner-only 目录/私钥/令牌权限、节点令牌注册表、证书链、证书与私钥匹配关系和数字 Server IP SAN。
+- 失败路径覆盖清单外文件、私钥不匹配、令牌文件与注册表不一致以及目录权限过宽；成功结果只返回节点 ID、文件数和证书有效期，不回显令牌或密钥。新增 token 解析 fuzz 测试。
+- `go test ./internal/provision ./cmd/node-provision` 已通过；完整 `make test`、`make lint`、`make build` 仍需在本批提交前运行。该预检不等同于远程传输、服务编排、自动节点注册或 Linux 围栏生产验收。
+
 ## 2026-10-21：围栏 DROP 计数进入任务回报与告警投影
 
 - Worker 的 fenced adapter 现在把受信的 `fenceStatus=ENFORCED` 与 `dropCount` 送入任务回报；Server 对状态、计数上限和缺失状态做失败关闭校验。SQLite 任务详情和 PostgreSQL 任务安全投影均保存这两个字段，不新增数据库迁移。

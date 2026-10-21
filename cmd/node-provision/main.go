@@ -42,6 +42,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	flags.SetOutput(stderr)
 	outputDir := flags.String("output-dir", "", "new directory for Server and node material")
 	rotateDir := flags.String("rotate-dir", "", "existing material directory to rotate in place")
+	verifyDir := flags.String("verify-dir", "", "transferred material directory to verify without changing it")
 	caDir := flags.String("ca-dir", "", "directory containing ca-key.pem and ca-cert.pem")
 	serverIP := flags.String("server-ip", "", "explicit numeric Server node IP")
 	serverPort := flags.Uint("server-port", 8443, "Server node HTTPS port")
@@ -56,8 +57,39 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 		return 2
 	}
-	if flags.NArg() != 0 || strings.TrimSpace(*caDir) == "" || (strings.TrimSpace(*outputDir) != "" && strings.TrimSpace(*rotateDir) != "") {
-		fmt.Fprintln(stderr, "use either --output-dir with --server-ip and --node, or --rotate-dir; --ca-dir is required")
+	if flags.NArg() != 0 {
+		fmt.Fprintln(stderr, "unexpected positional arguments")
+		return 2
+	}
+	modeCount := 0
+	for _, value := range []string{*outputDir, *rotateDir, *verifyDir} {
+		if strings.TrimSpace(value) != "" {
+			modeCount++
+		}
+	}
+	if modeCount != 1 {
+		fmt.Fprintln(stderr, "use exactly one of --output-dir, --rotate-dir or --verify-dir")
+		return 2
+	}
+	if strings.TrimSpace(*verifyDir) != "" {
+		if strings.TrimSpace(*caDir) != "" || strings.TrimSpace(*serverIP) != "" || len(nodes) != 0 || *generateCA {
+			fmt.Fprintln(stderr, "--verify-dir cannot be combined with CA, Server IP, or node provisioning options")
+			return 2
+		}
+		result, err := provision.Verify(provision.VerifyOptions{OutputDir: *verifyDir})
+		if err != nil {
+			fmt.Fprintln(stderr, "node material verification failed:", err)
+			return 1
+		}
+		if err := json.NewEncoder(stdout).Encode(result); err != nil {
+			fmt.Fprintln(stderr, "write verification result:", err)
+			return 1
+		}
+		fmt.Fprintf(stderr, "Verified %d node(s) and %d material file(s); no files changed.\n", len(result.NodeIDs), result.FileCount)
+		return 0
+	}
+	if strings.TrimSpace(*caDir) == "" {
+		fmt.Fprintln(stderr, "--ca-dir is required for provisioning or rotation")
 		return 2
 	}
 	if strings.TrimSpace(*rotateDir) != "" {
