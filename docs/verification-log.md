@@ -7,6 +7,12 @@
 - `/tasks` 清册与详情按阶段权重显示进度条和 `完成数/总数`，完成任务仍显示 100%；OpenAPI 阶段枚举已同步新增 `application_scan`。
 - 新增仓储进度边界及 SQLite 实际更新测试；已运行 `go test -race ./internal/repo ./internal/executor ./internal/taskflow`，三包通过。尚未在真实靶机全端口任务中重新执行本轮 UI 进度回归；本轮未修改数据库结构、规则目录、SSH 配置或扫描目标。
 
+## 2026-10-21：隔离 lab 总门禁与可选 ZAP
+
+- `make test-lab` 原先无条件执行 ZAP；当前环境未安装可选 ZAP 时会把整套隔离门禁误判为失败。已让 Go loopback 引擎夹具与项目既有脚本保持一致：默认跳过 ZAP 并明确记录 `SKIP ZAP`，只有设置 `SCANNER_EXPECT_ZAP=1` 才要求 ZAP HTTP/HTTPS 两条用例。
+- 使用 `LAB_ENV=isolated POSTGRES_DSN_FILE="$PWD/runtime/postgres/dsn" make test-lab` 重新运行全仓 lab 测试通过；Nuclei、Trivy、SSH/输入隔离、规则和 PostgreSQL 夹具均通过，ZAP 因未安装按可选项跳过。另行运行 PostgreSQL 仓储 lab 全套测试也通过。
+- 该回归只使用本机隔离夹具和临时测试数据，未修改主 SQLite 运行库、规则目录、SSH 配置或扫描目标；ZAP 仍需在需要纳入发布验收时显式安装并设置 `SCANNER_EXPECT_ZAP=1`。
+
 ## 2026-10-21：节点材料传输后只读预检
 
 - `sec-node-provision --verify-dir` 新增离线预检入口，不需要 CA 私钥、不连接 Server，也不修改材料目录。它严格校验 manifest、清单外文件、owner-only 目录/私钥/令牌权限、节点令牌注册表、证书链、证书与私钥匹配关系和数字 Server IP SAN。

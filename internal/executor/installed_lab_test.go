@@ -62,7 +62,13 @@ func TestInstalledEnginesOnLoopbackFixture(t *testing.T) {
 	defer secureFixture.Close()
 	defer fixture.Close()
 	runner := Runner{BinDir: filepath.Join(root, "bin"), RulesDir: manager.Root, RuntimeDir: filepath.Join(dir, "runtime"), InputsDir: filepath.Join(dir, "inputs"), Rate: 5, Timeout: 5}
-	for _, test := range []struct{ engine, scheme, url string }{{"nuclei", "http", fixture.URL}, {"zap", "http", fixture.URL}, {"nuclei", "https", secureFixture.URL}, {"zap", "https", secureFixture.URL}} {
+	tests := []struct{ engine, scheme, url string }{{"nuclei", "http", fixture.URL}, {"nuclei", "https", secureFixture.URL}}
+	if os.Getenv("SCANNER_EXPECT_ZAP") == "1" {
+		tests = append(tests, struct{ engine, scheme, url string }{"zap", "http", fixture.URL}, struct{ engine, scheme, url string }{"zap", "https", secureFixture.URL})
+	} else {
+		t.Log("SKIP ZAP: optional passive engine is not required (set SCANNER_EXPECT_ZAP=1 to require it)")
+	}
+	for _, test := range tests {
 		engine := test.engine
 		t.Run(test.scheme+"/"+engine, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
