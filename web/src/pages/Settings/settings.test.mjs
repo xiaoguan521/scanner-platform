@@ -8,6 +8,6 @@ const client = fs.readFileSync(new URL('../../api/client.ts', import.meta.url), 
 test('system settings page uses the authenticated Server API and keeps notifications explicit', () => {
   assert.match(page, /apiClient\.systemSettings\(\)/);
   assert.match(page, /apiClient\.saveSystemSettings\(values\)/);
-  assert.match(page, /通知中心和通知投递尚未启用/);
+  assert.match(page, /通知中心可查看平台内提醒/);
   assert.match(client, /'\/api\/v1\/system-settings'/);
 });

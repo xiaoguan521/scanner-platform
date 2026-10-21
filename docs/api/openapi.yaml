@@ -118,6 +118,70 @@ paths:
         '400': {description: Invalid timezone or session duration}
         '401': {description: Unauthenticated}
         '403': {description: Admin role or mutation header required}
+  "/api/v1/notifications":
+    get:
+      tags:
+      - system
+      summary: List in-product notifications
+      security:
+      - sessionCookie: []
+      parameters:
+      - in: query
+        name: unread
+        required: false
+        schema:
+          type: boolean
+      responses:
+        '200':
+          description: Notification list and unread count
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/NotificationList"
+        '400': {description: Invalid unread filter}
+        '401': {description: Unauthenticated}
+  "/api/v1/notifications/read-all":
+    post:
+      tags:
+      - system
+      summary: Mark all notifications read
+      security:
+      - sessionCookie: []
+      parameters:
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema:
+          type: string
+          enum: [XMLHttpRequest]
+      responses:
+        '200': {description: Notifications marked read}
+        '401': {description: Unauthenticated}
+        '403': {description: Mutation header required}
+  "/api/v1/notifications/{id}/read":
+    post:
+      tags:
+      - system
+      summary: Mark one notification read
+      security:
+      - sessionCookie: []
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema:
+          type: string
+          enum: [XMLHttpRequest]
+      responses:
+        '200': {description: Notification marked read}
+        '401': {description: Unauthenticated}
+        '403': {description: Mutation header required}
+        '404': {description: Notification not found}
   "/api/v1/dashboard/summary":
     get:
       tags:
@@ -4369,6 +4433,26 @@ components:
           type: integer
           minimum: 30
           maximum: 1440
+    Notification:
+      type: object
+      required: [id, kind, severity, title, message, objectType, objectId, createdAt]
+      properties:
+        id: {type: string}
+        kind: {type: string}
+        severity: {type: string, enum: [info, warning, error]}
+        title: {type: string}
+        message: {type: string}
+        objectType: {type: string}
+        objectId: {type: string}
+        createdAt: {type: string, format: date-time}
+        readAt: {type: string, format: date-time}
+    NotificationList:
+      type: object
+      required: [items, total, unreadCount]
+      properties:
+        items: {type: array, items: {"$ref": "#/components/schemas/Notification"}}
+        total: {type: integer, minimum: 0}
+        unreadCount: {type: integer, minimum: 0}
     ScanPlanDefaults:
       type: object
       required: [portPreset, intensity, portRanges, portExclusions, customRuleIds]

@@ -27,8 +27,8 @@ type ScanPolicy struct {
 }
 
 // SystemSettings contains the small set of control-plane preferences that are
-// persisted by the local Server. Notification delivery is deliberately not
-// part of this contract yet; the notification center is a later roadmap item.
+// persisted by the local Server. External notification delivery is deliberately
+// not part of this contract yet; the in-product notification center is separate.
 type SystemSettings struct {
 	TimeZone               string `json:"timeZone"`
 	SessionDurationMinutes int    `json:"sessionDurationMinutes"`
@@ -103,6 +103,11 @@ func defaultPolicy() ScanPolicy {
 func (s *RuntimeStore) initProduct(ctx context.Context) error {
 	for _, q := range []string{
 		`CREATE TABLE IF NOT EXISTS product_settings(id TEXT PRIMARY KEY,data TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS notifications(
+			id TEXT PRIMARY KEY,kind TEXT NOT NULL,severity TEXT NOT NULL,
+			title TEXT NOT NULL,message TEXT NOT NULL,object_type TEXT NOT NULL,
+			object_id TEXT NOT NULL,created_at TEXT NOT NULL,read_at TEXT)`,
+		`CREATE INDEX IF NOT EXISTS notifications_read_created ON notifications(read_at,created_at DESC,id DESC)`,
 		`CREATE TABLE IF NOT EXISTS vulnerability_knowledge(id TEXT PRIMARY KEY,data TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS scan_plans(id TEXT PRIMARY KEY,data TEXT NOT NULL,created_by TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,updated_at TEXT NOT NULL)`,
 		`CREATE INDEX IF NOT EXISTS scan_plans_updated ON scan_plans(updated_at DESC,id DESC)`,

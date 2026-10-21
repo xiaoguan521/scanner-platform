@@ -6,7 +6,13 @@
 
 - 新增 `/settings` 管理员页面和 `GET/PUT /api/v1/system-settings`。时区限定为 `UTC`、`Asia/Shanghai`、`America/New_York`；会话时长限定为 30–1440 分钟；保存写入 `product_settings` 并记录 `update_system_settings` 审计动作。
 - 登录时服务端会话到期时间和 HttpOnly Cookie 的 `Max-Age` 同时读取该设置；系统设置表或记录尚未初始化时安全回退到 8 小时默认值。已有会话不会因设置变更提前失效。
-- `go test -race ./internal/account ./internal/repo ./internal/api`、`node --test web/src/pages/Settings/settings.test.mjs` 和前端生产构建用于本批回归；真实浏览器页面交互和 PostgreSQL 运行时仍待验收。通知中心与通知投递没有在本批提前实现。
+- `go test -race ./internal/account ./internal/repo ./internal/api`、`node --test web/src/pages/Settings/settings.test.mjs` 和前端生产构建用于本批回归；真实浏览器页面交互和 PostgreSQL 运行时仍待验收。外部通知投递没有在本批实现。
+
+## 2026-10-21：平台内通知中心
+
+- 新增 `/notifications` 和 `GET /api/v1/notifications`。Server 从已批准授权七天内到期/已过期、接受风险七天内到期/已过期和失败扫描任务生成确定性通知；消息只包含安全摘要和对象标识，不包含目标地址、凭据、原始请求/响应或引擎输出。
+- 通知写入 SQLite `notifications` 表，刷新幂等；登录用户可筛选未读、标记单条或全部已读。读取和已读操作不会启动探测、扫描或外部网络请求；外部邮件/Webhook 投递保留到后续阶段。
+- `go test -race ./internal/repo ./internal/api`、`node --test web/src/pages/Notifications/notifications.test.mjs web/src/components/Layout/navigation.test.mjs` 和前端生产构建通过；真实浏览器交互、PostgreSQL 运行时和外部投递未验收/未实现。
 
 ## 2026-10-21：移除演示种子与浏览器 mock 通道
 

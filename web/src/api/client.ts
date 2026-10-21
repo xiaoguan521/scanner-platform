@@ -1,5 +1,5 @@
 import type { AssetImportPreview } from '../pages/Assets/import';
-import type { Asset, AuthorizedScope, Finding, NodeInfo, PortQuarantine, RuleBundle, ScanTask, User, UserRole, PortRequest, TimeWindow, ApprovalDecision, Schedule, RuleJob, CustomRule, AssetProfile, KnowledgeEntry, DetectionCapability, VulnerabilityCategory, ScanPolicy, ScanPlan, SystemSettings } from '../types';
+import type { Asset, AuthorizedScope, Finding, NodeInfo, NotificationList, PortQuarantine, RuleBundle, ScanTask, User, UserRole, PortRequest, TimeWindow, ApprovalDecision, Schedule, RuleJob, CustomRule, AssetProfile, KnowledgeEntry, DetectionCapability, VulnerabilityCategory, ScanPolicy, ScanPlan, SystemSettings } from '../types';
 
 export interface SystemStatus {
   role: 'sec-server' | 'sec-portable';
@@ -116,6 +116,9 @@ export const apiClient = {
   saveScanPolicy(input:ScanPolicy) { return requestJSON<ScanPolicy>('/api/v1/scan-policy','PUT',input); },
   systemSettings() { return requestJSON<SystemSettings>('/api/v1/system-settings'); },
   saveSystemSettings(input:SystemSettings) { return requestJSON<SystemSettings>('/api/v1/system-settings','PUT',input); },
+  notifications(unreadOnly = false) { return requestJSON<NotificationList>('/api/v1/notifications?unread=' + String(unreadOnly)); },
+  markNotificationRead(id:string) { return requestJSON<{status:string}>('/api/v1/notifications/' + encodeURIComponent(id) + '/read','POST',{}); },
+  markAllNotificationsRead() { return requestJSON<{status:string}>('/api/v1/notifications/read-all','POST',{}); },
   releaseQuarantine(assetId:string,port:number,reason:string) { return requestJSON('/api/v1/port-quarantines/release','POST',{assetId,port,reason}); },
   systemStatus(signal?: AbortSignal) { return requestJSON<SystemStatus>('/api/v1/system/status', 'GET', undefined, signal); },
   capabilities(signal?: AbortSignal) { return requestJSON<Capabilities>('/api/v1/system/capabilities', 'GET', undefined, signal); },

@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+
 	"scanner-platform/internal/findings"
 	"scanner-platform/internal/repo"
 	"scanner-platform/internal/scanplans"
@@ -107,6 +108,45 @@ func registerProductHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui fu
 		}
 		if !runtimeStoreError(w, err) {
 			runtimeJSON(w, http.StatusOK, saved)
+		}
+	}))
+	mux.HandleFunc("GET /api/v1/notifications", ui(false, func(w http.ResponseWriter, r *http.Request) {
+		unreadOnly := false
+		if raw := r.URL.Query().Get("unread"); raw != "" {
+			if raw != "true" && raw != "false" {
+				bad(w, http.StatusBadRequest, "invalid_notification_filter")
+				return
+			}
+			unreadOnly = raw == "true"
+		}
+		items, err := store.ListNotifications(r.Context(), unreadOnly)
+		if !runtimeStoreError(w, err) {
+			runtimeJSON(w, http.StatusOK, items)
+		}
+	}))
+	mux.HandleFunc("POST /api/v1/notifications/read-all", ui(false, func(w http.ResponseWriter, r *http.Request) {
+		if !mutationGuard(w, r) {
+			return
+		}
+		if !runtimeStoreError(w, store.MarkAllNotificationsRead(r.Context())) {
+			runtimeJSON(w, http.StatusOK, map[string]string{"status": "READ"})
+		}
+	}))
+	mux.HandleFunc("POST /api/v1/notifications/{id}/read", ui(false, func(w http.ResponseWriter, r *http.Request) {
+		if !mutationGuard(w, r) {
+			return
+		}
+		err := store.MarkNotificationRead(r.Context(), r.PathValue("id"))
+		if errors.Is(err, repo.ErrInvalidTask) {
+			bad(w, http.StatusBadRequest, "invalid_notification")
+			return
+		}
+		if errors.Is(err, repo.ErrNotificationNotFound) {
+			bad(w, http.StatusNotFound, "notification_not_found")
+			return
+		}
+		if !runtimeStoreError(w, err) {
+			runtimeJSON(w, http.StatusOK, map[string]string{"status": "READ"})
 		}
 	}))
 	mux.HandleFunc("GET /api/v1/knowledge", ui(false, func(w http.ResponseWriter, r *http.Request) {

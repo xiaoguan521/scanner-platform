@@ -14,6 +14,26 @@ export interface SystemSettings {
   sessionDurationMinutes: number;
 }
 
+export type NotificationSeverity = 'info' | 'warning' | 'error';
+
+export interface Notification {
+  id: string;
+  kind: string;
+  severity: NotificationSeverity;
+  title: string;
+  message: string;
+  objectType: string;
+  objectId: string;
+  createdAt: string;
+  readAt?: string;
+}
+
+export interface NotificationList {
+  items: Notification[];
+  total: number;
+  unreadCount: number;
+}
+
 export type PortKind = 'WEB' | 'NON_WEB' | 'EXCLUDED_PROXY';
 
 export interface AssetPort {

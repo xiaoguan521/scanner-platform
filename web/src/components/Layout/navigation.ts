@@ -35,6 +35,7 @@ export const navigationGroups: readonly NavigationGroup[] = [
       { key: '/users', label: '用户与角色', roles: ['admin'] },
       { key: '/audit', label: '审计日志', roles: ['admin'] },
       { key: '/settings', label: '系统设置', roles: ['admin'] },
+      { key: '/notifications', label: '通知中心' },
     ],
   },
 ];

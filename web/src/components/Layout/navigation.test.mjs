@@ -12,7 +12,7 @@ test('navigation defines the six product domains in order', () => {
   assert.match(source, /roles\.includes\(role\)/);
 });
 
-test('system settings is exposed only to administrators while notifications stay hidden', () => {
+test('system settings is administrator-only and notifications have a real route', () => {
   assert.match(source, /key: '\/settings', label: '系统设置', roles: \['admin'\]/);
-  assert.doesNotMatch(source, /key: '\/notifications'/);
+  assert.match(source, /key: '\/notifications', label: '通知中心'/);
 });

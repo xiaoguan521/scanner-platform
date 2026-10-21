@@ -50,7 +50,7 @@ export const SettingsPage: React.FC = () => {
           type={error ? 'error' : 'info'}
           showIcon
           message={error || '系统级偏好会影响后续登录和新建任务'}
-          description="时区用于后续系统时间展示与计划默认值；修改会话时长只影响新登录会话，已有会话仍按原到期时间失效。通知中心和通知投递尚未启用。"
+          description="时区用于后续系统时间展示与计划默认值；修改会话时长只影响新登录会话，已有会话仍按原到期时间失效。通知中心可查看平台内提醒，外部通知投递尚未启用。"
           style={{ marginBottom: 16 }}
         />
         <Form form={form} layout="vertical" onFinish={save} disabled={!canEdit || !settings}>

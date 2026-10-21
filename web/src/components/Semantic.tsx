@@ -2,7 +2,7 @@ import React from 'react';
 import { Card, Skeleton, Statistic, Tag, Typography } from 'antd';
 import type { CSSProperties, ReactNode } from 'react';
 import type { StatisticProps, TagProps } from 'antd';
-import type { FindingSeverity, FindingStatus, TaskStatus } from '../types';
+import type { FindingSeverity, FindingStatus, NotificationSeverity, TaskStatus } from '../types';
 
 type TagColor = TagProps['color'];
 
@@ -44,6 +44,12 @@ export const scheduleStatusMeta: Record<string, SemanticMeta> = {
   DELETED: { color: 'default', label: '任务记录已删除' },
 };
 
+export const notificationSeverityMeta: Record<NotificationSeverity, SemanticMeta> = {
+  info: { color: 'blue', label: '信息' },
+  warning: { color: 'orange', label: '提醒' },
+  error: { color: 'red', label: '需要处理' },
+};
+
 function resolveMeta<T extends string>(value: T, metadata: Record<string, SemanticMeta>): SemanticMeta {
   return metadata[value] ?? { color: 'default', label: value };
 }
@@ -65,6 +71,11 @@ export const TaskStatusTag: React.FC<{ value: TaskStatus | string }> = ({ value 
 
 export const ScheduleStatusTag: React.FC<{ value: string }> = ({ value }) => {
   const meta = resolveMeta(value, scheduleStatusMeta);
+  return <Tag color={meta.color}>{meta.label}</Tag>;
+};
+
+export const NotificationSeverityTag: React.FC<{ value: NotificationSeverity | string }> = ({ value }) => {
+  const meta = resolveMeta(value, notificationSeverityMeta);
   return <Tag color={meta.color}>{meta.label}</Tag>;
 };
 
