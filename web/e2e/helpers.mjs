@@ -33,12 +33,25 @@ export async function login(page) {
   if (await username.isVisible().catch(() => false)) {
     await username.fill(required('SCANNER_E2E_USERNAME'));
     await page.getByLabel('密码', { exact: true }).fill(required('SCANNER_E2E_PASSWORD'));
-    await page.getByRole('button', { name: '登录', exact: true }).click();
+    // Ant Design renders the Chinese label with an accessible whitespace
+    // separator ("登 录"). Match that stable label without waiting forever
+    // when the UI library inserts the separator.
+    await page.getByRole('button', { name: /登\s*录/ }).click();
   }
-  await expect(page.getByText('资产列表', { exact: true })).toBeVisible();
+  await expect(page.getByRole('banner').getByText('资产列表', { exact: true })).toBeVisible();
 }
 
 export async function chooseSelect(dialog, label, option) {
-  await dialog.getByLabel(label, { exact: true }).click();
-  await dialog.page().getByText(option, { exact: false }).last().click();
+  // Ant Design's labelled Select exposes a readonly search input. Clicking
+  // that input directly can be intercepted by the rendered selection item;
+  // click the selector container belonging to the labelled form item.
+  const item = dialog.locator('.ant-form-item').filter({ hasText: label }).first();
+  await item.locator('.ant-select-selector').click();
+  const exactOption = dialog.page().getByText(option, { exact: true });
+  if (await exactOption.count()) {
+    await exactOption.last().click();
+  } else {
+    // Keep a tolerant fallback for options rendered with explanatory text.
+    await dialog.page().getByText(option, { exact: false }).last().click();
+  }
 }

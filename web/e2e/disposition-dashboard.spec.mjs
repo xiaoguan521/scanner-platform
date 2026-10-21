@@ -9,7 +9,7 @@ test('dashboard down-drill reaches the real findings collection', async ({ page 
   await page.getByRole('link', { name: '查看漏洞列表', exact: true }).click();
   await expect(page).toHaveURL(/#\/findings/);
   await expect(page.getByText('漏洞发现与生命周期闭环看板', { exact: true })).toBeVisible();
-  await expect(page.getByLabel('检测方式筛选', { exact: true })).toBeVisible();
+  await expect(page.getByRole('combobox', { name: '检测方式筛选', exact: true })).toBeVisible();
 });
 
 test('finding detail can be opened without mutating the finding', async ({ page }) => {

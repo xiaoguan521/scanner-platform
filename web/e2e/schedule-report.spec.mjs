@@ -23,7 +23,8 @@ test('an existing task can be selected for a frozen report when explicitly suppl
   const body = await response.json();
   expect(body.items?.some((item) => item.id === taskID), `task ${taskID} was not returned by the authenticated Server`).toBeTruthy();
   await page.goto('/#/reports');
-  await page.getByLabel('扫描任务', { exact: true }).click();
+  const taskField = page.getByLabel('扫描任务', { exact: true }).first();
+  await taskField.click();
   await page.getByText(taskID, { exact: false }).last().click();
-  await expect(page.getByLabel('扫描任务', { exact: true })).toContainText(taskID);
+  await expect(taskField).toContainText(taskID);
 });

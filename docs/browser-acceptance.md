@@ -34,6 +34,10 @@ make test-browser
 
 三份脚本共 5 个测试，`npm --prefix web run test:e2e -- --list` 可在不连接 Server 的情况下检查清单。没有 `SCANNER_E2E_FINDING_ID` 或 `SCANNER_E2E_TASK_ID` 时，相应的深入检查会跳过；完整实跑仍需通过 `make test-browser` 在隔离靶机上执行。
 
+## PostgreSQL 隔离回归记录
+
+2026-10-21 已在临时 PostgreSQL 数据库和隔离靶机上运行完整五条浏览器用例并全部通过。临时账号、资产、范围审批、任务和发现项在回归结束后清理；仓库不保存目标地址、密钥或扫描明细。该结果证明 PostgreSQL 模式下的资产登记、授权、自动综合扫描、SSH/Trivy/Nuclei 结果展示、总览下钻、发现项只读详情以及定时/报告页面可以贯通。批量漏洞处置/指派的浏览器写入操作、发布级范围抓包和完整节点生命周期仍需单独验收。
+
 ## 结果解释
 
 - 失败在登录或资产登记：先检查 Server 地址、账号和数字 IP 校验。

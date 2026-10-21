@@ -5,11 +5,11 @@ test('authorized asset to automatic scan result journey', async ({ page }) => {
   const { target, ranges } = authorizedScope();
   await login(page);
 
-  await page.getByText('资产列表', { exact: true }).click();
+  await page.getByRole('complementary').getByText('资产列表', { exact: true }).click();
   await expect(page.getByText('资产登记台账', { exact: true })).toBeVisible();
   const existingAsset = page.locator('tr').filter({ hasText: target });
   if (await existingAsset.count() === 0) {
-    await page.getByRole('button', { name: '登记资产', exact: true }).click();
+    await page.getByText('登记资产', { exact: true }).click();
     const dialog = page.getByRole('dialog', { name: '登记新资产' });
     await dialog.getByLabel('资产地址', { exact: true }).fill(target);
     await dialog.getByLabel('所属业务组', { exact: true }).fill('隔离浏览器验收');
@@ -18,9 +18,9 @@ test('authorized asset to automatic scan result journey', async ({ page }) => {
     await expect(page.locator('tr').filter({ hasText: target })).toBeVisible();
   }
 
-  await page.getByText('扫描任务与计划', { exact: true }).click();
+  await page.getByRole('complementary').getByText('扫描任务与计划', { exact: true }).click();
   await expect(page.getByText('扫描任务', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: '创建扫描任务', exact: true }).click();
+  await page.getByText('创建扫描任务', { exact: true }).click();
   const dialog = page.getByRole('dialog').filter({ hasText: '创建自动综合扫描' });
   await chooseSelect(dialog, '已登记主机', target);
   await dialog.getByRole('button', { name: '下一步', exact: true }).click();
@@ -52,7 +52,7 @@ test('authorized asset to automatic scan result journey', async ({ page }) => {
   await page.reload();
   const row = page.locator('tr').filter({ hasText: created.id });
   await expect(row).toBeVisible();
-  await row.getByRole('button', { name: '详情', exact: true }).click();
+  await row.getByRole('button', { name: /详\s*情/ }).click();
   const detail = page.getByRole('dialog').filter({ hasText: `任务详情：${created.id}` });
   await expect(detail).toContainText('扫描结果');
   await expect(detail).toContainText('开放端口');
