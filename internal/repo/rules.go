@@ -180,22 +180,9 @@ func (s *RuntimeStore) ListRuleJobs(ctx context.Context) ([]rules.Job, error) {
 	return out, rows.Err()
 }
 func (s *RuntimeStore) ListRules(ctx context.Context) ([]rules.Bundle, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT data FROM local_rule_bundles ORDER BY version DESC")
+	page, err := s.ListRulesPage(ctx, RuleListQuery{Page: 1})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := []rules.Bundle{}
-	for rows.Next() {
-		var data string
-		var bundle rules.Bundle
-		if err := rows.Scan(&data); err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal([]byte(data), &bundle); err != nil {
-			return nil, err
-		}
-		out = append(out, bundle)
-	}
-	return out, rows.Err()
+	return page.Items, nil
 }

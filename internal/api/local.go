@@ -178,6 +178,21 @@ func registerLocalHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui func
 		}
 	}))
 	mux.HandleFunc("GET /api/v1/nodes", ui(false, func(w http.ResponseWriter, r *http.Request) {
+		if query, paged, ok := parseNodeListQuery(r); paged {
+			if !ok {
+				bad(w, http.StatusBadRequest, "invalid_node_list_query")
+				return
+			}
+			page, err := store.ListNodesPage(r.Context(), query)
+			if errors.Is(err, repo.ErrInvalidNodeListQuery) {
+				bad(w, http.StatusBadRequest, "invalid_node_list_query")
+				return
+			}
+			if !runtimeStoreError(w, err) {
+				runtimeJSON(w, http.StatusOK, PageListResponse[repo.LocalNode]{Items: page.Items, Total: page.Total, Page: page.Page, PageSize: page.PageSize})
+			}
+			return
+		}
 		items, err := store.ListNodes(r.Context())
 		if !runtimeStoreError(w, err) {
 			runtimeJSON(w, 200, ListResponse[repo.LocalNode]{Items: items, Total: len(items)})

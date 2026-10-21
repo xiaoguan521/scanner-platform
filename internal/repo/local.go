@@ -1089,27 +1089,11 @@ func (s *RuntimeStore) TouchNodeState(ctx context.Context, id, kind, task, local
 }
 
 func (s *RuntimeStore) ListNodes(ctx context.Context) ([]LocalNode, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT data FROM local_nodes ORDER BY id")
+	page, err := s.ListNodesPage(ctx, NodeListQuery{Page: 1})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := []LocalNode{}
-	for rows.Next() {
-		var data string
-		var node LocalNode
-		if err := rows.Scan(&data); err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal([]byte(data), &node); err != nil {
-			return nil, err
-		}
-		if time.Since(node.LastHeartbeat) > 10*time.Second {
-			node.Status = "OFFLINE"
-		}
-		out = append(out, node)
-	}
-	return out, rows.Err()
+	return page.Items, nil
 }
 
 func (s *RuntimeStore) TaskStateForWorker(ctx context.Context, id, worker string) string {

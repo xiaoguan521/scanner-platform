@@ -55,6 +55,21 @@ func registerRuleHandlers(mux *http.ServeMux, store *repo.RuntimeStore, ui func(
 		}
 	}))
 	mux.HandleFunc("GET /api/v1/rules", ui(false, func(w http.ResponseWriter, r *http.Request) {
+		if query, paged, ok := parseRuleListQuery(r); paged {
+			if !ok {
+				bad(w, http.StatusBadRequest, "invalid_rule_list_query")
+				return
+			}
+			page, err := store.ListRulesPage(r.Context(), query)
+			if errors.Is(err, repo.ErrInvalidRuleListQuery) {
+				bad(w, http.StatusBadRequest, "invalid_rule_list_query")
+				return
+			}
+			if !runtimeStoreError(w, err) {
+				runtimeJSON(w, http.StatusOK, PageListResponse[rules.Bundle]{Items: page.Items, Total: page.Total, Page: page.Page, PageSize: page.PageSize})
+			}
+			return
+		}
 		items, err := store.ListRules(r.Context())
 		if !runtimeStoreError(w, err) {
 			runtimeJSON(w, 200, ListResponse[rules.Bundle]{Items: items, Total: len(items)})

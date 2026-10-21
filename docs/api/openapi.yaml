@@ -1321,45 +1321,71 @@ paths:
   "/api/v1/nodes":
     get:
       summary: Authenticated local nodes
+      description: "Without query parameters this keeps the legacy complete list response. With list parameters, the Server returns a bounded page and never expands the node scope."
+      parameters:
+      - in: query
+        name: page
+        schema: {type: integer, minimum: 1, default: 1}
+      - in: query
+        name: page_size
+        schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+      - in: query
+        name: q
+        schema: {type: string, maxLength: 160}
+        description: Search node ID, kind or host ID
+      - in: query
+        name: sort
+        schema: {type: string, enum: [id, -id, kind, -kind, status, -status, last_heartbeat, -last_heartbeat]}
       responses:
         '200':
-          description: Local operation result
+          description: Local operation result; legacy complete list without query parameters, bounded page otherwise
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  items:
-                    type: array
+                oneOf:
+                - type: object
+                  properties:
                     items:
-                      "$ref": "#/components/schemas/NodeInfo"
-                  total:
-                    type: integer
-                required:
-                - items
-                - total
+                      type: array
+                      items: {"$ref": "#/components/schemas/NodeInfo"}
+                    total: {type: integer}
+                  required: [items, total]
+                - "$ref": "#/components/schemas/NodePage"
       security:
       - sessionCookie: []
   "/api/v1/rules":
     get:
       summary: Authenticated local rules
+      description: "Without query parameters this keeps the legacy complete list response. With list parameters, the Server returns a bounded page of the local rule catalog."
+      parameters:
+      - in: query
+        name: page
+        schema: {type: integer, minimum: 1, default: 1}
+      - in: query
+        name: page_size
+        schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+      - in: query
+        name: q
+        schema: {type: string, maxLength: 160}
+        description: Search rule version or channel
+      - in: query
+        name: sort
+        schema: {type: string, enum: [version, -version, channel, -channel, published_at, -published_at]}
       responses:
         '200':
-          description: Local operation result
+          description: Local operation result; legacy complete list without query parameters, bounded page otherwise
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  items:
-                    type: array
+                oneOf:
+                - type: object
+                  properties:
                     items:
-                      "$ref": "#/components/schemas/RuleBundle"
-                  total:
-                    type: integer
-                required:
-                - items
-                - total
+                      type: array
+                      items: {"$ref": "#/components/schemas/RuleBundle"}
+                    total: {type: integer}
+                  required: [items, total]
+                - "$ref": "#/components/schemas/RulePage"
       security:
       - sessionCookie: []
   "/api/v1/schedules":
@@ -4346,6 +4372,16 @@ components:
           type: array
           items:
             "$ref": "#/components/schemas/EngineStatus"
+    NodePage:
+      type: object
+      required: [items, total, page, pageSize]
+      properties:
+        items:
+          type: array
+          items: {"$ref": "#/components/schemas/NodeInfo"}
+        total: {type: integer, minimum: 0}
+        page: {type: integer, minimum: 1}
+        pageSize: {type: integer, minimum: 1, maximum: 100}
     RuleBundle:
       type: object
       required:
@@ -4393,6 +4429,16 @@ components:
           description: True only when the Updater verified the installed manifest bytes and detached Ed25519 signature against its separately configured trusted public key. A signature file alone or locally prepared unsigned data does not set this flag.
         engineValidated:
           type: boolean
+    RulePage:
+      type: object
+      required: [items, total, page, pageSize]
+      properties:
+        items:
+          type: array
+          items: {"$ref": "#/components/schemas/RuleBundle"}
+        total: {type: integer, minimum: 0}
+        page: {type: integer, minimum: 1}
+        pageSize: {type: integer, minimum: 1, maximum: 100}
     PortRange:
       type: object
       required:

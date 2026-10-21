@@ -8,6 +8,12 @@
 - `/reports` 页面使用 Server 分页结果，提供报告名称/创建人/快照搜索、状态和格式筛选、分页大小选择及加载状态；筛选改变时回到第一页，刷新和异步生成后保留当前查询。
 - 已新增仓储、API 和前端源码契约测试，覆盖排序白名单、SQLite LIKE 转义、空结果分页大小、格式/状态筛选、重复/未知查询参数拒绝及页面响应字段。已通过 `make test`（含 race）、`make lint`、`make build`、`npm --prefix web run build`、`node web/src/pages/Reports/list.test.mjs`、Ruby OpenAPI YAML 解析和 `git diff --check`；真实浏览器交互仍需 `make test-browser`。
 
+## 2026-10-21：节点与规则版本清册服务端分页
+
+- `GET /api/v1/nodes` 与 `GET /api/v1/rules` 无查询参数时继续返回兼容的完整清单；带 `page`、`page_size`、`q` 或 `sort` 时由 Server 执行有界分页、白名单排序和字段限定搜索。节点搜索只覆盖节点 ID、类型和主机 ID，规则搜索只覆盖版本和渠道；不会扩大节点通信范围或读取规则原始文件。
+- 节点与规则版本页面使用独立分页状态、搜索框和加载状态；节点心跳和规则目录仍按原轮询周期刷新，规则导入/激活操作保持原有权限、签名和版本门禁。
+- 已新增仓储、API 和前端源码契约测试，覆盖分页/排序、搜索、空结果、重复/未知查询参数和排序白名单拒绝。已通过 `make test`（含 race）、`make lint`、`make build`、`npm --prefix web run build`、27 个前端源码契约测试、Ruby OpenAPI YAML 解析和 `git diff --check`；真实浏览器交互仍需 `make test-browser`。
+
 ## 2026-10-21：漏洞清册服务端分页与筛选
 
 - `/api/v1/findings` 保留无查询参数时的兼容完整响应；带分页参数或筛选条件时由 Server 执行有界分页、稳定排序、搜索和分类计数。筛选只覆盖归一化发现字段，前端不再一次加载全部发现项；跨页批量选择继续携带状态/指派快照，由 Server 做最终并发校验。
