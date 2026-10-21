@@ -96,6 +96,9 @@ func (s *RuntimeStore) initLocal(ctx context.Context) error {
 			triggered_at TEXT NOT NULL, error TEXT NOT NULL DEFAULT '')`,
 		`CREATE INDEX IF NOT EXISTS schedule_runs_history ON schedule_runs(schedule_id,triggered_at DESC,id DESC)`,
 		`CREATE TABLE IF NOT EXISTS local_nodes(id TEXT PRIMARY KEY,data TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS node_lifecycle(id TEXT PRIMARY KEY,kind TEXT NOT NULL CHECK(kind IN ('worker','updater')),host_id TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('REGISTERED','ONLINE','OFFLINE','REVOKED')),registered_at TEXT NOT NULL,last_heartbeat TEXT,revoked_at TEXT,offline_generation INTEGER NOT NULL DEFAULT 0)`,
+		`CREATE TABLE IF NOT EXISTS node_lifecycle_events(id TEXT PRIMARY KEY,node_id TEXT NOT NULL REFERENCES node_lifecycle(id),kind TEXT NOT NULL,generation INTEGER NOT NULL,created_at TEXT NOT NULL,UNIQUE(node_id,kind,generation))`,
+		`CREATE INDEX IF NOT EXISTS idx_node_lifecycle_events_node ON node_lifecycle_events(node_id,created_at)`,
 		`CREATE TABLE IF NOT EXISTS scan_task_progress(
 			task_id TEXT PRIMARY KEY REFERENCES scan_tasks(id) ON DELETE CASCADE,
 			worker_id TEXT NOT NULL, phase TEXT NOT NULL, completed INTEGER NOT NULL,
@@ -1070,6 +1073,9 @@ func (s *RuntimeStore) TouchNode(ctx context.Context, id, kind, task string, eng
 // readiness status. An empty localRuleVersion preserves the last reported
 // value so older updater/report heartbeats do not erase Worker state.
 func (s *RuntimeStore) TouchNodeState(ctx context.Context, id, kind, task, localRuleVersion, nodeStatus string, engineStatus ...[]taskflow.EngineStatus) error {
+	if err := s.TouchNodeLifecycle(ctx, id, kind); err != nil {
+		return err
+	}
 	status := "ONLINE"
 	if task != "" {
 		status = "BUSY"

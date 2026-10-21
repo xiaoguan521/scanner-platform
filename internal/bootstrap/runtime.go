@@ -352,7 +352,7 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		nodeTokenRegistry = api.NewNodeTokenRegistry(tokens)
-		handler = api.NodeAuthMiddlewareWithRegistry(handler, nodeTokenRegistry)
+		handler = api.NodeAuthMiddlewareWithRegistry(api.NodeLifecycleMiddleware(handler, store), nodeTokenRegistry)
 	}
 	server := &http.Server{Addr: *addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 	var nodeServer *http.Server
@@ -364,7 +364,7 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		nodeListener = tls.NewListener(listener, nodeTLSConfig)
-		nodeHandler := api.NodeProtocolHandler(api.NodeAuthMiddlewareWithRegistry(baseHandler, nodeTokenRegistry))
+		nodeHandler := api.NodeProtocolHandler(api.NodeAuthMiddlewareWithRegistry(api.NodeLifecycleMiddleware(baseHandler, store), nodeTokenRegistry))
 		nodeServer = &http.Server{Addr: *nodeListen, Handler: nodeHandler, ReadHeaderTimeout: 5 * time.Second, TLSConfig: nodeTLSConfig}
 		go func() {
 			if err := nodeServer.Serve(nodeListener); err != nil && !errors.Is(err, http.ErrServerClosed) {

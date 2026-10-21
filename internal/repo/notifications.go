@@ -85,6 +85,9 @@ func insertNotification(ctx context.Context, tx *sql.Tx, n Notification) error {
 // persisted state. Re-running it is idempotent and never starts a scan or
 // contacts a target.
 func (s *RuntimeStore) RefreshNotifications(ctx context.Context) error {
+	if err := s.RefreshNodeLifecycle(ctx, time.Now()); err != nil {
+		return fmt.Errorf("refresh node lifecycle: %w", err)
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -92,6 +95,30 @@ func (s *RuntimeStore) RefreshNotifications(ctx context.Context) error {
 	defer tx.Rollback()
 	now := time.Now().UTC()
 	created := now.Format(time.RFC3339Nano)
+	nodeRows, err := tx.QueryContext(ctx, `SELECT id,node_id FROM node_lifecycle_events WHERE kind='OFFLINE' ORDER BY created_at DESC LIMIT 1000`)
+	if err != nil {
+		return fmt.Errorf("list offline node events: %w", err)
+	}
+	type nodeEvent struct{ id, nodeID string }
+	nodeEvents := make([]nodeEvent, 0)
+	for nodeRows.Next() {
+		var item nodeEvent
+		if err := nodeRows.Scan(&item.id, &item.nodeID); err != nil {
+			nodeRows.Close()
+			return err
+		}
+		nodeEvents = append(nodeEvents, item)
+	}
+	if err := nodeRows.Err(); err != nil {
+		nodeRows.Close()
+		return err
+	}
+	nodeRows.Close()
+	for _, item := range nodeEvents {
+		if err := insertNotification(ctx, tx, Notification{ID: "notification-" + item.id, Kind: "node_offline", Severity: "warning", Title: "节点心跳中断", Message: "一个已登记节点超过十秒未上报心跳，请检查节点状态。", ObjectType: "node", ObjectID: item.nodeID, CreatedAt: created}); err != nil {
+			return err
+		}
+	}
 
 	if hasScopes, err := notificationTableExists(ctx, tx); err != nil {
 		return err

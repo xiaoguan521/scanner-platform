@@ -70,6 +70,12 @@ type RuntimeBackend interface {
 	ListKnowledge(ctx context.Context) ([]findings.KnowledgeEntry, error)
 	ListKnowledgePage(ctx context.Context, query KnowledgeListQuery) (KnowledgeListPage, error)
 	ListNodes(ctx context.Context) ([]LocalNode, error)
+	GetNodeLifecycle(ctx context.Context, id string) (NodeLifecycle, bool, error)
+	RegisterNodeLifecycle(ctx context.Context, in NodeLifecycle, actor string) (NodeLifecycle, error)
+	RevokeNodeLifecycle(ctx context.Context, id, actor string) error
+	TouchNodeLifecycle(ctx context.Context, id, kind string) error
+	RefreshNodeLifecycle(ctx context.Context, now time.Time) error
+	ListNodeLifecycleEvents(ctx context.Context, id string) ([]NodeLifecycleEvent, error)
 	ListNodesPage(ctx context.Context, in NodeListQuery) (NodeListPage, error)
 	ListNotificationDeliveries(ctx context.Context, limit, offset int) (NotificationDeliveryList, error)
 	ListNotifications(ctx context.Context, unreadOnly bool) (NotificationList, error)

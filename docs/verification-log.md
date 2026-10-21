@@ -676,3 +676,10 @@
 
 证据：`python3 -m unittest scripts/test_verify_engine_flags.py`（2 项通过）、`python3 -m py_compile scripts/install_engines.py scripts/verify_engine_flags.py scripts/test_verify_engine_flags.py`、本机 `python3 scripts/verify_engine_flags.py`（Nuclei 23 项、Trivy 20 项通过，ZAP 明确跳过）；未执行任何扫描。
 
+## 2026-10-21：节点生命周期首阶段与 PostgreSQL 迁移回归
+
+- 新增 PostgreSQL 迁移 `0017_node_lifecycle.sql`，SQLite 同步创建节点生命周期和事件表。管理员可登记/吊销明确的 Worker 或 Updater 节点；心跳将已登记节点置为 `ONLINE`，十秒无心跳后由 Server Tick 置为 `OFFLINE`，恢复时记录 `RECOVERED`，重复刷新不会重复生成事件；登记/吊销写入审计。
+- 节点协议在启用 owner-only 令牌注册表时会在 Bearer 身份校验后查询生命周期，吊销节点返回 `403 node_revoked`，节点类型不匹配拒绝；未配置令牌注册表的回环兼容模式仍不伪造节点身份。离线事件进入 SQLite/PostgreSQL 平台内通知，通知不包含目标地址、凭据或引擎输出。
+- 新增生命周期管理/查询 API 和 OpenAPI 契约；自动签发证书/令牌、部署编排及节点管理 UI 仍未实现，不会自动发现主机或扩大扫描范围。
+- 验证：`make build`、`make lint`、`make test`（Go race 与 Python 采集测试）通过；`POSTGRES_DSN_FILE="$PWD/runtime/postgres/dsn" make migrate-postgres` 应用并记录 `0017_node_lifecycle`；`POSTGRES_DSN_FILE="$PWD/runtime/postgres/dsn" go test -tags=lab ./internal/repo -run TestPostgresNodeLifecycleLab -count=1` 通过；`git diff --check` 通过。测试使用隔离 PostgreSQL 和临时节点 ID，未写入真实 IP、密钥或扫描结果。
+

@@ -31,4 +31,4 @@ sec-server --listen 127.0.0.1:8080 \
   --node-token-file /path/to/node-tokens
 ```
 
-`--node-listen` 只接受明确的数字 IP 和端口，不能使用未指定地址、组播地址或主机名；私钥必须是 owner-only 普通文件。指定 `--node-tls-client-ca` 后，Server 会要求并校验节点客户端证书；Bearer 令牌仍保留，用于节点 ID 绑定和吊销。独立端口只路由 Worker、Updater 和 heartbeat 协议路径，强制 TLS 1.3，网页路径返回 404。Worker/Updater 的 `--server` 应指向 `https://` 节点地址，并使用各自的 owner-only 单令牌文件；需要自建 CA 时，额外传 `--node-ca-cert`，需要 mTLS 时再传成对的 `--node-client-cert` 与 `--node-client-key`。Server 收到 `SIGHUP` 会原子重载证书、客户端 CA 和节点令牌；新文件解析失败会保留上一份有效配置。客户端证书轮换后重启对应 Worker/Updater，完整节点生命周期和自动签发仍待后续。
+`--node-listen` 只接受明确的数字 IP 和端口，不能使用未指定地址、组播地址或主机名；私钥必须是 owner-only 普通文件。指定 `--node-tls-client-ca` 后，Server 会要求并校验节点客户端证书；Bearer 令牌仍保留，用于节点 ID 绑定和吊销。独立端口只路由 Worker、Updater 和 heartbeat 协议路径，强制 TLS 1.3，网页路径返回 404。Worker/Updater 的 `--server` 应指向 `https://` 节点地址，并使用各自的 owner-only 单令牌文件；需要自建 CA 时，额外传 `--node-ca-cert`，需要 mTLS 时再传成对的 `--node-client-cert` 与 `--node-client-key`。Server 收到 `SIGHUP` 会原子重载证书、客户端 CA 和节点令牌；新文件解析失败会保留上一份有效配置。客户端证书轮换后重启对应 Worker/Updater。节点生命周期首阶段由管理员显式注册/吊销，Server 根据心跳记录在线、离线和恢复事件并生成平台内离线通知；自动签发、部署编排和管理 UI 仍待后续。

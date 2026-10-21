@@ -14,12 +14,18 @@ import (
 // PostgreSQL projections. It never starts a scan, contacts a target, or
 // includes target addresses and engine output in a notification.
 func (s *PostgresRuntimeStore) RefreshNotifications(ctx context.Context) error {
+	if err := s.RefreshNodeLifecycle(ctx, time.Now()); err != nil {
+		return fmt.Errorf("refresh postgres node lifecycle: %w", err)
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin postgres notification refresh: %w", err)
 	}
 	defer tx.Rollback()
 	now := time.Now().UTC()
+	if err := s.refreshPostgresNodeNotifications(ctx, tx, now); err != nil {
+		return err
+	}
 	if err := s.refreshPostgresScopeNotifications(ctx, tx, now); err != nil {
 		return err
 	}
@@ -31,6 +37,34 @@ func (s *PostgresRuntimeStore) RefreshNotifications(ctx context.Context) error {
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit postgres notification refresh: %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresRuntimeStore) refreshPostgresNodeNotifications(ctx context.Context, tx *sql.Tx, now time.Time) error {
+	rows, err := tx.QueryContext(ctx, `SELECT id,node_id FROM node_lifecycle_events WHERE kind='OFFLINE' ORDER BY created_at DESC LIMIT 1000`)
+	if err != nil {
+		return fmt.Errorf("list postgres offline node events: %w", err)
+	}
+	type nodeEvent struct{ id, nodeID string }
+	events := []nodeEvent{}
+	for rows.Next() {
+		var item nodeEvent
+		if err = rows.Scan(&item.id, &item.nodeID); err != nil {
+			rows.Close()
+			return err
+		}
+		events = append(events, item)
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, item := range events {
+		if err := insertPostgresNotificationTx(ctx, tx, Notification{ID: "notification-" + item.id, Kind: "node_offline", Severity: "warning", Title: "节点心跳中断", Message: "一个已登记节点超过十秒未上报心跳，请检查节点状态。", ObjectType: "node", ObjectID: item.nodeID}, now); err != nil {
+			return err
+		}
 	}
 	return nil
 }

@@ -10,6 +10,8 @@ import (
 	"os"
 	"strings"
 	"sync/atomic"
+
+	"scanner-platform/internal/repo"
 )
 
 const (
@@ -226,6 +228,39 @@ func NodeAuthMiddlewareWithRegistry(next http.Handler, registry *NodeTokenRegist
 		}
 		ctx := contextWithNodeIdentity(r.Context(), nodeID)
 		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// NodeLifecycleMiddleware checks the Server-owned revocation tombstone after
+// the file-backed token has established identity. Missing lifecycle metadata
+// preserves explicitly configured legacy token files; heartbeats never enroll.
+func NodeLifecycleMiddleware(next http.Handler, store interface {
+	GetNodeLifecycle(context.Context, string) (repo.NodeLifecycle, bool, error)
+}) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !IsNodeAPIPath(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		id := AuthenticatedNodeID(r)
+		if id == "" {
+			runtimeJSON(w, http.StatusUnauthorized, APIError{Error: "node_auth_required", Message: "节点认证失败"})
+			return
+		}
+		item, exists, err := store.GetNodeLifecycle(r.Context(), id)
+		if err != nil {
+			runtimeJSON(w, http.StatusServiceUnavailable, APIError{Error: "node_registry_unavailable", Message: "节点状态不可用"})
+			return
+		}
+		if exists && item.Status == "REVOKED" {
+			runtimeJSON(w, http.StatusForbidden, APIError{Error: "node_revoked", Message: "节点已吊销"})
+			return
+		}
+		if exists && (strings.HasPrefix(r.URL.Path, "/api/v1/worker/") && item.Kind != "worker" || strings.HasPrefix(r.URL.Path, "/api/v1/updater/") && item.Kind != "updater") {
+			runtimeJSON(w, http.StatusForbidden, APIError{Error: "node_kind_mismatch", Message: "节点类型不匹配"})
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 

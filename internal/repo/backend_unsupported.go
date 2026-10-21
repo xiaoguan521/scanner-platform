@@ -18,6 +18,25 @@ import (
 // falls back to SQLite for a route that has not been ported yet.
 type unsupportedRuntimeBackend struct{}
 
+func (unsupportedRuntimeBackend) GetNodeLifecycle(context.Context, string) (NodeLifecycle, bool, error) {
+	return NodeLifecycle{}, false, backendCapabilityError("GetNodeLifecycle")
+}
+func (unsupportedRuntimeBackend) RegisterNodeLifecycle(context.Context, NodeLifecycle, string) (NodeLifecycle, error) {
+	return NodeLifecycle{}, backendCapabilityError("RegisterNodeLifecycle")
+}
+func (unsupportedRuntimeBackend) RevokeNodeLifecycle(context.Context, string, string) error {
+	return backendCapabilityError("RevokeNodeLifecycle")
+}
+func (unsupportedRuntimeBackend) TouchNodeLifecycle(context.Context, string, string) error {
+	return backendCapabilityError("TouchNodeLifecycle")
+}
+func (unsupportedRuntimeBackend) RefreshNodeLifecycle(context.Context, time.Time) error {
+	return backendCapabilityError("RefreshNodeLifecycle")
+}
+func (unsupportedRuntimeBackend) ListNodeLifecycleEvents(context.Context, string) ([]NodeLifecycleEvent, error) {
+	return nil, backendCapabilityError("ListNodeLifecycleEvents")
+}
+
 func backendCapabilityError(operation string) error {
 	return fmt.Errorf("%w: %s", ErrBackendCapability, operation)
 }

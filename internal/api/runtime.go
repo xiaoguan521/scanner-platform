@@ -345,6 +345,10 @@ func runtimeStoreError(w http.ResponseWriter, err error) bool {
 		runtimeJSON(w, http.StatusConflict, APIError{Error: "task_state_conflict", Message: "任务当前状态不支持暂停或恢复"})
 		return true
 	}
+	if errors.Is(err, repo.ErrNodeRevoked) {
+		runtimeJSON(w, http.StatusForbidden, APIError{Error: "node_revoked", Message: "节点已吊销"})
+		return true
+	}
 	if errors.Is(err, repo.ErrBackendCapability) {
 		runtimeJSON(w, http.StatusServiceUnavailable, APIError{Error: "backend_capability_unavailable", Message: "当前存储后端尚未实现此功能"})
 		return true

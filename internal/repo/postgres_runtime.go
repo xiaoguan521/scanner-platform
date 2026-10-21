@@ -1285,6 +1285,9 @@ func (s *PostgresRuntimeStore) TouchNodeState(ctx context.Context, id, kind, tas
 	if strings.TrimSpace(id) == "" || (kind != "worker" && kind != "updater") {
 		return ErrInvalidTask
 	}
+	if err := s.TouchNodeLifecycle(ctx, id, kind); err != nil {
+		return err
+	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO nodes(id,kind,host_id,token_hash,last_heartbeat)
 		VALUES ($1,$2,$3,$4,CURRENT_TIMESTAMP)
 		ON CONFLICT(id) DO UPDATE SET kind=EXCLUDED.kind,last_heartbeat=EXCLUDED.last_heartbeat`, id, kind, "server", "runtime:"+id)

@@ -1491,6 +1491,116 @@ paths:
                 - "$ref": "#/components/schemas/NodePage"
       security:
       - sessionCookie: []
+  "/api/v1/nodes/register":
+    post:
+      tags:
+      - system
+      summary: Register an expected Worker or Updater node
+      description: "Admin-only lifecycle metadata registration. This records the explicitly supplied node identity; it does not discover hosts, issue credentials, or start a scan."
+      security:
+      - sessionCookie: []
+      parameters:
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema: {type: string, enum: [XMLHttpRequest]}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/NodeLifecycleRegistration"
+      responses:
+        '201':
+          description: Registered node lifecycle record
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/NodeLifecycle"}
+        '400': {description: Invalid node identity}
+        '401': {description: Unauthenticated}
+        '403': {description: Admin role or mutation header required}
+        '409': {description: Node ID already registered}
+        '503': {description: Storage capability unavailable}
+  "/api/v1/nodes/{id}/revoke":
+    post:
+      tags:
+      - system
+      summary: Revoke a registered node
+      description: "Admin-only idempotent revocation. A revoked identity is rejected by the authenticated Worker/Updater protocol when node token authentication is enabled."
+      security:
+      - sessionCookie: []
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema: {type: string, pattern: "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$"}
+      - in: header
+        name: X-Requested-With
+        required: true
+        schema: {type: string, enum: [XMLHttpRequest]}
+      responses:
+        '200':
+          description: Node revoked or already revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties: {status: {type: string, enum: [REVOKED]}}
+        '400': {description: Invalid node ID}
+        '401': {description: Unauthenticated}
+        '403': {description: Admin role or mutation header required}
+        '404': {description: Node is not registered}
+        '503': {description: Storage capability unavailable}
+  "/api/v1/nodes/{id}/lifecycle":
+    get:
+      tags:
+      - system
+      summary: Read a node lifecycle record
+      security:
+      - sessionCookie: []
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema: {type: string, pattern: "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$"}
+      responses:
+        '200':
+          description: Node lifecycle record
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/NodeLifecycle"}
+        '401': {description: Unauthenticated}
+        '404': {description: Node is not registered}
+        '503': {description: Storage capability unavailable}
+  "/api/v1/nodes/{id}/events":
+    get:
+      tags:
+      - system
+      summary: Read bounded node lifecycle events
+      security:
+      - sessionCookie: []
+      parameters:
+      - in: path
+        name: id
+        required: true
+        schema: {type: string, pattern: "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$"}
+      responses:
+        '200':
+          description: Up to 200 lifecycle events in chronological order
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, total]
+                properties:
+                  items:
+                    type: array
+                    items: {"$ref": "#/components/schemas/NodeLifecycleEvent"}
+                  total: {type: integer, minimum: 0, maximum: 200}
+        '400': {description: Invalid node ID}
+        '401': {description: Unauthenticated}
+        '503': {description: Storage capability unavailable}
   "/api/v1/rules":
     get:
       summary: Authenticated local rules
@@ -4677,6 +4787,41 @@ components:
           type: array
           items:
             "$ref": "#/components/schemas/EngineStatus"
+    NodeLifecycleRegistration:
+      type: object
+      required: [id, kind, hostId]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          pattern: "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$"
+        kind:
+          type: string
+          enum: [worker, updater]
+        hostId:
+          type: string
+          pattern: "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$"
+    NodeLifecycle:
+      type: object
+      required: [id, kind, hostId, status, registeredAt, offlineGeneration]
+      properties:
+        id: {type: string}
+        kind: {type: string, enum: [worker, updater]}
+        hostId: {type: string}
+        status: {type: string, enum: [REGISTERED, ONLINE, OFFLINE, REVOKED]}
+        registeredAt: {type: string, format: date-time}
+        lastHeartbeat: {type: string, format: date-time}
+        revokedAt: {type: string, format: date-time}
+        offlineGeneration: {type: integer, minimum: 0}
+    NodeLifecycleEvent:
+      type: object
+      required: [id, nodeId, kind, generation, createdAt]
+      properties:
+        id: {type: string}
+        nodeId: {type: string}
+        kind: {type: string, enum: [REGISTERED, ONLINE, OFFLINE, RECOVERED, REVOKED]}
+        generation: {type: integer, minimum: 0}
+        createdAt: {type: string, format: date-time}
     NodePage:
       type: object
       required: [items, total, page, pageSize]

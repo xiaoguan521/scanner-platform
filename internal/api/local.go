@@ -9,6 +9,59 @@ import (
 )
 
 func registerLocalHandlers(mux *http.ServeMux, store repo.RuntimeBackend, ui func(bool, http.HandlerFunc) http.HandlerFunc, admin func(http.HandlerFunc) http.HandlerFunc, actor func(*http.Request) string) {
+	mux.HandleFunc("POST /api/v1/nodes/register", admin(func(w http.ResponseWriter, r *http.Request) {
+		var input repo.NodeLifecycle
+		if !runtimeDecode(w, r, &input) {
+			return
+		}
+		item, err := store.RegisterNodeLifecycle(r.Context(), input, actor(r))
+		if errors.Is(err, repo.ErrInvalidNodeLifecycle) {
+			bad(w, http.StatusBadRequest, "invalid_node_registration")
+			return
+		}
+		if errors.Is(err, repo.ErrNodeLifecycleExists) {
+			bad(w, http.StatusConflict, "node_already_registered")
+			return
+		}
+		if !runtimeStoreError(w, err) {
+			runtimeJSON(w, http.StatusCreated, item)
+		}
+	}))
+	mux.HandleFunc("POST /api/v1/nodes/{id}/revoke", admin(func(w http.ResponseWriter, r *http.Request) {
+		err := store.RevokeNodeLifecycle(r.Context(), r.PathValue("id"), actor(r))
+		if errors.Is(err, repo.ErrInvalidNodeLifecycle) {
+			bad(w, http.StatusBadRequest, "invalid_node_id")
+			return
+		}
+		if errors.Is(err, repo.ErrNodeLifecycleNotFound) {
+			bad(w, http.StatusNotFound, "node_not_registered")
+			return
+		}
+		if !runtimeStoreError(w, err) {
+			runtimeJSON(w, http.StatusOK, map[string]string{"status": "REVOKED"})
+		}
+	}))
+	mux.HandleFunc("GET /api/v1/nodes/{id}/lifecycle", ui(false, func(w http.ResponseWriter, r *http.Request) {
+		item, found, err := store.GetNodeLifecycle(r.Context(), r.PathValue("id"))
+		if runtimeStoreError(w, err) {
+			return
+		}
+		if !found {
+			bad(w, http.StatusNotFound, "node_not_registered")
+			return
+		}
+		runtimeJSON(w, http.StatusOK, item)
+	}))
+	mux.HandleFunc("GET /api/v1/nodes/{id}/events", ui(false, func(w http.ResponseWriter, r *http.Request) {
+		items, err := store.ListNodeLifecycleEvents(r.Context(), r.PathValue("id"))
+		if errors.Is(err, repo.ErrInvalidNodeLifecycle) {
+			bad(w, http.StatusBadRequest, "invalid_node_id")
+			return
+		}
+		if !runtimeStoreError(w, err) {
+			runtimeJSON(w, http.StatusOK, ListResponse[repo.NodeLifecycleEvent]{Items: items, Total: len(items)})
+		}
+	}))
 	mux.HandleFunc("POST /api/v1/nodes/heartbeat", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			ID               string                   `json:"id"`
@@ -24,6 +77,13 @@ func registerLocalHandlers(mux *http.ServeMux, store repo.RuntimeBackend, ui fun
 		}
 		if nodeID := AuthenticatedNodeID(r); nodeID != "" && body.ID != nodeID {
 			bad(w, http.StatusUnauthorized, "node_identity_mismatch")
+			return
+		}
+		if item, exists, err := store.GetNodeLifecycle(r.Context(), body.ID); err != nil {
+			runtimeStoreError(w, err)
+			return
+		} else if exists && item.Kind != body.Kind {
+			bad(w, http.StatusForbidden, "node_kind_mismatch")
 			return
 		}
 		if !runtimeWorkerID.MatchString(body.ID) || (body.Kind != "worker" && body.Kind != "updater") || len(body.CurrentTask) > 128 || len(body.LocalRuleVersion) > 200 || body.LocalRuleVersion != "" && !rules.ValidateVersion(body.LocalRuleVersion) {

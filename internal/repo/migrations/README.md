@@ -22,8 +22,9 @@ These files implement the schema in [architecture-v3.2.md §7](../../../docs/arc
 | `postgres/0014_product_catalog.sql` | custom rules and scan plan catalog | 2 |
 | `postgres/0015_finding_work.sql` | frozen task lifecycle threshold, finding notes, assignment history and retest relations | 3 |
 | `postgres/0016_freeze_threshold_marker.sql` | marks newly created task thresholds as frozen; legacy projections fail closed | 0 new tables |
+| `postgres/0017_node_lifecycle.sql` | registered node lifecycle, revocation state and offline/recovery events | 2 |
 
-There are **43 business tables** plus the internal `schema_migrations` journal. All SQL scripts use a transaction, include constraints/indexes and record their version. No users, tokens, rules, targets or example data are seeded.
+There are **45 business tables** plus the internal `schema_migrations` journal. All SQL scripts use a transaction, include constraints/indexes and record their version. No users, tokens, rules, targets or example data are seeded.
 
 ## How to initialize a NEW dedicated database (after review)
 
@@ -52,7 +53,7 @@ unknown or gapped journal entries, and prints only the applied version names.
 It does not create a database, seed users/assets/rules, or switch the running
 SQLite Server to PostgreSQL.
 
-The runner refuses a non-empty public schema with no migration journal, applies versions in order, skips already-recorded versions and aborts on the first SQL error. It does **not** create the PostgreSQL database itself. To run manually, apply migrations `0001_core.sql` through `0016_freeze_threshold_marker.sql` in order. Run one migrator at a time. Never edit an applied migration: add a higher-numbered file. After applying, use the read-only inventory script `bash scripts/check-postgres-schema.sh` to check all 44 tables including the journal, the sixteen recorded migrations, and the task archive/projection columns. The sixteen migrations were executed and journal-checked against the isolated PostgreSQL fixture on 2026-10-21. The Server-side runtime now wires the account, asset, approval, task queue/projection, finding work, report, rule-catalog, rule-job, schedule, notification and product-catalog adapters when explicitly selected; only remaining non-core system administration endpoints are capability-gated.
+The runner refuses a non-empty public schema with no migration journal, applies versions in order, skips already-recorded versions and aborts on the first SQL error. It does **not** create the PostgreSQL database itself. To run manually, apply migrations `0001_core.sql` through `0017_node_lifecycle.sql` in order. Run one migrator at a time. Never edit an applied migration: add a higher-numbered file. After applying, use the read-only inventory script `bash scripts/check-postgres-schema.sh` to check all 46 tables including the journal, the seventeen recorded migrations, and the task archive/projection columns. The seventeen migrations were executed and journal-checked against the isolated PostgreSQL fixture on 2026-10-21. The Server-side runtime now wires the account, asset, approval, task queue/projection, finding work, report, rule-catalog, rule-job, schedule, notification, product-catalog and node-lifecycle adapters when explicitly selected; only remaining non-core system administration endpoints are capability-gated.
 
 ## Important schema differences and boundaries
 
@@ -74,9 +75,9 @@ The runner refuses a non-empty public schema with no migration journal, applies 
 - Rule pinning and SBOM historical version fields have no cascading rule-version foreign key because GC and retention are explicit Server/Updater decisions.
 
 The embedded runner and protected-file checks have unit coverage, and all
-sixteen migrations were executed against an isolated PostgreSQL instance on
+seventeen migrations were executed against an isolated PostgreSQL instance on
 2026-10-21. The queue, task projection, finding, report, schedule, notification
-and product-catalog adapters' `lab` regressions cover their transaction,
+product-catalog and node-lifecycle adapters' `lab` regressions cover their transaction,
 lifecycle, snapshot and worker behavior there. Account/asset/approval
 compatibility, cross-backend parity and the full browser journey still require
 isolated verification; never apply these migrations blindly to an existing
