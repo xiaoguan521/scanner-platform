@@ -4,11 +4,12 @@ import { DataTable } from '../../components/DataState';
 import { Alert, Button, Card, Form, Input, message, Modal, Select, Space, Tag, Typography, Drawer, Descriptions, Checkbox, Row, Col } from 'antd';
 import type { FormInstance } from 'antd';
 import { DownloadOutlined, PlusOutlined } from '@ant-design/icons';
-import type { Asset, AssetProfile, ScanTask } from '../../types';
+import type { Asset, AssetProfile, Finding, ScanTask } from '../../types';
 import { apiClient } from '../../api/client';
 import { useCollection } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
 import { useAuth } from '../../auth/AuthProvider';
+import { FindingStatusTag, SeverityTag } from '../../components/Semantic';
 
 import { compressPorts, summarizePorts, expandPortRanges } from '../Tasks/policy';
 const { Text } = Typography;
@@ -34,6 +35,7 @@ export const AssetsPage: React.FC = () => {
   const {data:assets,setData:setAssets,loading,error} = useCollection('assets');
   const {data:quarantines,setData:setQuarantines} = useCollection('port-quarantines');
   const {data:tasks,loading:taskLoading,error:taskError} = useCollection('tasks');
+  const {data:findings,loading:findingLoading,error:findingError} = useCollection('findings');
   const [detailId,setDetailId]=useState('');const detailAsset=assets.find(a=>a.id===detailId);
   const [releaseTarget,setReleaseTarget]=useState<{assetId:string;port:number}|null>(null);const [releaseReason,setReleaseReason]=useState('');
   const [createOpen,setCreateOpen] = useState(false);
@@ -93,6 +95,25 @@ export const AssetsPage: React.FC = () => {
     for(const task of ordered) if(task.assetId&&!byAsset.has(task.assetId)) byAsset.set(task.assetId,task);
     return byAsset;
   },[tasks]);
+  const assetTaskHistory = useMemo(()=>{
+    const grouped=new Map<string,ScanTask[]>();
+    for(const task of tasks){
+      if(!task.assetId||task.synthetic)continue;
+      const list=grouped.get(task.assetId)??[];
+      list.push(task);grouped.set(task.assetId,list);
+    }
+    for(const list of grouped.values())list.sort((a,b)=>Date.parse(b.createdAt)-Date.parse(a.createdAt));
+    return grouped;
+  },[tasks]);
+  const activeFindingsByAsset = useMemo(()=>{
+    const grouped=new Map<string,Finding[]>();
+    for(const finding of findings){
+      if(!finding.assetId||finding.status==='FIXED'||finding.status==='FALSE_POSITIVE')continue;
+      const list=grouped.get(finding.assetId)??[];
+      list.push(finding);grouped.set(finding.assetId,list);
+    }
+    return grouped;
+  },[findings]);
   const candidateRows = useMemo<CandidateRow[]>(()=>{
     if(!candidateAsset)return [];
     const probe=latestProbes.get(candidateAsset.id);
@@ -202,7 +223,7 @@ export const AssetsPage: React.FC = () => {
       <AssetImport disabled={!canEdit} onImported={async()=>{const result=await apiClient.collection('assets');setAssets(result.items);}}/>
       <Button type="primary" icon={<PlusOutlined/>} disabled={!canEdit} onClick={()=>setCreateOpen(true)}>登记资产</Button>
     </Space>}>
-      <DataTable<Asset> rowKey="id" dataSource={rows} loading={loading||taskLoading} tableLayout="fixed" scroll={{x:1600}} pagination={{pageSize:10}}
+      <DataTable<Asset> rowKey="id" dataSource={rows} loading={loading||taskLoading||findingLoading} tableLayout="fixed" scroll={{x:1900}} pagination={{pageSize:10}}
         columns={[
           {title:'资产地址',dataIndex:'address',width:150,ellipsis:true,render:(value:string,asset:Asset)=><Space direction="vertical" size={0}><Button type="link" style={{padding:0}} onClick={()=>setDetailId(asset.id)}>{value}</Button><Text type="secondary">{asset.name||'未命名'}{asset.isCore?' · 核心':''}</Text></Space>},
           {title:'类型',dataIndex:'kind',width:86,render:(v:string)=><Tag>{v==='host'?'主机':'镜像仓库'}</Tag>},
@@ -221,6 +242,14 @@ export const AssetsPage: React.FC = () => {
             const count=probe.portProbeResults?.length??0;
             return <Space direction="vertical" size={2}><Tag color={count?'blue':'default'}>{count} 个开放候选</Tag>{count>0&&<Button type="link" size="small" style={{padding:0,height:'auto'}} onClick={()=>{setCandidateAsset(asset);setCandidateFilter('');setSelectedCandidatePorts([]);}}>查看与批量申请</Button>}</Space>;
           }},
+          {title:'最近扫描',width:190,render:(_:unknown,asset:Asset)=>{
+            const latest=assetTaskHistory.get(asset.id)?.[0];
+            if(!latest)return <Text type="secondary">尚未扫描</Text>;
+            const finished=latest.chunks?.[0]?.finishedAt;
+            const label=latest.status==='COMPLETED'?'已完成':latest.status==='FAILED'?'失败':latest.status==='CANCELED'?'已取消':latest.status==='RUNNING'?'执行中':latest.status==='PENDING'?'待执行':'处理中';
+            return <Space direction="vertical" size={2}><Tag color={latest.status==='COMPLETED'?'green':latest.status==='FAILED'?'error':latest.status==='CANCELED'?'default':'processing'}>{label}</Tag><Text type="secondary">{new Date(finished??latest.createdAt).toLocaleString()}</Text></Space>;
+          }},
+          {title:'当前风险数',width:110,render:(_:unknown,asset:Asset)=>{if(findingError)return <Text type="secondary">未知</Text>;const count=activeFindingsByAsset.get(asset.id)?.length??0;return <Tag color={count?'error':'green'}>{count}</Tag>}},
           {title:'IP 可达性（ICMP）',width:170,render:(_:unknown,asset:Asset)=>{
             if(asset.kind!=='host')return <Text type="secondary">主机地址适用</Text>;
             const status=checkingAsset===asset.id?'CHECKING':asset.reachabilityStatus??'UNCHECKED';
@@ -240,6 +269,7 @@ export const AssetsPage: React.FC = () => {
     </Card>
     <Drawer title={`资产画像 · ${detailAsset?.name||detailAsset?.address||''}`} open={!!detailAsset} onClose={()=>setDetailId('')} width={960}>
       {detailAsset&&<Space direction="vertical" size={20} style={{width:'100%'}}>
+        {findingError&&<Alert type="warning" showIcon message="漏洞摘要暂时不可用" description="请刷新资产页后重试；资产登记、端口授权和扫描历史仍可查看。"/>}
         <Descriptions bordered size="small" column={2} items={[{key:'address',label:'地址',children:detailAsset.address},{key:'core',label:'核心资产',children:boolLabel(detailAsset.isCore)},...profileFields.map(f=>({key:f.key,label:f.label,children:String(detailAsset[f.key]||'未提供')})),{key:'business',label:'业务组',children:detailAsset.businessGroup},{key:'owner',label:'责任人',children:detailAsset.owner},{key:'reachability',label:'可达性',children:detailAsset.reachabilityStatus==='REACHABLE'?'Ping 可达':detailAsset.reachabilityStatus==='NO_RESPONSE'?'未收到 Ping 响应（可能被屏蔽，不代表离线）':detailAsset.reachabilityStatus==='CHECK_FAILED'?'检测不可用':'尚未检测'}]}/>
         <Card title="资产排除与隔离" size="small"><Space wrap><Tag color="orange">排除：{summarizePorts(detailAsset.skippedPorts)}</Tag><Tag color="red">隔离：{summarizePorts(detailAsset.quarantinedPorts)}</Tag><Button size="small" disabled={!canEdit} onClick={()=>{editForm.setFieldsValue({...profileInput(detailAsset),...detailAsset,requestedPorts:detailAsset.requestedPorts?.join(', ')??'',skippedPorts:compressPorts(detailAsset.skippedPorts)});setEditing(detailAsset);}}>编辑排除端口</Button></Space><Typography.Paragraph type="secondary" style={{marginTop:10,marginBottom:0}}>系统、资产与任务排除取并集；解除隔离不会撤销排除或授予漏洞扫描权限。</Typography.Paragraph></Card>
         <Card title="服务与技术栈" size="small"><DataTable dataSource={detailAsset.services??[]} rowKey={r=>`${r.port}-${r.protocol??'tcp'}`} size="small" scroll={{x:1100}} columns={[
@@ -253,6 +283,20 @@ export const AssetsPage: React.FC = () => {
           {title:'名称 / 类型',render:(_,r)=>`${r.name} · ${r.type==='web'?'Web':'系统'}`},{title:'端口',dataIndex:'port'}, {title:'URL',dataIndex:'url',render:(v:string)=>v||'—'},
           {title:'安全属性',render:(_,r)=><Space direction="vertical" size={0}><Text>HTTPS：{boolLabel(r.https)}</Text><Text>验证码：{boolLabel(r.captcha)}</Text><Text>防爆破：{boolLabel(r.antiBruteForce)}</Text></Space>}, {title:'举证',dataIndex:'evidence'},
         ]}/><Alert style={{marginTop:12}} showIcon type="info" message="弱口令：本次未启用该检测项。发现登录入口不代表存在弱口令。"/></Card>
+        <Card title="漏洞摘要" size="small"><DataTable<Finding> dataSource={activeFindingsByAsset.get(detailAsset.id)??[]} rowKey="id" loading={findingLoading} locale={{emptyText:'当前没有活动漏洞记录'}} pagination={false} scroll={{x:900}} columns={[
+          {title:'严重度',dataIndex:'severity',width:100,render:(value:string)=><SeverityTag value={value as Finding['severity']}/>},
+          {title:'漏洞',dataIndex:'title',width:260,ellipsis:true},
+          {title:'状态',dataIndex:'status',width:120,render:(value:string)=><FindingStatusTag value={value as Finding['status']}/>},
+          {title:'来源',render:(_,item)=><Text>{item.engine} · {item.templateOrCve}</Text>},
+          {title:'最近发现',dataIndex:'lastSeen',width:170,render:(value:string)=>new Date(value).toLocaleString()},
+        ]}/></Card>
+        <Card title="扫描历史" size="small"><DataTable<ScanTask> dataSource={assetTaskHistory.get(detailAsset.id)??[]} rowKey="id" loading={taskLoading} locale={{emptyText:'尚未发起扫描'}} pagination={{pageSize:5}} scroll={{x:900}} columns={[
+          {title:'任务',dataIndex:'id',width:210,ellipsis:true},
+          {title:'执行方式',render:(_,item)=><Text>{item.engines.join(' / ')||'未知'}</Text>},
+          {title:'状态',dataIndex:'status',width:120,render:(value:string)=><Tag>{value==='COMPLETED'?'已完成':value==='FAILED'?'失败':value==='CANCELED'?'已取消':value==='RUNNING'?'执行中':value==='PENDING'?'待执行':'处理中'}</Tag>},
+          {title:'发现数',dataIndex:'findingCount',width:90},
+          {title:'创建时间',dataIndex:'createdAt',width:170,render:(value:string)=>new Date(value).toLocaleString()},
+        ]}/></Card>
       </Space>}
     </Drawer>
     <Modal title="人工解除端口隔离" open={!!releaseTarget} onCancel={()=>setReleaseTarget(null)} onOk={()=>void releaseQuarantine()} confirmLoading={saving} okButtonProps={{disabled:!releaseReason.trim()}} okText="解除并记录审计">

@@ -6,6 +6,7 @@ const client = fs.readFileSync(new URL('../../api/client.ts', import.meta.url), 
 const nav = fs.readFileSync(new URL('../../components/Layout/navigation.ts', import.meta.url), 'utf8');
 const groups = fs.readFileSync(new URL('../BusinessGroups/index.tsx', import.meta.url), 'utf8');
 const history = fs.readFileSync(new URL('../AssetImportHistory/index.tsx', import.meta.url), 'utf8');
+const assetsPage = fs.readFileSync(new URL('./index.tsx', import.meta.url), 'utf8');
 
 test('asset management uses server resources and safe import summaries', () => {
   assert.match(client, /businessGroups\(\).*\/api\/v1\/business-groups/);
@@ -16,6 +17,15 @@ test('asset management uses server resources and safe import summaries', () => {
   assert.match(groups, /apiClient\.createBusinessGroup/);
   assert.match(history, /apiClient\.assetImportHistory/);
   assert.match(history, /不保存 CSV 原文、目标地址或资产清单/);
+});
+
+test('asset registry exposes scan history and active risk summaries', () => {
+  assert.match(assetsPage, /useCollection\('findings'\)/);
+  assert.match(assetsPage, /title:'最近扫描'/);
+  assert.match(assetsPage, /title:'当前风险数'/);
+  assert.match(assetsPage, /title="漏洞摘要"/);
+  assert.match(assetsPage, /title="扫描历史"/);
+  assert.match(assetsPage, /findingError.*未知/);
 });
 
 console.log('asset management UI contracts passed');
