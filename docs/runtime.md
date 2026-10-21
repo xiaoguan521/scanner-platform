@@ -51,7 +51,16 @@ make build
   --node updater-primary=updater
 ```
 
-后续轮换或增加节点时复用已有 CA，省略 `--generate-ca` 并使用新的输出目录。输出目录中的 `server-cert.pem`、`server-key.pem`、`ca-cert.pem`、`node-tokens` 和对应节点的 `*-token`、`*-client-cert.pem`、`*-client-key.pem` 可分别交给 Server、Worker 和 Updater 的 owner-managed secret 路径。CA 私钥只用于签发和轮换，不部署到 Server/Worker/Updater。工具不会自动登记节点、复制文件或启动服务；管理员仍需先在节点清册登记节点，再按部署审计流程分发材料。
+增加节点时复用已有 CA，省略 `--generate-ca` 并使用新的输出目录。已有节点的本地证书轮换可以直接在原材料目录执行：
+
+```bash
+./dist/sec-node-provision \
+  --rotate-dir /var/lib/scanner-platform/node-materials \
+  --ca-dir /var/lib/scanner-platform/ca \
+  --valid-for 90d
+```
+
+轮换前会校验 manifest、文件权限、节点清单和 CA；随后在同一父目录生成完整新目录并做目录级替换，旧的 `node-tokens`、节点令牌和 manifest 原样保留。轮换不会自动传输文件或重启进程：管理员应通过 owner-managed 部署通道分发新证书/私钥，Server 发送 `SIGHUP`，Worker/Updater 重启后才会加载新客户端证书。CA 私钥只用于签发和轮换，不部署到 Server/Worker/Updater。工具不会自动登记节点、复制文件或启动服务；管理员仍需先在节点清册登记节点，再按部署审计流程分发材料。
 
 ## Linux 围栏 Worker
 

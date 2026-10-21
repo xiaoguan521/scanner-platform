@@ -29,4 +29,4 @@ make test-local
 
 PostgreSQL 已提供显式 Server 运行时、迁移和核心任务/发现项/报告适配；默认 `make dev` 仍使用 SQLite，当前差距见 [运行说明](docs/runtime.md) 和 [产品现状](docs/product/current-state.md)。Linux 围栏的启动约定见 [Worker 围栏说明](docs/worker-fence.md)；跨平台打包和生产部署仍不属于本地验证。
 
-多节点部署材料可用 `make build` 后运行 `dist/sec-node-provision` 离线生成；它只生成 owner-only 私钥/令牌文件和非敏感路径清单，不自动传输、登记或启动节点。详细参数见 [运行说明](docs/runtime.md)。
+多节点部署材料可用 `make build` 后运行 `dist/sec-node-provision` 离线生成；已有材料也可用 `--rotate-dir` 在本地原子轮换证书，令牌和节点清单保持不变。工具只生成或替换 owner-only 私钥/令牌文件和非敏感路径清单，不自动传输、登记或启动节点。详细参数见 [运行说明](docs/runtime.md)。

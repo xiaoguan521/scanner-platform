@@ -743,6 +743,13 @@
 - 单元测试验证证书链、Server IP SAN、Server/Client EKU、令牌注册表一致性、私钥权限、CA 复用、路径嵌套和覆盖拒绝；CLI 仅输出非敏感路径与节点元数据。
 - 证据：`go test ./internal/provision ./cmd/node-provision`、`go run ./cmd/node-provision ...` 临时目录实跑通过。远程传输、节点自动登记、证书轮换和 Linux Compose 运行时验收仍未完成。
 
+## 2026-10-21：节点材料本地证书轮换
+
+- `sec-node-provision --rotate-dir` 读取并严格校验既有 manifest、数字 Server 地址、节点清单、owner-only 文件和 CA；不生成新令牌，不读取或输出 CA 私钥之外的敏感值。
+- 新证书和私钥先写入父目录下的 owner-only 临时目录，再以目录级 rename 替换现有材料目录；失败时保留原目录。Server/Worker/Updater 仍需由运维分发材料并 reload/restart，工具不做网络连接或远程部署。
+- 单元测试覆盖证书链、证书确实替换、令牌和 manifest 保持不变、权限保留、未列出文件拒绝且失败不改动旧材料。
+- 验证：`go test -race ./internal/provision ./cmd/node-provision`、`go vet ./internal/provision ./cmd/node-provision`、`git diff --check` 通过；未连接外部节点，未写入真实证书、令牌或资产。
+
 ## 2026-10-21：节点生命周期首阶段与 PostgreSQL 迁移回归
 
 - 新增 PostgreSQL 迁移 `0017_node_lifecycle.sql`，SQLite 同步创建节点生命周期和事件表。管理员可登记/吊销明确的 Worker 或 Updater 节点；心跳将已登记节点置为 `ONLINE`，十秒无心跳后由 Server Tick 置为 `OFFLINE`，恢复时记录 `RECOVERED`，重复刷新不会重复生成事件；登记/吊销写入审计。

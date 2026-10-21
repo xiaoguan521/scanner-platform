@@ -4,6 +4,7 @@
 package provision
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -15,13 +16,16 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -69,6 +73,23 @@ type Result struct {
 	ServerURL         string       `json:"serverUrl"`
 	Nodes             []NodeResult `json:"nodes"`
 	Manifest          string       `json:"manifest"`
+}
+
+// RotateOptions controls an offline replacement of an existing material
+// directory. The CA private key remains in CADir and bearer-token files are
+// copied unchanged; only the server and client certificate/key pairs change.
+type RotateOptions struct {
+	OutputDir string
+	CADir     string
+	ValidFor  time.Duration
+	Now       func() time.Time
+}
+
+type manifestDocument struct {
+	Version   int          `json:"version"`
+	ServerURL string       `json:"serverUrl"`
+	Files     []string     `json:"files"`
+	Nodes     []NodeResult `json:"nodes"`
 }
 
 // NodeResult describes the non-secret locations for one provisioned node.
@@ -214,12 +235,7 @@ func Provision(opts Options) (Result, error) {
 		files = append(files, filepath.Base(node.TokenFile), filepath.Base(node.ClientCert), filepath.Base(node.ClientKey))
 	}
 	sort.Strings(files)
-	manifest, err := json.MarshalIndent(struct {
-		Version   int          `json:"version"`
-		ServerURL string       `json:"serverUrl"`
-		Files     []string     `json:"files"`
-		Nodes     []NodeResult `json:"nodes"`
-	}{1, result.ServerURL, files, result.Nodes}, "", "  ")
+	manifest, err := json.MarshalIndent(manifestDocument{Version: 1, ServerURL: result.ServerURL, Files: files, Nodes: result.Nodes}, "", "  ")
 	if err != nil {
 		return Result{}, fmt.Errorf("encode provisioning manifest: %w", err)
 	}
@@ -230,6 +246,262 @@ func Provision(opts Options) (Result, error) {
 		return Result{}, fmt.Errorf("publish node materials: %w", err)
 	}
 	return result, nil
+}
+
+// Rotate replaces an existing material directory in one directory-level
+// swap. It is deliberately local and offline: callers still need to transfer
+// the resulting files through their deployment channel and reload services.
+func Rotate(opts RotateOptions) (Result, error) {
+	now := time.Now
+	if opts.Now != nil {
+		now = opts.Now
+	}
+	when := now().UTC()
+	if opts.ValidFor == 0 {
+		opts.ValidFor = defaultCertLife
+	}
+	if strings.TrimSpace(opts.OutputDir) == "" || strings.TrimSpace(opts.CADir) == "" {
+		return Result{}, errors.New("output and CA directories are required")
+	}
+	if opts.ValidFor <= 0 || opts.ValidFor > 397*24*time.Hour {
+		return Result{}, errors.New("certificate lifetime must be between 1 hour and 397 days")
+	}
+	outputDir, err := filepath.Abs(opts.OutputDir)
+	if err != nil {
+		return Result{}, fmt.Errorf("resolve output directory: %w", err)
+	}
+	caDir, err := filepath.Abs(opts.CADir)
+	if err != nil {
+		return Result{}, fmt.Errorf("resolve CA directory: %w", err)
+	}
+	if err := rejectNestedPaths(outputDir, caDir); err != nil {
+		return Result{}, err
+	}
+	manifest, originalManifest, err := readManifest(outputDir)
+	if err != nil {
+		return Result{}, err
+	}
+	serverIP, serverPort, err := parseServerURL(manifest.ServerURL)
+	if err != nil {
+		return Result{}, err
+	}
+	if err := validateManifestFiles(outputDir, manifest); err != nil {
+		return Result{}, err
+	}
+	ca, err := loadOrCreateCA(caDir, false, when, 0)
+	if err != nil {
+		return Result{}, err
+	}
+	if err := validateOutputCACertificate(outputDir, ca.cert); err != nil {
+		return Result{}, err
+	}
+	if when.Add(opts.ValidFor).After(ca.cert.NotAfter) {
+		return Result{}, errors.New("leaf certificate lifetime exceeds CA lifetime")
+	}
+
+	result := Result{
+		OutputDir:         outputDir,
+		CACert:            filepath.Join(outputDir, "ca-cert.pem"),
+		ServerCert:        filepath.Join(outputDir, "server-cert.pem"),
+		ServerKey:         filepath.Join(outputDir, "server-key.pem"),
+		NodeTokenRegistry: filepath.Join(outputDir, "node-tokens"),
+		ServerURL:         manifest.ServerURL,
+		Nodes:             append([]NodeResult(nil), manifest.Nodes...),
+		Manifest:          filepath.Join(outputDir, "manifest.json"),
+	}
+	if err := stageRotatedDirectory(outputDir, manifest, originalManifest, ca, serverIP, serverPort, opts.ValidFor, when); err != nil {
+		return Result{}, err
+	}
+	return result, nil
+}
+
+func validateOutputCACertificate(outputDir string, ca *x509.Certificate) error {
+	data, err := readRegular(filepath.Join(outputDir, "ca-cert.pem"), false)
+	if err != nil {
+		return fmt.Errorf("read output CA certificate: %w", err)
+	}
+	block, rest := pem.Decode(data)
+	if block == nil || block.Type != "CERTIFICATE" || len(strings.TrimSpace(string(rest))) != 0 {
+		return errors.New("output CA certificate PEM is invalid")
+	}
+	output, err := x509.ParseCertificate(block.Bytes)
+	if err != nil || !bytes.Equal(output.Raw, ca.Raw) {
+		return errors.New("output CA certificate does not match the configured CA")
+	}
+	return nil
+}
+
+func readManifest(outputDir string) (manifestDocument, []byte, error) {
+	info, err := os.Lstat(outputDir)
+	if err != nil {
+		return manifestDocument{}, nil, fmt.Errorf("inspect output directory: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return manifestDocument{}, nil, errors.New("output directory must be a regular non-symlink directory")
+	}
+	data, err := readRegular(filepath.Join(outputDir, "manifest.json"), false)
+	if err != nil {
+		return manifestDocument{}, nil, fmt.Errorf("read provisioning manifest: %w", err)
+	}
+	var manifest manifestDocument
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&manifest); err != nil || decoder.Decode(new(any)) != io.EOF {
+		return manifestDocument{}, nil, errors.New("provisioning manifest is invalid")
+	}
+	if manifest.Version != 1 || manifest.ServerURL == "" || len(manifest.Files) == 0 || len(manifest.Nodes) == 0 {
+		return manifestDocument{}, nil, errors.New("provisioning manifest is incomplete")
+	}
+	return manifest, data, nil
+}
+
+func parseServerURL(value string) (netip.Addr, uint16, error) {
+	u, err := url.Parse(value)
+	if err != nil || u.Scheme != "https" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		return netip.Addr{}, 0, errors.New("provisioning manifest server URL is invalid")
+	}
+	portText := u.Port()
+	if portText == "" {
+		return netip.Addr{}, 0, errors.New("provisioning manifest server URL has no port")
+	}
+	port, err := strconv.ParseUint(portText, 10, 16)
+	if err != nil || port == 0 {
+		return netip.Addr{}, 0, errors.New("provisioning manifest server URL port is invalid")
+	}
+	ip, err := netip.ParseAddr(u.Hostname())
+	if err != nil || ip.Zone() != "" || ip.IsUnspecified() || ip.IsMulticast() {
+		return netip.Addr{}, 0, errors.New("provisioning manifest server URL must use a numeric unicast IP")
+	}
+	return ip, uint16(port), nil
+}
+
+func validateManifestFiles(outputDir string, manifest manifestDocument) error {
+	expected := make(map[string]struct{}, len(manifest.Files))
+	for _, name := range manifest.Files {
+		if name == "" || filepath.Base(name) != name || filepath.Clean(name) != name || strings.ContainsAny(name, "\\:\x00") {
+			return errors.New("provisioning manifest contains an unsafe file name")
+		}
+		if _, ok := expected[name]; ok {
+			return errors.New("provisioning manifest contains duplicate files")
+		}
+		expected[name] = struct{}{}
+		if _, err := readRegular(filepath.Join(outputDir, name), name == "server-key.pem" || strings.HasSuffix(name, "-client-key.pem") || name == "node-tokens" || strings.HasSuffix(name, "-token")); err != nil {
+			return fmt.Errorf("validate material %s: %w", name, err)
+		}
+	}
+	entries, err := os.ReadDir(outputDir)
+	if err != nil {
+		return fmt.Errorf("list material directory: %w", err)
+	}
+	for _, entry := range entries {
+		if _, ok := expected[entry.Name()]; !ok {
+			return fmt.Errorf("material directory contains unlisted file %q", entry.Name())
+		}
+	}
+	for _, required := range []string{"ca-cert.pem", "server-cert.pem", "server-key.pem", "node-tokens", "manifest.json"} {
+		if _, ok := expected[required]; !ok {
+			return fmt.Errorf("provisioning manifest omits required file %q", required)
+		}
+	}
+	for _, node := range manifest.Nodes {
+		if len(node.ID) == 0 || !nodeIDPattern.MatchString(node.ID) || (node.Kind != "worker" && node.Kind != "updater") {
+			return errors.New("provisioning manifest contains an invalid node")
+		}
+		for _, name := range []string{node.ID + "-token", node.ID + "-client-cert.pem", node.ID + "-client-key.pem"} {
+			if _, ok := expected[name]; !ok {
+				return fmt.Errorf("provisioning manifest omits node file %q", name)
+			}
+		}
+	}
+	return nil
+}
+
+func stageRotatedDirectory(outputDir string, manifest manifestDocument, originalManifest []byte, ca certificateAuthority, serverIP netip.Addr, serverPort uint16, lifetime time.Duration, when time.Time) error {
+	parent := filepath.Dir(outputDir)
+	stage, err := os.MkdirTemp(parent, ".scanner-node-rotation-")
+	if err != nil {
+		return fmt.Errorf("create rotation staging directory: %w", err)
+	}
+	if err := os.Chmod(stage, 0700); err != nil {
+		_ = os.RemoveAll(stage)
+		return fmt.Errorf("protect rotation staging directory: %w", err)
+	}
+	defer os.RemoveAll(stage)
+	for _, name := range manifest.Files {
+		if name == "manifest.json" || name == "server-cert.pem" || name == "server-key.pem" || strings.HasSuffix(name, "-client-cert.pem") || strings.HasSuffix(name, "-client-key.pem") {
+			continue
+		}
+		data, err := readRegular(filepath.Join(outputDir, name), name == "node-tokens" || strings.HasSuffix(name, "-token"))
+		if err != nil {
+			return fmt.Errorf("copy existing material %s: %w", name, err)
+		}
+		mode := os.FileMode(0644)
+		if name == "node-tokens" || strings.HasSuffix(name, "-token") {
+			mode = 0600
+		}
+		if err := writeFile(filepath.Join(stage, name), data, mode); err != nil {
+			return err
+		}
+	}
+	serverKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return fmt.Errorf("generate rotated server key: %w", err)
+	}
+	serverCert, err := issueCertificate(ca, serverKey, "scanner-platform-server", when, lifetime, true, false, serverIP)
+	if err != nil {
+		return fmt.Errorf("issue rotated server certificate: %w", err)
+	}
+	serverKeyPEM, err := marshalPrivateKey(serverKey)
+	if err != nil {
+		return fmt.Errorf("marshal rotated server key: %w", err)
+	}
+	if err := writeFile(filepath.Join(stage, "server-key.pem"), serverKeyPEM, 0600); err != nil {
+		return err
+	}
+	if err := writeFile(filepath.Join(stage, "server-cert.pem"), pemBytes("CERTIFICATE", serverCert.Raw), 0644); err != nil {
+		return err
+	}
+	for _, node := range manifest.Nodes {
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			return fmt.Errorf("generate rotated %s key: %w", node.ID, err)
+		}
+		cert, err := issueCertificate(ca, key, node.ID, when, lifetime, false, true, serverIP)
+		if err != nil {
+			return fmt.Errorf("issue rotated %s certificate: %w", node.ID, err)
+		}
+		keyPEM, err := marshalPrivateKey(key)
+		if err != nil {
+			return fmt.Errorf("marshal rotated %s key: %w", node.ID, err)
+		}
+		if err := writeFile(filepath.Join(stage, node.ID+"-client-key.pem"), keyPEM, 0600); err != nil {
+			return err
+		}
+		if err := writeFile(filepath.Join(stage, node.ID+"-client-cert.pem"), pemBytes("CERTIFICATE", cert.Raw), 0644); err != nil {
+			return err
+		}
+	}
+	if err := writeFile(filepath.Join(stage, "manifest.json"), originalManifest, 0644); err != nil {
+		return err
+	}
+	backup, err := os.MkdirTemp(parent, ".scanner-node-previous-")
+	if err != nil {
+		return fmt.Errorf("create rotation backup path: %w", err)
+	}
+	if err := os.Remove(backup); err != nil {
+		return fmt.Errorf("prepare rotation backup path: %w", err)
+	}
+	if err := os.Rename(outputDir, backup); err != nil {
+		return fmt.Errorf("stage current node materials: %w", err)
+	}
+	if err := os.Rename(stage, outputDir); err != nil {
+		_ = os.Rename(backup, outputDir)
+		return fmt.Errorf("publish rotated node materials: %w", err)
+	}
+	if err := os.RemoveAll(backup); err != nil {
+		return fmt.Errorf("remove previous node materials: %w", err)
+	}
+	return nil
 }
 
 func validateOptions(opts Options) error {

@@ -127,6 +127,138 @@ func TestProvisionReusesCAAndRefusesOverwrite(t *testing.T) {
 	}
 }
 
+func TestRotateReplacesCertificatesPreservesTokensAndManifest(t *testing.T) {
+	root := t.TempDir()
+	caDir := filepath.Join(root, "ca")
+	outDir := filepath.Join(root, "node-materials")
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	first, err := Provision(Options{
+		OutputDir: outDir, CADir: caDir, ServerIP: netip.MustParseAddr("192.0.2.10"), ServerPort: 8443,
+		Nodes:    []NodeSpec{{ID: "worker-a", Kind: "worker"}, {ID: "updater-a", Kind: "updater"}},
+		ValidFor: 24 * time.Hour, CAValidFor: 48 * time.Hour, GenerateCA: true, Now: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldServer, err := FileDigest(first.ServerCert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldClient, err := FileDigest(first.Nodes[0].ClientCert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldRegistry, err := os.ReadFile(first.NodeTokenRegistry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldManifest, err := os.ReadFile(first.Manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rotated, err := Rotate(RotateOptions{OutputDir: outDir, CADir: caDir, ValidFor: 12 * time.Hour, Now: func() time.Time { return now.Add(time.Hour) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rotated.ServerURL != first.ServerURL || len(rotated.Nodes) != len(first.Nodes) {
+		t.Fatalf("rotation metadata changed: %#v", rotated)
+	}
+	newServer, err := FileDigest(rotated.ServerCert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newClient, err := FileDigest(rotated.Nodes[0].ClientCert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newServer == oldServer || newClient == oldClient {
+		t.Fatal("rotation did not replace certificate material")
+	}
+	newRegistry, err := os.ReadFile(rotated.NodeTokenRegistry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(newRegistry) != string(oldRegistry) {
+		t.Fatal("rotation changed node bearer tokens")
+	}
+	newManifest, err := os.ReadFile(rotated.Manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(newManifest) != string(oldManifest) {
+		t.Fatal("rotation changed deployment manifest")
+	}
+	ca := parseCertificateFile(t, rotated.CACert)
+	verifyCertificate(t, parseCertificateFile(t, rotated.ServerCert), ca, x509.ExtKeyUsageServerAuth)
+	for _, node := range rotated.Nodes {
+		verifyCertificate(t, parseCertificateFile(t, node.ClientCert), ca, x509.ExtKeyUsageClientAuth)
+		if mode := fileMode(t, node.ClientKey); mode.Perm() != 0600 {
+			t.Fatalf("rotated client key mode = %o", mode.Perm())
+		}
+	}
+}
+
+func TestRotateRejectsManifestBeforeChangingMaterial(t *testing.T) {
+	root := t.TempDir()
+	caDir := filepath.Join(root, "ca")
+	outDir := filepath.Join(root, "node-materials")
+	result, err := Provision(Options{
+		OutputDir: outDir, CADir: caDir, ServerIP: netip.MustParseAddr("198.51.100.20"),
+		Nodes: []NodeSpec{{ID: "worker-a", Kind: "worker"}}, ValidFor: 24 * time.Hour, CAValidFor: 48 * time.Hour,
+		GenerateCA: true, Now: func() time.Time { return time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, err := FileDigest(result.ServerCert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outDir, "unexpected.txt"), []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Rotate(RotateOptions{OutputDir: outDir, CADir: caDir}); err == nil {
+		t.Fatal("rotation accepted an unlisted file")
+	}
+	if got, err := FileDigest(result.ServerCert); err != nil || got != old {
+		t.Fatalf("failed rotation changed certificate: got=%q old=%q err=%v", got, old, err)
+	}
+}
+
+func TestRotateRejectsMismatchedOutputCA(t *testing.T) {
+	root := t.TempDir()
+	caDir := filepath.Join(root, "ca")
+	outDir := filepath.Join(root, "node-materials")
+	result, err := Provision(Options{
+		OutputDir: outDir, CADir: caDir, ServerIP: netip.MustParseAddr("203.0.113.10"),
+		Nodes: []NodeSpec{{ID: "worker-a", Kind: "worker"}}, ValidFor: 24 * time.Hour, CAValidFor: 48 * time.Hour,
+		GenerateCA: true, Now: func() time.Time { return time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherRoot := t.TempDir()
+	other, err := Provision(Options{
+		OutputDir: filepath.Join(otherRoot, "node-materials"), CADir: filepath.Join(otherRoot, "ca"),
+		ServerIP: netip.MustParseAddr("203.0.113.11"), Nodes: []NodeSpec{{ID: "worker-b", Kind: "worker"}},
+		ValidFor: 24 * time.Hour, CAValidFor: 48 * time.Hour, GenerateCA: true,
+		Now: func() time.Time { return time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	caData, err := os.ReadFile(other.CACert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(result.CACert, caData, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Rotate(RotateOptions{OutputDir: outDir, CADir: caDir}); err == nil {
+		t.Fatal("rotation accepted an output CA that does not match the CA directory")
+	}
+}
+
 func TestProvisionRejectsUnsafeScopeAndPaths(t *testing.T) {
 	root := t.TempDir()
 	defaults, caLife := Defaults()

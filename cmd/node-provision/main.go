@@ -41,6 +41,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("sec-node-provision", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	outputDir := flags.String("output-dir", "", "new directory for Server and node material")
+	rotateDir := flags.String("rotate-dir", "", "existing material directory to rotate in place")
 	caDir := flags.String("ca-dir", "", "directory containing ca-key.pem and ca-cert.pem")
 	serverIP := flags.String("server-ip", "", "explicit numeric Server node IP")
 	serverPort := flags.Uint("server-port", 8443, "Server node HTTPS port")
@@ -55,7 +56,24 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 		return 2
 	}
-	if flags.NArg() != 0 || len(nodes) == 0 || strings.TrimSpace(*outputDir) == "" || strings.TrimSpace(*caDir) == "" || strings.TrimSpace(*serverIP) == "" || *serverPort == 0 || *serverPort > 65535 {
+	if flags.NArg() != 0 || strings.TrimSpace(*caDir) == "" || (strings.TrimSpace(*outputDir) != "" && strings.TrimSpace(*rotateDir) != "") {
+		fmt.Fprintln(stderr, "use either --output-dir with --server-ip and --node, or --rotate-dir; --ca-dir is required")
+		return 2
+	}
+	if strings.TrimSpace(*rotateDir) != "" {
+		result, err := provision.Rotate(provision.RotateOptions{OutputDir: *rotateDir, CADir: *caDir, ValidFor: *validFor})
+		if err != nil {
+			fmt.Fprintln(stderr, "node material rotation failed:", err)
+			return 1
+		}
+		if err := json.NewEncoder(stdout).Encode(result); err != nil {
+			fmt.Fprintln(stderr, "write rotation result:", err)
+			return 1
+		}
+		fmt.Fprintln(stderr, "Rotated server and client certificates; reload the affected services after transferring the files.")
+		return 0
+	}
+	if len(nodes) == 0 || strings.TrimSpace(*outputDir) == "" || strings.TrimSpace(*serverIP) == "" || *serverPort == 0 || *serverPort > 65535 {
 		fmt.Fprintln(stderr, "--output-dir, --ca-dir, --server-ip and at least one --node are required; server port must be 1-65535")
 		return 2
 	}

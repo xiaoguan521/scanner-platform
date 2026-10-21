@@ -152,7 +152,7 @@ runtime tests remain required.
 The following items are intentionally not represented by a fake Compose file:
 
 - pinned Server/Updater/Worker images and reproducible image builds;
-- remote transfer/rotation around the generated secret, certificate, and token files (the offline `sec-node-provision` generator is now available);
+- remote transfer and service orchestration around the generated secret, certificate, and token files (local atomic rotation via `sec-node-provision --rotate-dir` is available);
 - isolated-Linux evidence for out-of-scope packet drops, uid/capabilities,
     `no_new_privs`, cgroup-v2 descendant cleanup, and forbidden `hostNetwork`;
 - production PostgreSQL backup/restore, monitoring, and migration rollout;
