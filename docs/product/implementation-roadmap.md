@@ -37,9 +37,10 @@ secret 挂载、Worker 能力和目录权限；Compose 不包含 `build:`，镜�
 
 ## 本次推进：部署门禁与审计定位
 
-已增加 `make verify-deploy`。它先由 Docker Compose 将候选文件规范化为
-JSON，再检查服务角色、显式网络、host namespace、特权和 capabilities、
-digest 固定镜像、secret 文件引用、端口发布边界，以及 Worker 的规则目录只读和 runtime 可写
-约束。该门禁不替代 Linux 围栏、抓包和真实部署验收，也不意味着生产
-Compose 已经交付。系统审计清册同时支持按对象 ID 精确定位，SQLite、
-PostgreSQL、API 和前端筛选保持相同语义。
+已增加 `make verify-deploy` 和生产 Compose 输入。门禁先由 Docker Compose
+将候选文件规范化为 JSON，再检查服务角色、显式网络、host namespace、
+特权和 capabilities、digest 固定镜像、secret 文件引用、端口发布边界，
+以及 Worker 的规则目录只读和 runtime 可写约束。Compose 契约、镜像构建
+目标和静态门禁已经交付；它不替代真实镜像推送、证书/令牌注入、Linux
+围栏、抓包和服务管理验收。系统审计清册同时支持按对象 ID 精确定位，
+SQLite、PostgreSQL、API 和前端筛选保持相同语义。
