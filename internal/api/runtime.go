@@ -34,17 +34,36 @@ func NewRuntimeHandler(store repo.RuntimeBackend, fallback http.Handler, uiDir s
 			files.ServeHTTP(w, r)
 		}))
 	}
+	mode := "sqlite"
+	if provider, ok := store.(interface{ RuntimeMode() string }); ok && provider.RuntimeMode() != "" {
+		mode = provider.RuntimeMode()
+	}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		runtimeJSON(w, http.StatusOK, map[string]string{"state": "alive", "role": "sec-server"})
 	})
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
-		runtimeJSON(w, http.StatusOK, map[string]string{"state": "ready", "mode": "local"})
+		runtimeJSON(w, http.StatusOK, map[string]string{"state": "ready", "mode": mode})
 	})
 	capabilities := []string{"database", "task-dispatch", "synthetic-worker", "web-ui", "authentication", "user-management", "asset-registry", "approval-reviews", "schedules", "rule-import", "rule-activation", "nuclei-http-baseline", "trivy-offline", "zap-passive", "bounded-tcp-port-probe", "asset-inventory", "version-matching", "async-reports", "detection-metadata"}
 	unavailable := []string{"engine-validation", "rule-signatures", "harbor"}
+	if provider, ok := store.(interface{ UnavailableRuntimeCapabilities() []string }); ok {
+		blocked := provider.UnavailableRuntimeCapabilities()
+		blockedSet := make(map[string]bool, len(blocked))
+		for _, item := range blocked {
+			blockedSet[item] = true
+		}
+		filtered := capabilities[:0]
+		for _, item := range capabilities {
+			if !blockedSet[item] {
+				filtered = append(filtered, item)
+			}
+		}
+		capabilities = filtered
+		unavailable = append(unavailable, blocked...)
+	}
 	mux.HandleFunc("GET /api/v1/system/status", func(w http.ResponseWriter, r *http.Request) {
 		runtimeJSON(w, http.StatusOK, Status{
-			Role: "sec-server", Phase: "早期开发", State: "RUNNING", Ready: true,
+			Role: "sec-server", Mode: mode, Phase: "早期开发", State: "RUNNING", Ready: true,
 			Enabled: capabilities, Unavailable: unavailable,
 		})
 	})
@@ -324,6 +343,10 @@ func runtimeStoreError(w http.ResponseWriter, err error) bool {
 	}
 	if errors.Is(err, repo.ErrTaskNotPausable) || errors.Is(err, repo.ErrTaskNotResumable) {
 		runtimeJSON(w, http.StatusConflict, APIError{Error: "task_state_conflict", Message: "任务当前状态不支持暂停或恢复"})
+		return true
+	}
+	if errors.Is(err, repo.ErrBackendCapability) {
+		runtimeJSON(w, http.StatusServiceUnavailable, APIError{Error: "backend_capability_unavailable", Message: "当前存储后端尚未实现此功能"})
 		return true
 	}
 	slog.Error("task database operation failed", "error", err)

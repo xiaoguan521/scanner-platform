@@ -587,3 +587,23 @@
 - `GET /api/v1/tasks` 带查询参数时使用 Server 端分页投影，支持归档、状态、引擎、任务 ID/明确目标/Worker 输入路径搜索和固定排序字段；响应返回 `page/pageSize/total/statusCounts`，不带查询参数的旧完整清册响应保留。
 - `/tasks` 页面改为按当前页轮询，筛选和归档视图由 Server 执行，状态徽标使用服务端聚合计数；创建、取消、暂停、恢复、归档和删除后刷新当前页，不再把全量任务加载到浏览器后筛选。
 - 仓储/API 测试覆盖页大小、归档和引擎筛选、搜索、状态计数、重复/未知/非法参数；新增前端任务列表契约测试。OpenAPI、API 说明、现状和路线图同步。任务列表改动尚未扩展到漏洞和报告列表，也未替代隔离靶机浏览器验收。
+
+## 2026-10-21：PostgreSQL Server 运行时选择与核心任务回归
+
+- `sec-server` 新增显式 `--storage sqlite|postgres` 选择；PostgreSQL 模式只接受 owner-only DSN 文件，启动时执行幂等迁移并将账号、资产、审批和任务/发现项/报告核心适配器接入同一数据库连接池。`/readyz` 与系统状态报告当前后端；未实现的 PostgreSQL 端点返回能力不可用，不回退到 SQLite。
+- PostgreSQL 核心任务支持创建、领取、规则就绪门槛、Worker 租约/进度、完成回报、取消、暂停/恢复、归档和无关联发现项的彻底删除；删除前检查任务发现项并在事务内清理队列/投影。新增 `make dev-postgres` 启动路径，默认 `make dev` 仍使用 SQLite。
+- 隔离 PostgreSQL 夹具上实际验证：Server 以 `mode=postgres` 启动，管理员登录，登记文档保留地址资产，完成端口与范围审批，创建 `port-probe` 任务，Worker 领取并回报完成，读取和删除任务，再删除范围/资产；回归数据未写入仓库。隔离靶机容器保持运行，映射端口由 Compose 配置提供。
+- `make test`（`go test -race ./...` 与 18 项 Python 测试）、`make build`、`make lint`、`POSTGRES_DSN_FILE=... go test -tags=lab ./internal/repo ./internal/account ./internal/assets ./internal/approvals`、`bash -n scripts/dev.sh` 和 `git diff --check` 均通过。PostgreSQL 定时、通知、规则管理/部分系统管理及完整浏览器旅程仍待后续适配和验收。
+
+## 2026-10-21：PostgreSQL 规则目录同步回归
+
+- 新增 PostgreSQL 迁移 `0010_rule_catalog_projection.sql`，只保存规则版本、引擎、manifest 摘要、发布时间、当前/备用标记和验签/完整性元数据；规则文件与 `CURRENT` 指针仍只由 Updater 管理，Server 不保存规则包字节。
+- `POST /api/v1/updater/state` 在显式 PostgreSQL 运行时会原子刷新规则目录，自动任务领取继续要求任务冻结版本存在且 Worker 报告规则就绪；规则导入、激活/回滚作业仍明确返回能力不可用。
+- 隔离夹具已用当前本地规则目录同步 3 个版本，其中 1 个标记为当前活动版本；靶机 `127.0.0.1:12222`（SSH）和 `127.0.0.1:18080`（HTTP）保持可达。该回归只确认规则就绪与端口/控制面前置条件，尚未把 PG 自动 SSH 扫描结果冒充为已验收。
+
+## 2026-10-21：PostgreSQL 自动综合扫描与隔离靶机回归
+
+- 在独立 PostgreSQL 运行时启动 Server，使用已登记并完成授权的回环映射靶机执行一条自动综合扫描。PG 任务队列完成领取、租约、Worker 回报和报告入库；端口探测发现已授权的 SSH/HTTP 端口，服务识别得到 OpenSSH 与 Apache，Nuclei 只读根路径基线写入 4 条发现项。
+- SSH 主机指纹未匹配 Worker 本地 `known_hosts` 时，报告仍以 `COMPLETED` 接收入库，但 `systemScanStatus` 明确标记“未采集”，没有将 SSH 系统包分析误报为“无漏洞”。`CompletedFully` 只用于发现项生命周期收敛，不阻止已完成端口/HTTP 结果入库。
+- 修正 PostgreSQL 默认租约与 Worker 本地 45 秒租约上限一致，并让 Worker 报告携带明确目标，避免 PG 报告校验因缺失目标或租约过长而拒绝。临时回归夹具和数据已清理，未写入仓库。
+- 该回归证明靶机与 PostgreSQL 的核心自动扫描链路可用；要验证 SSH 系统包/指定部署目录，还需在 Worker 本地配置与靶机匹配的已授权主机指纹和 SSH profile。PostgreSQL 规则目录可同步元数据，但规则 ZIP 导入/激活作业、定时任务、通知及部分系统管理能力仍按能力不可用处理。

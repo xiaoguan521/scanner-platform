@@ -3,6 +3,8 @@ set -eu
 cd "$(dirname "$0")/.."
 SCANNER_PORT=${SCANNER_PORT:-8080}
 SCANNER_DB=${SCANNER_DB:-runtime/platform.db}
+SCANNER_STORAGE=${SCANNER_STORAGE:-sqlite}
+SCANNER_POSTGRES_DSN_FILE=${SCANNER_POSTGRES_DSN_FILE:-}
 SCANNER_RULES=${SCANNER_RULES:-vuln-data}
 SCANNER_LOG_DIR=${SCANNER_LOG_DIR:-runtime}
 SCANNER_BIN=${SCANNER_BIN:-bin}
@@ -11,6 +13,14 @@ SCANNER_SSH_CONFIG=${SCANNER_SSH_CONFIG:-}
 SCANNER_RULE_PUBLIC_KEY_FILE=${SCANNER_RULE_PUBLIC_KEY_FILE:-}
 mkdir -p "$SCANNER_INPUTS"
 mkdir -p "$SCANNER_LOG_DIR" dist
+if [[ "$SCANNER_STORAGE" != sqlite && "$SCANNER_STORAGE" != postgres ]]; then
+  printf 'SCANNER_STORAGE 必须是 sqlite 或 postgres。\n' >&2
+  exit 2
+fi
+if [[ "$SCANNER_STORAGE" == postgres && -z "$SCANNER_POSTGRES_DSN_FILE" ]]; then
+  printf 'SCANNER_POSTGRES_DSN_FILE 必须指向 owner-only PostgreSQL DSN 文件。\n' >&2
+  exit 2
+fi
 if [ "${SCANNER_SKIP_BUILD:-0}" != 1 ]; then
   npm --prefix web ci --ignore-scripts
   npm --prefix web run build
@@ -36,7 +46,13 @@ cleanup() {
 }
 trap cleanup EXIT
 trap 'exit 0' INT TERM
-./dist/sec-server --listen "127.0.0.1:$SCANNER_PORT" --db "$SCANNER_DB" --ui-dir web/dist >"$SCANNER_LOG_DIR/server.log" 2>&1 &
+server_args=(--listen "127.0.0.1:$SCANNER_PORT" --ui-dir web/dist)
+if [[ "$SCANNER_STORAGE" == postgres ]]; then
+  server_args+=(--storage postgres --postgres-dsn-file "$SCANNER_POSTGRES_DSN_FILE")
+else
+  server_args+=(--db "$SCANNER_DB")
+fi
+./dist/sec-server "${server_args[@]}" >"$SCANNER_LOG_DIR/server.log" 2>&1 &
 server_pid=$!
 attempt=0
 until curl --fail --silent "http://127.0.0.1:$SCANNER_PORT/readyz" >/dev/null; do
@@ -64,7 +80,11 @@ else
     >"$SCANNER_LOG_DIR/updater.log" 2>&1 &
 fi
 updater_pid=$!
-printf '\n打开：http://127.0.0.1:%s\n首次使用在网页设置管理员；已有账号直接登录。\n扫描只在网页明确选择引擎并创建任务后执行。\n按 Ctrl+C 停止，SQLite 保留在 %s\n' "$SCANNER_PORT" "$SCANNER_DB"
+if [[ "$SCANNER_STORAGE" == postgres ]]; then
+  printf '\n打开：http://127.0.0.1:%s\nPostgreSQL 运行时已启用；首次使用请先用 sec-server --storage postgres --postgres-dsn-file <DSN文件> --init-admin 初始化管理员。\n扫描只在网页明确选择引擎并创建任务后执行。\n按 Ctrl+C 停止。\n' "$SCANNER_PORT"
+else
+  printf '\n打开：http://127.0.0.1:%s\n首次使用在网页设置管理员；已有账号直接登录。\n扫描只在网页明确选择引擎并创建任务后执行。\n按 Ctrl+C 停止，SQLite 保留在 %s\n' "$SCANNER_PORT" "$SCANNER_DB"
+fi
 while :; do
   for process in "$server_pid" "$worker_pid" "$updater_pid"; do
     if ! kill -0 "$process" 2>/dev/null; then printf '本地服务退出，请查看 %s 下的日志。\n' "$SCANNER_LOG_DIR" >&2; exit 1; fi

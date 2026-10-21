@@ -11,6 +11,7 @@ import (
 // Status describes a local development scaffold, not a healthy scanner.
 type Status struct {
 	Role        string   `json:"role"`
+	Mode        string   `json:"mode,omitempty"`
 	Phase       string   `json:"phase"`
 	State       string   `json:"state"`
 	Ready       bool     `json:"ready"`

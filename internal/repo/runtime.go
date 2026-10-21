@@ -54,6 +54,9 @@ type RuntimeStore struct {
 	nextFindingExpiry time.Time
 }
 
+// RuntimeMode lets diagnostics identify the portable SQLite backend explicitly.
+func (s *RuntimeStore) RuntimeMode() string { return "sqlite" }
+
 func OpenRuntime(path string) (*RuntimeStore, error) {
 	if path == "" {
 		return nil, fmt.Errorf("database path is required")

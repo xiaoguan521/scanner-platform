@@ -50,15 +50,31 @@ func (s *PostgresFindingStore) SaveFinding(ctx context.Context, input taskflow.F
 		return taskflow.Finding{}, ErrPostgresFindingInvalid
 	}
 	now := s.currentTime()
-	finding, err := normalizePostgresFinding(input, now)
-	if err != nil {
-		return taskflow.Finding{}, err
-	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return taskflow.Finding{}, fmt.Errorf("begin postgres finding: %w", err)
 	}
 	defer tx.Rollback()
+	finding, err := s.SaveFindingTx(ctx, tx, input, now)
+	if err != nil {
+		return taskflow.Finding{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return taskflow.Finding{}, fmt.Errorf("commit postgres finding: %w", err)
+	}
+	return finding, nil
+}
+
+// SaveFindingTx is the transaction form used by Server task completion. It
+// keeps a finding observation and the terminal task state in one commit.
+func (s *PostgresFindingStore) SaveFindingTx(ctx context.Context, tx *sql.Tx, input taskflow.Finding, now time.Time) (taskflow.Finding, error) {
+	if s == nil || tx == nil {
+		return taskflow.Finding{}, ErrPostgresFindingInvalid
+	}
+	finding, err := normalizePostgresFinding(input, now)
+	if err != nil {
+		return taskflow.Finding{}, err
+	}
 
 	var existingID, lifecycle string
 	var firstSeen sql.NullTime
@@ -110,9 +126,6 @@ func (s *PostgresFindingStore) SaveFinding(ctx context.Context, input taskflow.F
 		if err := s.updateFindingTx(ctx, tx, finding, now); err != nil {
 			return taskflow.Finding{}, err
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return taskflow.Finding{}, fmt.Errorf("commit postgres finding: %w", err)
 	}
 	return finding, nil
 }

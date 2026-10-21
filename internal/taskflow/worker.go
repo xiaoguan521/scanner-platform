@@ -317,7 +317,7 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 
 	report := Report{TaskID: task.ID, WorkerID: w.ID, Target: task.Chunks[0].Targets[0], Title: SyntheticTitle}
 	if !task.Synthetic {
-		report = Report{TaskID: task.ID, WorkerID: w.ID, Status: "COMPLETED", Findings: detections, CompletedFully: completedFully, RulesExecuted: rulesExecuted, ExecutedEngines: executedEngines, RuleVersion: task.RuleVersion}
+		report = Report{TaskID: task.ID, WorkerID: w.ID, Target: task.Chunks[0].Targets[0], Status: "COMPLETED", Findings: detections, CompletedFully: completedFully, RulesExecuted: rulesExecuted, ExecutedEngines: executedEngines, RuleVersion: task.RuleVersion}
 		if len(task.Engines) == 1 && task.Engines[0] == "port-probe" {
 			report.Findings = nil
 			report.PortProbeResults = portProbeResults
@@ -336,7 +336,7 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 		if ctx.Err() != nil {
 			if !task.Synthetic {
 				reportCtx, reportCancel := context.WithTimeout(context.Background(), 3*time.Second)
-				_, _ = w.post(reportCtx, "/api/v1/worker/report", Report{TaskID: task.ID, WorkerID: w.ID, Status: "FAILED", Error: "Worker 已停止，扫描未完成", SystemScanStatus: systemScanStatus, ApplicationScanStatus: applicationScanStatus, ApplicationResults: applicationResults}, nil)
+				_, _ = w.post(reportCtx, "/api/v1/worker/report", Report{TaskID: task.ID, WorkerID: w.ID, Target: task.Chunks[0].Targets[0], Status: "FAILED", Error: "Worker 已停止，扫描未完成", SystemScanStatus: systemScanStatus, ApplicationScanStatus: applicationScanStatus, ApplicationResults: applicationResults}, nil)
 				reportCancel()
 			}
 			return false, ctx.Err()
@@ -348,11 +348,11 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 			return false, fmt.Errorf("worker lease ended: %w", err)
 		}
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, scheduler.ErrHardDeadline) {
-			report = Report{TaskID: task.ID, WorkerID: w.ID, Status: "PAUSED_WINDOW", SystemScanStatus: systemScanStatus}
+			report = Report{TaskID: task.ID, WorkerID: w.ID, Target: task.Chunks[0].Targets[0], Status: "PAUSED_WINDOW", SystemScanStatus: systemScanStatus}
 		} else if task.Synthetic {
 			return true, err
 		} else {
-			report = Report{TaskID: task.ID, WorkerID: w.ID, Status: "FAILED", Error: "引擎执行失败，请检查节点状态、规则库、输入和 Worker 日志", SystemScanStatus: systemScanStatus}
+			report = Report{TaskID: task.ID, WorkerID: w.ID, Target: task.Chunks[0].Targets[0], Status: "FAILED", Error: "引擎执行失败，请检查节点状态、规则库、输入和 Worker 日志", SystemScanStatus: systemScanStatus}
 			var publicError *ExecutionError
 			if errors.As(err, &publicError) && len(publicError.UserMessage) > 0 && len(publicError.UserMessage) <= 500 {
 				report.Error = publicError.UserMessage

@@ -2,6 +2,7 @@ package repo
 
 import (
 	"context"
+	"errors"
 	"os"
 	"time"
 
@@ -12,6 +13,11 @@ import (
 	"scanner-platform/internal/scanplans"
 	"scanner-platform/internal/taskflow"
 )
+
+// ErrBackendCapability is returned when a selected backend does not yet
+// implement an optional administrative surface. The Server must surface this
+// as an unavailable capability instead of silently reading a second store.
+var ErrBackendCapability = errors.New("selected storage backend capability is unavailable")
 
 // RuntimeBackend is the Server-owned persistence surface used by the HTTP
 // runtime. Keeping the API on a storage contract lets the Server select the

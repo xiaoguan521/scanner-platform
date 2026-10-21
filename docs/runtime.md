@@ -4,6 +4,20 @@
 3. 在资产页录入数字 IP 和端口，标记需要跳过的端口；任务页可立即运行或设置定时，发现项页查看结果；`make engines` 准备引擎后可选择真实扫描。
 4. 节点页可导入/下载规则 ZIP 并激活或显式回滚；按 Ctrl+C 停止，数据留在 `runtime/platform.db`；详见 [本地功能](local-functions.md)。
 
+## PostgreSQL 运行时
+
+PostgreSQL 运行时必须显式选择，不会从 SQLite 自动复制数据或回退到第二个数据库。先准备 owner-only DSN 文件并执行迁移，然后初始化管理员：
+
+```bash
+POSTGRES_DSN_FILE="$PWD/runtime/postgres/dsn" make migrate-postgres
+POSTGRES_DSN_FILE="$PWD/runtime/postgres/dsn" ./dist/sec-server \
+  --storage postgres --postgres-dsn-file "$PWD/runtime/postgres/dsn" \
+  --init-admin pgadmin --password-file /path/to/owner-only-password
+POSTGRES_DSN_FILE="$PWD/runtime/postgres/dsn" make dev-postgres
+```
+
+`make dev-postgres` 让 Web、Worker、Updater 共用 PostgreSQL Server；页面的 `/readyz` 会返回 `mode: postgres`。当前 PostgreSQL 运行时已覆盖账号、资产、授权、任务队列/投影、Worker 租约与进度、发现项、报告和规则目录同步核心闭环。Updater 启动时会把其本地已验签规则目录的元数据同步到 PostgreSQL，Worker 领取自动任务时仍按任务冻结版本和规则就绪状态检查；规则 ZIP 导入、激活/回滚作业、定时任务、通知和部分系统管理端点仍会明确返回后端能力不可用，不能当作已实现。
+
 ## 独立节点 HTTPS 通道
 
 网页和控制面默认只监听数字回环地址。多进程或生产部署时，可为 Worker/Updater 单独开启 HTTPS 节点端口：
@@ -16,4 +30,4 @@ sec-server --listen 127.0.0.1:8080 \
   --node-token-file /path/to/node-tokens
 ```
 
-`--node-listen` 只接受明确的数字 IP 和端口，不能使用未指定地址、组播地址或主机名；私钥必须是 owner-only 普通文件。独立端口只路由 Worker、Updater 和 heartbeat 协议路径，强制 TLS 1.3 和节点 Bearer 令牌认证，网页路径返回 404。Worker/Updater 的 `--server` 应指向 `https://` 节点地址，并使用各自的 owner-only 单令牌文件；客户端必须信任服务端证书链。当前仍未提供 mTLS、证书轮换或 PostgreSQL 运行时切换。
+`--node-listen` 只接受明确的数字 IP 和端口，不能使用未指定地址、组播地址或主机名；私钥必须是 owner-only 普通文件。独立端口只路由 Worker、Updater 和 heartbeat 协议路径，强制 TLS 1.3 和节点 Bearer 令牌认证，网页路径返回 404。Worker/Updater 的 `--server` 应指向 `https://` 节点地址，并使用各自的 owner-only 单令牌文件；客户端必须信任服务端证书链。mTLS、证书轮换和完整节点生命周期仍待后续。

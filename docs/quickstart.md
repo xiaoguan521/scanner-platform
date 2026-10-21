@@ -2,11 +2,13 @@
 
 在仓库根目录运行 `make dev`，打开 http://127.0.0.1:8080，首次设置管理员，已有账号直接登录。Server 同时提供网页和现有 API，不再需要另起 Vite 或使用另一套账号数据库。
 
-当前不再提供演示种子或浏览器 mock 数据。启动 Server 后请在资产页登记隔离靶机，完成端口授权，再从扫描任务页创建真实 SSH/自动综合扫描；任务、发现项和审计记录均来自 Server SQLite。
+当前不再提供演示种子或浏览器 mock 数据。启动 Server 后请在资产页登记隔离靶机，完成端口授权，再从扫描任务页创建真实 SSH/自动综合扫描；默认 SQLite 模式下任务、发现项和审计记录均来自 `runtime/platform.db`。
 
 默认 SQLite 为 `runtime/platform.db`，规则目录为 `vuln-data/`；两者均不会提交到 Git。初始管理员也可通过 `sec-server --init-admin admin` 在终端交互创建。旧的 `--dev-ui` 是统一 Server 的兼容参数；使用旧账号库时，请显式传入该库的绝对 `--db` 路径，程序不会擅自复制其他位置的账号或资产。
 
-多进程节点的本地认证可显式启用：Server 的 `--node-token-file` 使用 owner-only 文件，每行写一个 `node-id=token`；Worker/Updater 分别使用自己的 `--node-token-file` 单令牌文件。令牌至少 16 个可打印 ASCII 字节，服务端会同时校验 `X-Node-ID`、Bearer 令牌和请求体中的节点 ID。生产部署可在 Server 上增加 `--node-listen 192.0.2.10:8443 --node-tls-cert <证书PEM> --node-tls-key <owner-only私钥PEM>`，并让 Worker/Updater 的 `--server` 指向该 HTTPS 地址；节点客户端必须信任证书链。独立节点端口只暴露节点协议，网页仍留在回环端口；mTLS、证书轮换和 PostgreSQL 运行时切换仍待后续实现。当前回环开发模式仍可不配置令牌。
+多进程节点的本地认证可显式启用：Server 的 `--node-token-file` 使用 owner-only 文件，每行写一个 `node-id=token`；Worker/Updater 分别使用自己的 `--node-token-file` 单令牌文件。令牌至少 16 个可打印 ASCII 字节，服务端会同时校验 `X-Node-ID`、Bearer 令牌和请求体中的节点 ID。生产部署可在 Server 上增加 `--node-listen 192.0.2.10:8443 --node-tls-cert <证书PEM> --node-tls-key <owner-only私钥PEM>`，并让 Worker/Updater 的 `--server` 指向该 HTTPS 地址；节点客户端必须信任证书链。独立节点端口只暴露节点协议，网页仍留在回环端口；mTLS、证书轮换和完整节点生命周期仍待后续。当前回环开发模式仍可不配置令牌。
+
+需要使用 PostgreSQL 时，先执行 `POSTGRES_DSN_FILE=/path/to/owner-only.dsn make migrate-postgres`，再执行 `sec-server --storage postgres --postgres-dsn-file /path/to/owner-only.dsn --init-admin <用户名> --password-file /path/to/owner-only-password`，最后使用 `POSTGRES_DSN_FILE=/path/to/owner-only.dsn make dev-postgres`。这是独立数据源，SQLite 资产和账号不会自动迁移；`/readyz` 可确认当前模式。
 
 资产/端口、跳过标记、任务、定时、规则包和验证命令详见 [本地功能](local-functions.md)。运行 `make engines` 安装固定的 Nuclei/Trivy/ZAP 与默认规则后，可在任务页选择真实引擎。详见 [引擎操作指南](engines.md)；真实服务器探测另行验证。
 

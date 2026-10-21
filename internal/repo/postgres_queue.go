@@ -11,6 +11,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"scanner-platform/internal/scheduler"
+	"scanner-platform/internal/taskflow"
 )
 
 var (
@@ -20,7 +23,9 @@ var (
 	ErrPostgresTaskInvalid     = errors.New("invalid postgres task")
 )
 
-const defaultPostgresLeaseDuration = 2 * time.Minute
+// Keep the Server-issued lease within the Worker's local LeaseGuard maximum.
+// A longer database lease would be rejected fail-closed before the engine runs.
+const defaultPostgresLeaseDuration = scheduler.DefaultLeaseDuration
 
 // PostgresTaskStore is the first production-oriented queue adapter. It keeps
 // claiming, lease renewal and completion inside Server-owned PostgreSQL
@@ -81,6 +86,51 @@ func (s *PostgresTaskStore) CreateTask(ctx context.Context, task ScanTask) error
 	return nil
 }
 
+// CreateTaskWithProjection creates the normalized queue row and its safe API
+// projection in one transaction. The projection is deliberately written by
+// Server code in the same transaction so a task can never be claimed without
+// the metadata needed to enforce its execution contract.
+func (s *PostgresTaskStore) CreateTaskWithProjection(ctx context.Context, task ScanTask, projection *PostgresTaskProjection, value taskflow.Task) error {
+	if s == nil || s.db == nil || projection == nil || !validPostgresTask(task) || value.ID != task.ID {
+		return ErrPostgresTaskInvalid
+	}
+	engines, err := json.Marshal(task.Engines)
+	if err != nil {
+		return fmt.Errorf("encode postgres task engines: %w", err)
+	}
+	targets, err := json.Marshal(task.Targets)
+	if err != nil {
+		return fmt.Errorf("encode postgres task targets: %w", err)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin postgres projected task: %w", err)
+	}
+	defer tx.Rollback()
+	var deadline any
+	if !task.HardDeadline.IsZero() {
+		deadline = task.HardDeadline.UTC()
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO scan_tasks
+		(id,scope_id,engines,status,hard_deadline,created_by)
+		VALUES ($1,$2,$3,$4,$5,$6)`, task.ID, task.ScopeID, string(engines), task.Status, deadline, task.CreatedBy); err != nil {
+		return fmt.Errorf("insert postgres projected task: %w", err)
+	}
+	chunkID := task.ID + "-chunk"
+	if _, err := tx.ExecContext(ctx, `INSERT INTO scan_task_chunks
+		(id,task_id,targets,status,pinned_rule_version)
+		VALUES ($1,$2,$3,'PENDING',$4)`, chunkID, task.ID, string(targets), task.PinnedRuleVersion); err != nil {
+		return fmt.Errorf("insert postgres projected task chunk: %w", err)
+	}
+	if err := projection.SaveTx(ctx, tx, value); err != nil {
+		return fmt.Errorf("save postgres projected task: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit postgres projected task: %w", err)
+	}
+	return nil
+}
+
 func validPostgresTask(task ScanTask) bool {
 	if strings.TrimSpace(task.ID) == "" || len(task.ID) > 128 ||
 		strings.TrimSpace(task.ScopeID) == "" || len(task.ScopeID) > 128 ||
@@ -98,11 +148,22 @@ func validPostgresTask(task ScanTask) bool {
 		}
 	}
 	for _, target := range task.Targets {
-		if !validPostgresTarget(target) {
+		if !validPostgresTargetForEngine(target, task.Engines) {
 			return false
 		}
 	}
 	return true
+}
+
+func validPostgresTargetForEngine(target string, engines []string) bool {
+	if validPostgresTarget(target) {
+		return true
+	}
+	if len(engines) != 1 || (engines[0] != "auto" && engines[0] != "port-probe") {
+		return false
+	}
+	address, err := netip.ParseAddr(strings.TrimSpace(target))
+	return err == nil && !address.IsUnspecified() && !address.IsMulticast() && address.Zone() == ""
 }
 
 func validPostgresTarget(raw string) bool {
@@ -119,6 +180,25 @@ func validPostgresTarget(raw string) bool {
 }
 
 func (s *PostgresTaskStore) ClaimChunk(ctx context.Context, worker string) (TaskChunk, error) {
+	return s.claimChunk(ctx, worker, "", false, false)
+}
+
+// ClaimChunkWithRules applies the Server-side rule readiness gate. Tasks that
+// do not consume a rule directory are marked with NoRuleLeaseVersion; every
+// other task must be claimed by a Worker that reports a non-empty local rule
+// version. An unpinned task is pinned to that reported version in the same
+// transaction as the lease claim.
+func (s *PostgresTaskStore) ClaimChunkWithRules(ctx context.Context, worker, localRuleVersion string, rulesReady bool) (TaskChunk, error) {
+	if rulesReady && strings.TrimSpace(localRuleVersion) == "" {
+		return TaskChunk{}, ErrPostgresTaskInvalid
+	}
+	if !rulesReady && strings.TrimSpace(localRuleVersion) != "" {
+		return TaskChunk{}, ErrPostgresTaskInvalid
+	}
+	return s.claimChunk(ctx, worker, localRuleVersion, rulesReady, true)
+}
+
+func (s *PostgresTaskStore) claimChunk(ctx context.Context, worker, localRuleVersion string, rulesReady, enforceRules bool) (TaskChunk, error) {
 	if s == nil || s.db == nil || strings.TrimSpace(worker) == "" || len(worker) > 128 {
 		return TaskChunk{}, ErrPostgresTaskInvalid
 	}
@@ -140,16 +220,33 @@ func (s *PostgresTaskStore) ClaimChunk(ctx context.Context, worker string) (Task
 	var targets string
 	var lease sql.NullTime
 	var hardDeadline sql.NullTime
-	err = tx.QueryRowContext(ctx, `SELECT c.id,c.task_id,c.status,
+	claimRule := `TRUE`
+	var claimArg any
+	if enforceRules {
+		claimRule = `c.pinned_rule_version=$1`
+		claimArg = any(localRuleVersion)
+		if !rulesReady {
+			claimArg = NoRuleLeaseVersion
+		} else {
+			claimRule = `(c.pinned_rule_version=$1 OR c.pinned_rule_version IS NULL OR c.pinned_rule_version='')`
+		}
+	}
+	query := `SELECT c.id,c.task_id,c.status,
 		COALESCE(c.worker_node_id,''),COALESCE(c.pinned_rule_version,''),
 		c.targets,c.lease_expires_at,c.completed_fully,t.hard_deadline
 		FROM scan_task_chunks c
 		JOIN scan_tasks t ON t.id=c.task_id
 		WHERE c.status='PENDING'
+		  AND ` + claimRule + `
 		  AND (c.lease_expires_at IS NULL OR c.lease_expires_at <= CURRENT_TIMESTAMP)
 		  AND (t.hard_deadline IS NULL OR t.hard_deadline > CURRENT_TIMESTAMP)
 		ORDER BY t.created_at,c.id
-		LIMIT 1 FOR UPDATE OF c,t SKIP LOCKED`).Scan(
+		LIMIT 1 FOR UPDATE OF c,t SKIP LOCKED`
+	var args []any
+	if enforceRules {
+		args = append(args, claimArg)
+	}
+	err = tx.QueryRowContext(ctx, query, args...).Scan(
 		&chunk.ID, &chunk.TaskID, &chunk.Status, &chunk.WorkerNodeID,
 		&chunk.PinnedRuleVersion, &targets, &lease, &chunk.CompletedFully, &hardDeadline)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -167,11 +264,25 @@ func (s *PostgresTaskStore) ClaimChunk(ctx context.Context, worker string) (Task
 	if !leaseUntil.After(now().UTC()) {
 		return TaskChunk{}, ErrPostgresTaskUnavailable
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE scan_task_chunks
+	update := `UPDATE scan_task_chunks
 		SET status='RUNNING',worker_node_id=$1,lease_expires_at=$2,
+			pinned_rule_version=CASE WHEN $4 AND (pinned_rule_version IS NULL OR pinned_rule_version='') THEN $5 ELSE pinned_rule_version END,
 			started_at=COALESCE(started_at,CURRENT_TIMESTAMP)
-		WHERE id=$3`, worker, leaseUntil, chunk.ID); err != nil {
+		WHERE id=$3`
+	if !enforceRules {
+		update = `UPDATE scan_task_chunks
+			SET status='RUNNING',worker_node_id=$1,lease_expires_at=$2,started_at=COALESCE(started_at,CURRENT_TIMESTAMP)
+			WHERE id=$3`
+	}
+	updateArgs := []any{worker, leaseUntil, chunk.ID}
+	if enforceRules {
+		updateArgs = append(updateArgs, rulesReady, localRuleVersion)
+	}
+	if _, err := tx.ExecContext(ctx, update, updateArgs...); err != nil {
 		return TaskChunk{}, fmt.Errorf("claim postgres task chunk: %w", err)
+	}
+	if rulesReady && chunk.PinnedRuleVersion == "" {
+		chunk.PinnedRuleVersion = localRuleVersion
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE scan_tasks SET status='RUNNING'
 		WHERE id=$1 AND status IN ('PENDING','WAITING_WINDOW')`, chunk.TaskID); err != nil {
@@ -195,15 +306,35 @@ func (s *PostgresTaskStore) CompleteChunk(ctx context.Context, chunkID string, c
 		return fmt.Errorf("begin postgres completion: %w", err)
 	}
 	defer tx.Rollback()
+	if _, err := s.completeChunkTx(ctx, tx, chunkID, completedFully); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit postgres completion: %w", err)
+	}
+	return nil
+}
+
+// CompleteChunkTx is the transaction form used when normalized findings and
+// the terminal queue state must commit atomically.
+func (s *PostgresTaskStore) CompleteChunkTx(ctx context.Context, tx *sql.Tx, chunkID string, completedFully bool) error {
+	if s == nil || tx == nil || strings.TrimSpace(chunkID) == "" || len(chunkID) > 160 {
+		return ErrPostgresTaskInvalid
+	}
+	_, err := s.completeChunkTx(ctx, tx, chunkID, completedFully)
+	return err
+}
+
+func (s *PostgresTaskStore) completeChunkTx(ctx context.Context, tx *sql.Tx, chunkID string, completedFully bool) (string, error) {
 	var taskID string
 	if err := tx.QueryRowContext(ctx, `UPDATE scan_task_chunks
 		SET status=$1,completed_fully=$2,lease_expires_at=NULL,finished_at=CURRENT_TIMESTAMP
 		WHERE id=$3 AND status='RUNNING'
 		RETURNING task_id`, map[bool]string{true: "COMPLETED", false: "FAILED"}[completedFully], completedFully, chunkID).Scan(&taskID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return ErrPostgresTaskUnavailable
+			return "", ErrPostgresTaskUnavailable
 		}
-		return fmt.Errorf("complete postgres task chunk: %w", err)
+		return "", fmt.Errorf("complete postgres task chunk: %w", err)
 	}
 	if completedFully {
 		if _, err := tx.ExecContext(ctx, `UPDATE scan_tasks t SET status='COMPLETED'
@@ -211,15 +342,12 @@ func (s *PostgresTaskStore) CompleteChunk(ctx context.Context, chunkID string, c
 				SELECT 1 FROM scan_task_chunks c
 				WHERE c.task_id=t.id AND c.status<>'COMPLETED'
 			)`, taskID); err != nil {
-			return fmt.Errorf("complete postgres task: %w", err)
+			return "", fmt.Errorf("complete postgres task: %w", err)
 		}
 	} else if _, err := tx.ExecContext(ctx, `UPDATE scan_tasks SET status='FAILED' WHERE id=$1`, taskID); err != nil {
-		return fmt.Errorf("fail postgres task: %w", err)
+		return "", fmt.Errorf("fail postgres task: %w", err)
 	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit postgres completion: %w", err)
-	}
-	return nil
+	return taskID, nil
 }
 
 func (s *PostgresTaskStore) RenewChunkLease(ctx context.Context, chunkID, worker, ruleVersion string) (time.Time, error) {

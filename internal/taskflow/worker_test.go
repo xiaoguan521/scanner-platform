@@ -179,7 +179,7 @@ func TestAutoWorkerFailureReportsSystemScanStatus(t *testing.T) {
 	if err != nil || !worked {
 		t.Fatalf("automatic task failure was not reported: worked=%v err=%v", worked, err)
 	}
-	if received.Status != "FAILED" || received.SystemScanStatus != SystemScanNotStarted || received.Error == "" {
+	if received.Status != "FAILED" || received.Target != "192.0.2.20" || received.SystemScanStatus != SystemScanNotStarted || received.Error == "" {
 		t.Fatalf("unexpected automatic failure report: %+v", received)
 	}
 }

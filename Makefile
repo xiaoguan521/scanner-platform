@@ -6,10 +6,14 @@ ifeq ($(GOOS),windows)
 EXE_EXT := .exe
 endif
 
-.PHONY: build test lint verify-flags test-lab web-install web-dev web-build dev test-local test-browser engines engines-java test-engines-local migrate-postgres
+.PHONY: build test lint verify-flags test-lab web-install web-dev web-build dev dev-postgres test-local test-browser engines engines-java test-engines-local migrate-postgres
 
 dev:
 	bash scripts/dev.sh
+
+dev-postgres:
+	@test -n "$${POSTGRES_DSN_FILE:-}" || { printf '%s\n' 'Set POSTGRES_DSN_FILE to an owner-only file containing the PostgreSQL DSN.' >&2; exit 2; }
+	SCANNER_STORAGE=postgres SCANNER_POSTGRES_DSN_FILE="$${POSTGRES_DSN_FILE}" bash scripts/dev.sh
 
 build:
 	mkdir -p dist
