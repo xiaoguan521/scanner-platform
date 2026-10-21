@@ -6,7 +6,7 @@ ifeq ($(GOOS),windows)
 EXE_EXT := .exe
 endif
 
-.PHONY: build test lint verify-flags test-lab web-install web-dev web-build dev test-local engines engines-java test-engines-local
+.PHONY: build test lint verify-flags test-lab web-install web-dev web-build dev seed-demo test-local engines engines-java test-engines-local
 
 dev:
 	bash scripts/dev.sh
@@ -26,6 +26,9 @@ web-dev:
 
 web-build:
 	cd web && VITE_DATA_MODE=server npm run build
+
+seed-demo:
+	$(GO) run ./cmd/seed-demo --db "$${SCANNER_DB:-runtime/platform.db}"
 
 
 test:

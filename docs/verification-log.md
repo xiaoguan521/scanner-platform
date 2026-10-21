@@ -8,6 +8,12 @@
 - 菜单定义集中在 `web/src/components/Layout/navigation.ts`，角色过滤仍由前端负责隐藏入口，后端权限校验保持不变；点击一级域标题会进入该域默认页面，直接访问既有路由不受影响。
 - `node --test web/src/components/Layout/navigation.test.mjs` 和 `npm --prefix web run build` 通过。真实浏览器的折叠菜单、键盘导航和窄屏体验仍待 Stage 1 回归。
 
+## 2026-10-21：Server 默认数据通道与演示种子
+
+- `make seed-demo` 现在调用 `cmd/seed-demo`，向指定本地 SQLite 写入一个 `192.0.2.10` 主机、一个完成的模拟任务和一个模拟发现项；重复执行按固定 ID/地址幂等，不创建授权范围、不启动 Worker、不连接任何目标。
+- 前端数据模式默认改为 Server；API 请求失败仍显示错误状态，不回退到内存数据。显式 `VITE_DATA_MODE=demo` 暂时保留为兼容开关，待下一批清理 fixture 分支。
+- `go test ./cmd/seed-demo`、`node --test web/src/api/data-mode.test.mjs`、前端构建和差异检查应作为本批验收；真实浏览器种子数据展示和停止运行中 Server 后的 CLI 操作仍待运行验收。
+
 ## 2026-10-20：单项接受风险、到期与状态事件
 
 - 新增 finding_events SQLite 表及按发现项/时间索引；PATCH 接收状态、原因、到期，GET `/api/v1/findings/{id}/events` 返回时间线。Server 角色/CSRF 沿用现有写权限，非写角色只能查看。
