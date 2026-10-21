@@ -9,11 +9,45 @@ import shutil
 import stat
 import tarfile
 import tempfile
+import time
+import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parents[1]
+DOWNLOAD_ATTEMPTS = 3
+DOWNLOAD_TIMEOUT_SECONDS = 120
+
+
+def download_archive(url, archive):
+    """Download one pinned archive with bounded retries and atomic replacement."""
+    last_error = None
+    for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+        partial = archive.with_suffix(archive.suffix + '.partial')
+        partial.unlink(missing_ok=True)
+        try:
+            request = urllib.request.Request(url, headers={'User-Agent': 'scanner-platform-installer'})
+            digest = hashlib.sha256()
+            with urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT_SECONDS) as response, partial.open('wb') as output:
+                size = 0
+                while block := response.read(1024 * 1024):
+                    size += len(block)
+                    if size > 1024 * 1024 * 1024:
+                        raise ValueError('download exceeds 1 GiB')
+                    digest.update(block)
+                    output.write(block)
+            os.replace(partial, archive)
+            return digest.hexdigest()
+        except (OSError, urllib.error.URLError, TimeoutError) as error:
+            last_error = error
+            partial.unlink(missing_ok=True)
+            if attempt == DOWNLOAD_ATTEMPTS:
+                break
+            delay = min(2 ** (attempt - 1), 8)
+            print(f"Download attempt {attempt} failed ({error}); retrying in {delay}s", flush=True)
+            time.sleep(delay)
+    raise RuntimeError(f'download failed after {DOWNLOAD_ATTEMPTS} attempts: {last_error}') from last_error
 
 
 def install(name, item, system, arch, destination):
@@ -23,17 +57,8 @@ def install(name, item, system, arch, destination):
     with tempfile.TemporaryDirectory(prefix='scanner-engine-') as temp:
         archive = Path(temp) / 'download'
         print(f"Downloading {name} {item['version']} from {asset['url']}", flush=True)
-        request = urllib.request.Request(asset['url'], headers={'User-Agent': 'scanner-platform-installer'})
-        digest = hashlib.sha256()
-        with urllib.request.urlopen(request, timeout=120) as response, archive.open('wb') as output:
-            size = 0
-            while block := response.read(1024 * 1024):
-                size += len(block)
-                if size > 1024 * 1024 * 1024:
-                    raise ValueError('download exceeds 1 GiB')
-                digest.update(block)
-                output.write(block)
-        if digest.hexdigest() != asset['sha256']:
+        digest = download_archive(asset['url'], archive)
+        if digest != asset['sha256']:
             raise ValueError(f'{name}: SHA-256 mismatch; nothing installed')
         stage = Path(temp) / 'extracted'
         stage.mkdir()
