@@ -38,4 +38,11 @@ func TestListAuditLogsFiltersAndOmitsDetail(t *testing.T) {
 	if total != 3 || len(items) != 2 || items[0].ID != "audit-2" || items[1].ID != "audit-1" {
 		t.Fatalf("unexpected pagination/order: total=%d items=%+v", total, items)
 	}
+	items, total, err = store.ListAuditLogs(ctx, AuditLogQuery{ObjectID: "asset-2", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || len(items) != 1 || items[0].ID != "audit-2" {
+		t.Fatalf("unexpected object id filter: total=%d items=%+v", total, items)
+	}
 }

@@ -757,3 +757,9 @@
 - 校验服务角色、显式命名网络、禁止 `network_mode: host`/`hostNetwork`/`privileged`/危险 capability，要求每个服务使用 digest 固定镜像并拒绝直接 `build:` 上下文，限制 Server 仅回环发布端口，禁止 Worker/Updater/PostgreSQL 发布宿主端口，要求 secret 使用 owner-managed file，Updater 非 root，Worker `/vuln-data` 只读且 `/runtime` 可写。
 - 新增无网络单元测试，覆盖合法配置、host namespace、特权、规则目录/runtime 权限、明文凭据、危险 capability、端口和 secret/网络缺失路径；`make test` 已纳入该测试文件。该门禁仍不能替代 Linux namespace、nftables、cgroup 和范围外抓包验收，也不声称生产 Compose 已完成。
 
+## 2026-10-21：审计对象 ID 精确筛选
+
+- `/api/v1/audit-logs` 新增 `objectId` 精确筛选，服务端限制长度并拒绝重复参数；SQLite 与 PostgreSQL 查询、计数和分页保持同一语义，仍只返回稳定投影，不暴露历史 detail。
+- 审计页面新增“对象 ID”输入框，查询构造、清空和分页保持原有行为；OpenAPI、API 说明和现状文档已同步。
+- `go test -race ./...`、审计 API/仓储测试、前端审计筛选测试和前端生产构建用于本项验证。
+

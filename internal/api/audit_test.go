@@ -64,10 +64,17 @@ func TestAuditLogAPIIsAdminReadOnlyAndFiltersWithoutDetail(t *testing.T) {
 	if got.Code != http.StatusOK || strings.Contains(got.Body.String(), "do-not-return") || strings.Contains(got.Body.String(), `"detail"`) || !strings.Contains(got.Body.String(), "create_asset") {
 		t.Fatalf("admin audit projection: %d %s", got.Code, got.Body.String())
 	}
+	got = send("/api/v1/audit-logs?objectId=asset-1", adminToken)
+	if got.Code != http.StatusOK || !strings.Contains(got.Body.String(), "asset-1") || strings.Contains(got.Body.String(), "asset-2") {
+		t.Fatalf("object id audit filter: %d %s", got.Code, got.Body.String())
+	}
 	if got := send("/api/v1/audit-logs?limit=0", adminToken); got.Code != http.StatusBadRequest {
 		t.Fatalf("invalid limit: %d", got.Code)
 	}
 	if got := send("/api/v1/audit-logs?from=not-a-time", adminToken); got.Code != http.StatusBadRequest {
 		t.Fatalf("invalid time: %d", got.Code)
+	}
+	if got := send("/api/v1/audit-logs?objectId=asset-1&objectId=asset-2", adminToken); got.Code != http.StatusBadRequest {
+		t.Fatalf("repeated object id: %d", got.Code)
 	}
 }

@@ -37,6 +37,10 @@ func parseAuditLogQuery(r *http.Request) (repo.AuditLogQuery, error) {
 	if err != nil {
 		return repo.AuditLogQuery{}, err
 	}
+	objectID, err := readText("objectId", 200)
+	if err != nil {
+		return repo.AuditLogQuery{}, err
+	}
 	from, err := auditTime(values, "from")
 	if err != nil {
 		return repo.AuditLogQuery{}, err
@@ -56,7 +60,7 @@ func parseAuditLogQuery(r *http.Request) (repo.AuditLogQuery, error) {
 	if err != nil {
 		return repo.AuditLogQuery{}, err
 	}
-	return repo.AuditLogQuery{Actor: actor, Action: action, ObjectType: objectType, From: from, To: to, Limit: limit, Offset: offset}, nil
+	return repo.AuditLogQuery{Actor: actor, Action: action, ObjectType: objectType, ObjectID: objectID, From: from, To: to, Limit: limit, Offset: offset}, nil
 }
 
 var errInvalidAuditFilter = &auditFilterError{}

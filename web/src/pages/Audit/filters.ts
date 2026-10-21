@@ -2,16 +2,17 @@ export interface AuditFilters {
   actor: string;
   action: string;
   objectType: string;
+  objectId: string;
   from: string;
   to: string;
   page: number;
 }
 
-export const defaultAuditFilters: AuditFilters = { actor: '', action: '', objectType: '', from: '', to: '', page: 1 };
+export const defaultAuditFilters: AuditFilters = { actor: '', action: '', objectType: '', objectId: '', from: '', to: '', page: 1 };
 
 export function buildAuditQuery(filters: AuditFilters, pageSize = 50): string {
   const params = new URLSearchParams();
-  for (const [key, value] of [['actor', filters.actor], ['action', filters.action], ['objectType', filters.objectType], ['from', filters.from], ['to', filters.to]] as const) {
+  for (const [key, value] of [['actor', filters.actor], ['action', filters.action], ['objectType', filters.objectType], ['objectId', filters.objectId], ['from', filters.from], ['to', filters.to]] as const) {
     const trimmed = value.trim();
     if (trimmed) params.set(key, trimmed);
   }

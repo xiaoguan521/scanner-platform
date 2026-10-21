@@ -3425,7 +3425,7 @@ paths:
     get:
       tags: [audit]
       summary: Admin-only read-only audit log projection
-      description: 'Returns only stable audit fields. Historical detail is intentionally omitted because it may contain sensitive business data, targets or credentials. Supports exact actor/action/objectType filters and an inclusive RFC3339 time range.'
+      description: 'Returns only stable audit fields. Historical detail is intentionally omitted because it may contain sensitive business data, targets or credentials. Supports exact actor/action/objectType/objectId filters and an inclusive RFC3339 time range.'
       security: [{sessionCookie: []}]
       parameters:
       - in: query
@@ -3437,6 +3437,9 @@ paths:
       - in: query
         name: objectType
         schema: {type: string, maxLength: 64}
+      - in: query
+        name: objectId
+        schema: {type: string, maxLength: 200}
       - in: query
         name: from
         description: Inclusive UTC-normalized RFC3339 timestamp

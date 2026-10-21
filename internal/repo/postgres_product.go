@@ -768,6 +768,9 @@ func (s *PostgresRuntimeStore) ListAuditLogs(ctx context.Context, query AuditLog
 	if query.ObjectType != "" {
 		clauses = append(clauses, "object_type="+add(query.ObjectType))
 	}
+	if query.ObjectID != "" {
+		clauses = append(clauses, "object_id="+add(query.ObjectID))
+	}
 	if query.From != "" {
 		clauses = append(clauses, "created_at>="+add(query.From))
 	}

@@ -66,6 +66,7 @@ export const AuditPage: React.FC = () => {
         <Input value={draft.actor} onChange={event => setDraft(current => ({ ...current, actor: event.target.value }))} placeholder="操作者" allowClear style={{ width: 180 }} />
         <Input value={draft.action} onChange={event => setDraft(current => ({ ...current, action: event.target.value }))} placeholder="动作，如 create_asset" allowClear style={{ width: 220 }} />
         <Input value={draft.objectType} onChange={event => setDraft(current => ({ ...current, objectType: event.target.value }))} placeholder="对象类型" allowClear style={{ width: 160 }} />
+        <Input value={draft.objectId} onChange={event => setDraft(current => ({ ...current, objectId: event.target.value }))} placeholder="对象 ID" allowClear style={{ width: 220 }} />
         <DatePicker.RangePicker value={range} onChange={dateChange} allowEmpty={[true, true]} />
       </Space>
     </Card>

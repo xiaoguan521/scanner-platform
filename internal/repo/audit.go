@@ -31,6 +31,7 @@ type AuditLogQuery struct {
 	Actor      string
 	Action     string
 	ObjectType string
+	ObjectID   string
 	From       string
 	To         string
 	Limit      int
@@ -51,6 +52,10 @@ func (s *RuntimeStore) ListAuditLogs(ctx context.Context, query AuditLogQuery) (
 	if query.ObjectType != "" {
 		where = append(where, "object_type=?")
 		args = append(args, query.ObjectType)
+	}
+	if query.ObjectID != "" {
+		where = append(where, "object_id=?")
+		args = append(args, query.ObjectID)
 	}
 	if query.From != "" {
 		where = append(where, "created_at>=?")
