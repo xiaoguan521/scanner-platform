@@ -21,6 +21,7 @@ import {
 } from 'antd';
 import { SafetyCertificateOutlined } from '@ant-design/icons';
 import { Finding, FindingEvent, FindingAssignee, FindingNote, FindingRetest, FindingSeverity, FindingStatus } from '../../types';
+import { FindingStatusTag, SeverityTag } from '../../components/Semantic';
 import { useAuth } from '../../auth/AuthProvider';
 import { batchFindingDisposition, updateFinding, fetchFindingEvents, fetchFindingAssignees, assignFinding, fetchFindingNotes, addFindingNote, createFindingRetest, fetchFindingRetests } from '../../api/runtime';
 import { useCollection } from '../../api/hooks';
@@ -184,29 +185,6 @@ export const FindingsPage: React.FC = () => {
     setSaving(true);try{const item=await updateFinding(id,newStatus,acceptance);setFindings(prev=>prev.map(f=>f.id===id?item:f));setEventRevision(n=>n+1);message.success('状态已保存并记录审计');}catch(e){message.error(String(e));}finally{setSaving(false)}
   };
 
-  const getSeverityTag = (sev: FindingSeverity) => {
-    const map: Record<FindingSeverity, { color: string; label: string }> = {
-      CRITICAL: { color: 'magenta', label: '严重 (Critical)' },
-      HIGH: { color: 'red', label: '高危 (High)' },
-      MEDIUM: { color: 'orange', label: '中危 (Medium)' },
-      LOW: { color: 'blue', label: '低危 (Low)' },
-      INFO: { color: 'default', label: '信息 (Info)' },
-    };
-    return <Tag color={map[sev].color}>{map[sev].label}</Tag>;
-  };
-
-  const getStatusTag = (status: FindingStatus) => {
-    const map: Record<FindingStatus, { color: string; label: string }> = {
-      OPEN: { color: 'error', label: '待修复 (OPEN)' },
-      REOPENED: { color: 'error', label: '重新出现 (REOPENED)' },
-      IN_PROGRESS: { color: 'processing', label: '修复中 (IN_PROGRESS)' },
-      FIXED: { color: 'success', label: '已修复 (FIXED)' },
-      FALSE_POSITIVE: { color: 'default', label: '误报静默 (FALSE_POSITIVE)' },
-      ACCEPTED_RISK: { color: 'warning', label: '接受风险 (ACCEPTED_RISK)' },
-    };
-    return <Tag color={map[status].color}>{map[status].label}</Tag>;
-  };
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       <CollectionNotice loading={loading} error={error} />
@@ -293,7 +271,7 @@ export const FindingsPage: React.FC = () => {
               title: '等级',
               dataIndex: 'severity',
               width: 130,
-              render: (s: FindingSeverity) => getSeverityTag(s),
+              render: (s: FindingSeverity) => <SeverityTag value={s} />,
             },
             {
               title: '漏洞详情与稳定指纹',
@@ -334,7 +312,7 @@ export const FindingsPage: React.FC = () => {
               title: '生命周期状态',
               dataIndex: 'status',
               width: 140,
-              render: (s: FindingStatus) => getStatusTag(s),
+              render: (s: FindingStatus) => <FindingStatusTag value={s} />,
             },
             {
               title: '最近检出 / 未检出计数',
@@ -428,8 +406,8 @@ export const FindingsPage: React.FC = () => {
               {detailText(selectedFinding.title)}
             </Typography.Title>
             <Space wrap>
-              {getSeverityTag(selectedFinding.severity)}
-              {getStatusTag(selectedFinding.status)}
+              <SeverityTag value={selectedFinding.severity} />
+              <FindingStatusTag value={selectedFinding.status} />
               <Tag color={selectedFinding.synthetic ? 'blue' : 'default'}>
                 {selectedFinding.synthetic == null ? '模拟标记：未提供' : selectedFinding.synthetic ? '模拟结果' : '非模拟结果'}
               </Tag>

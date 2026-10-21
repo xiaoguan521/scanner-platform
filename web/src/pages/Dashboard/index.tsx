@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { DataTable } from '../../components/DataState';
-import { Row, Col, Card, Statistic, Progress, Tag, Space, Alert, Typography, Badge, Button } from 'antd';
+import { Row, Col, Card, Progress, Tag, Space, Alert, Typography, Badge, Button } from 'antd';
 import {
   SafetyOutlined,
   AlertOutlined,
@@ -12,6 +12,7 @@ import {
 import { useCollection, useDashboardSummary } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
 import { Link } from 'react-router-dom';
+import { FindingStatusTag, SeverityTag, StatCard, TaskStatusTag } from '../../components/Semantic';
 
 const { Text } = Typography;
 
@@ -78,75 +79,54 @@ export const DashboardPage: React.FC = () => {
       {/* 关键统计卡片 */}
       <Row gutter={[16, 16]}>
         <Col xs={24} sm={12} lg={6}>
-          <Card bordered={false}>
-            <Statistic
-              title="风险评分"
-              value={currentRiskScore}
-              suffix="/ 100"
-              valueStyle={{ color: currentRiskScore >= 70 ? '#ff4d4f' : currentRiskScore >= 40 ? '#fa8c16' : '#13c2c2' }}
-              prefix={<SafetyOutlined />}
-            />
-            <div style={{ marginTop: 8, fontSize: 12, color: '#64748b' }}>
-              <Link to="/findings">查看活动漏洞明细</Link>
-            </div>
-          </Card>
+          <StatCard
+            title="风险评分"
+            value={currentRiskScore}
+            suffix="/ 100"
+            valueStyle={{ color: currentRiskScore >= 70 ? '#ff4d4f' : currentRiskScore >= 40 ? '#fa8c16' : '#13c2c2' }}
+            prefix={<SafetyOutlined />}
+            footer={<Link to="/findings">查看活动漏洞明细</Link>}
+          />
         </Col>
 
         <Col xs={24} sm={12} lg={6}>
-          <Card bordered={false}>
-            <Statistic
-              title="有风险资产数"
-              value={riskyAssets}
-              suffix="个"
-              prefix={<DatabaseOutlined style={{ color: '#1677ff' }} />}
-            />
-            <div style={{ marginTop: 8, fontSize: 12, color: '#64748b' }}>
-              受控资产总数: {assetCount}；<Link to="/assets">查看资产台账</Link>
-            </div>
-          </Card>
+          <StatCard
+            title="有风险资产数"
+            value={riskyAssets}
+            suffix="个"
+            prefix={<DatabaseOutlined style={{ color: '#1677ff' }} />}
+            footer={<>受控资产总数: {assetCount}；<Link to="/assets">查看资产台账</Link></>}
+          />
         </Col>
 
         <Col xs={24} sm={12} lg={6}>
-          <Card bordered={false}>
-            <Statistic
-              title="漏洞总数"
-              value={totalFindings}
-              valueStyle={{ color: '#ff4d4f' }}
-              prefix={<AlertOutlined />}
-            />
-            <div style={{ marginTop: 8, fontSize: 12, color: '#64748b' }}>
-              <Link to="/findings?severity=CRITICAL">严重 {criticalCount}</Link> · <Link to="/findings?severity=HIGH">高危 {highCount}</Link>
-            </div>
-          </Card>
+          <StatCard
+            title="漏洞总数"
+            value={totalFindings}
+            valueStyle={{ color: '#ff4d4f' }}
+            prefix={<AlertOutlined />}
+            footer={<><Link to="/findings?severity=CRITICAL">严重 {criticalCount}</Link> · <Link to="/findings?severity=HIGH">高危 {highCount}</Link></>}
+          />
         </Col>
 
         <Col xs={24} sm={12} lg={6}>
-          <Card bordered={false}>
-            <Statistic
-              title="活跃扫描任务 / 分块"
-              value={runningTaskCount}
-              suffix={`/ ${taskCount}`}
-              prefix={<ClockCircleOutlined style={{ color: '#fa8c16' }} />}
-            />
-            <div style={{ marginTop: 8, fontSize: 12, color: '#64748b' }}>
-              任务按指定时间窗等待、执行和恢复
-            </div>
-          </Card>
+          <StatCard
+            title="活跃扫描任务 / 分块"
+            value={runningTaskCount}
+            suffix={`/ ${taskCount}`}
+            prefix={<ClockCircleOutlined style={{ color: '#fa8c16' }} />}
+            footer="任务按指定时间窗等待、执行和恢复"
+          />
         </Col>
 
         <Col xs={24} sm={12} lg={6}>
-          <Card bordered={false}>
-            <Statistic
-              title="规则库版本 (CURRENT)"
-              value={currentRule?.version || '尚未导入'}
-              formatter={()=>currentRule?.version || '尚未导入'}
-              prefix={<CheckCircleOutlined style={{ color: '#13c2c2' }} />}
-              valueStyle={{ fontSize: 18 }}
-            />
-            <div style={{ marginTop: 8, fontSize: 12, color: '#64748b' }}>
-              本地 Updater 上报：{currentRule?.signatureVerified?'签名已验证':'签名未验证'}；{currentRule?.engineValidated?'引擎兼容性已验证':'引擎兼容性未验证'}
-            </div>
-          </Card>
+          <StatCard
+            title="规则库版本 (CURRENT)"
+            value={currentRule?.version || '尚未导入'}
+            prefix={<CheckCircleOutlined style={{ color: '#13c2c2' }} />}
+            valueStyle={{ fontSize: 18 }}
+            footer={<>本地 Updater 上报：{currentRule?.signatureVerified ? '签名已验证' : '签名未验证'}；{currentRule?.engineValidated ? '引擎兼容性已验证' : '引擎兼容性未验证'}</>}
+          />
         </Col>
       </Row>
 
@@ -254,10 +234,10 @@ export const DashboardPage: React.FC = () => {
           size="small"
           locale={{ emptyText: '暂无待处置的严重或高危漏洞' }}
           columns={[
-            { title: '等级', dataIndex: 'severity', width: 90, render: (severity: string) => <Tag color={severity === 'CRITICAL' ? 'red' : 'orange'}>{severity === 'CRITICAL' ? '严重' : '高危'}</Tag> },
+            { title: '等级', dataIndex: 'severity', width: 90, render: (severity: string) => <SeverityTag value={severity} /> },
             { title: '漏洞', render: (_: unknown, finding: typeof pendingFindings[number]) => <Link to={`/findings?severity=${finding.severity}&businessGroup=${encodeURIComponent(finding.businessGroup)}`}>{finding.title}</Link>, ellipsis: true },
             { title: '资产/目标', dataIndex: 'target', width: 220, ellipsis: true },
-            { title: '状态', dataIndex: 'status', width: 100, render: (status: string) => <Tag color={status === 'IN_PROGRESS' ? 'processing' : 'error'}>{status === 'IN_PROGRESS' ? '修复中' : status === 'REOPENED' ? '重新打开' : '待处理'}</Tag> },
+            { title: '状态', dataIndex: 'status', width: 100, render: (status: string) => <FindingStatusTag value={status} /> },
           ]}
         />
       </Card>
@@ -313,14 +293,7 @@ export const DashboardPage: React.FC = () => {
               title: '当前状态',
               dataIndex: 'status',
               render: (status: string) => {
-                const map: Record<string, { color: string; label: string }> = {
-                  RUNNING: { color: 'processing', label: '扫描中 (In Progress)' },
-                  PAUSED: { color: 'default', label: '已暂停 (Paused)' },
-                  WAITING_WINDOW: { color: 'warning', label: '等待时间窗 (Waiting Window)' },
-                  COMPLETED: { color: 'success', label: '已完成 (Completed)' },
-                  PAUSED_WINDOW: { color: 'default', label: '窗口期暂停 (Paused)' },
-                };
-                return <Tag color={map[status]?.color || 'default'}>{map[status]?.label || status}</Tag>;
+                return <TaskStatusTag value={status} />;
               },
             },
             {

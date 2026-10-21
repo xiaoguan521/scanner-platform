@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { DataTable } from '../../components/DataState';
+import { ScheduleStatusTag, TaskStatusTag, taskStatusMeta } from '../../components/Semantic';
 import { Alert, Button, Card, Checkbox, Descriptions, Drawer, Form, Input, InputNumber, message, Modal, Progress, Select, Space, Spin, Steps, Tag, Typography } from 'antd';
 import { DownloadOutlined, PlusOutlined } from '@ant-design/icons';
 import { useCollection } from '../../api/hooks';
@@ -12,8 +13,6 @@ import type { CustomRule, PortProbeRange, ScanPlan, ScanPlanInput, ScanTask, Sch
 import { parsePortRanges, showRanges, coversAllPorts, presetLabels, summarizePorts, compressPorts, previewProbePorts } from './policy';
 import { assertTaskSubmission, isAutoTaskWizard, wizardStepFields } from './wizard';
 const dayOptions=['周日','周一','周二','周三','周四','周五','周六'].map((label,value)=>({label,value}));
-const names:Record<string,string>={PENDING:'待领取',RUNNING:'执行中',WAITING_WINDOW:'等待时间窗',PAUSED:'已暂停',PAUSED_WINDOW:'窗口结束，等待恢复',COMPLETED:'已完成',CANCELED:'已取消',FAILED:'失败'};
-const scheduleRunNames:Record<string,string>={...names,DELETED:'任务记录已删除'};
 const progressPhases:Record<string,string>={tcp_probe:'TCP 端口探测',service_identification:'服务识别',http_scan:'HTTP 基线扫描',ssh_collection:'SSH 信息采集',trivy_scan:'Trivy 系统包与应用分析',engine_scan:'引擎扫描'};
 const applicationStatuses:Record<string,string>={not_configured:'未配置部署目录',not_started:'尚未开始',port_out_of_scope:'未采集：SSH 端口不在本次范围',collecting:'采集中',collection_failed:'采集未完成',scanning:'分析中',analysis_failed:'分析未完成',completed:'已完成'};
 const ApplicationCoverage:React.FC<{task:ScanTask}>=({task})=><>
@@ -192,7 +191,7 @@ export const TasksPage:React.FC=()=>{
     </Space>}>
       <Space wrap style={{marginBottom:16}}>
         <Input.Search allowClear placeholder="搜索任务 ID、目标或输入路径" value={taskFilter} onChange={event=>setTaskFilter(event.target.value)} style={{width:260}}/>
-        <Select value={statusFilter} onChange={setStatusFilter} style={{width:150}} options={[{value:'all',label:'所有状态'},...Object.entries(names).map(([value,label])=>({value,label}))]}/>
+        <Select value={statusFilter} onChange={setStatusFilter} style={{width:150}} options={[{value:'all',label:'所有状态'},...Object.entries(taskStatusMeta).map(([value,meta])=>({value,label:meta.label}))]}/>
         <Select value={engineFilter} onChange={setEngineFilter} style={{width:180}} options={[{value:'all',label:'所有扫描方案'},...['auto','port-probe','nuclei','trivy','zap','synthetic'].map(value=>({value,label:value==='auto'?'自动综合扫描':value==='port-probe'?'旧版 TCP 端口探测':value==='synthetic'?'模拟任务':`旧版 ${value.toUpperCase()}`}))]}/>
         <Button onClick={()=>setShowArchived(value=>!value)}>{showArchived?'返回任务清册':'查看归档'}</Button>
         <Tag>{showArchived?'归档任务':'未归档任务'} {tasks.length}</Tag><Tag color="processing">执行中 {tasks.filter(task=>task.status==='RUNNING').length}</Tag><Tag color="gold">待执行 {tasks.filter(task=>['PENDING','WAITING_WINDOW','PAUSED_WINDOW'].includes(task.status)).length}</Tag><Tag color="default">已暂停 {tasks.filter(task=>task.status==='PAUSED').length}</Tag><Tag color="success">已完成 {tasks.filter(task=>task.status==='COMPLETED').length}</Tag>
@@ -204,7 +203,7 @@ export const TasksPage:React.FC=()=>{
           {title:'执行方式',width:140,render:(_,t)=><Tag color={t.synthetic?'default':'blue'}>{t.synthetic?'模拟 Worker':t.engines[0]==='auto'?'自动综合扫描':t.engines[0]==='port-probe'?'旧版 TCP 探测':t.engines.join('、').toUpperCase()}</Tag>},
           {title:'目标 / 探测端口',width:165,render:(_,t)=>t.engines[0]==='port-probe'||t.engines[0]==='auto'?`${t.targetCount} 台主机 / ${t.portProbePorts?.length??0} 端口`:`${t.targetCount} / 跳过 ${t.skippedTargets?.length??0}`},
           {title:'进度',width:220,render:(_,t)=>renderProgress(t)},
-          {title:'状态',dataIndex:'status',width:150,render:(s:string,t)=><Space wrap><Tag color={s==='COMPLETED'?'success':s==='RUNNING'?'processing':'default'}>{names[s]??s}</Tag>{t.archived&&<Tag>已归档</Tag>}</Space>},
+          {title:'状态',dataIndex:'status',width:150,render:(s:string,t)=><Space wrap><TaskStatusTag value={s}/>{t.archived&&<Tag>已归档</Tag>}</Space>},
           {title:'本地截止时间',dataIndex:'hardDeadline',width:190,render:(v:string)=>v?new Date(v).toLocaleString():'—'},
           {title:'操作',width:470,render:(_,t)=>{const terminal=['COMPLETED','CANCELED','FAILED'].includes(t.status);return <Space wrap><Button size="small" onClick={()=>openTaskDetail(t)}>详情</Button>{!terminal&&t.status!=='PAUSED'&&<Button size="small" disabled={!canWrite} onClick={()=>void pause(t)}>暂停</Button>}{t.status==='PAUSED'&&<Button size="small" type="primary" disabled={!canWrite} onClick={()=>void resume(t)}>恢复</Button>}{!terminal&&<Button size="small" danger disabled={!canWrite} onClick={()=>void stop(t.id)}>取消</Button>}{terminal&&<Button size="small" disabled={!canWrite} onClick={()=>void setArchived(t.id,!t.archived)}>{t.archived?'恢复':'归档'}</Button>}{terminal&&<Button size="small" disabled={!canWrite} onClick={()=>copyTask(t)}>按此配置新建</Button>}{terminal&&canDelete&&t.findingCount===0&&<Button size="small" danger onClick={()=>removeTask(t)}>彻底删除</Button>}{terminal&&canDelete&&t.findingCount>0&&<Tag>有关联发现，仅可归档</Tag>}</Space>}},
         ]}/>
@@ -214,7 +213,7 @@ export const TasksPage:React.FC=()=>{
       {detailError&&<Alert type="error" showIcon message="任务详情加载失败" description={detailError} style={{marginBottom:16}}/>}
       {detailTask&&<Space direction="vertical" size={16} style={{width:'100%'}}>
         <Descriptions bordered size="small" column={2}>
-          <Descriptions.Item label="状态"><Tag color={detailTask.status==='COMPLETED'?'success':detailTask.status==='RUNNING'?'processing':'default'}>{names[detailTask.status]??detailTask.status}</Tag></Descriptions.Item>
+          <Descriptions.Item label="状态"><TaskStatusTag value={detailTask.status}/></Descriptions.Item>
           <Descriptions.Item label="发现项">{detailTask.findingCount}</Descriptions.Item>
           <Descriptions.Item label="目标数">{detailTask.targetCount}</Descriptions.Item>
           <Descriptions.Item label="执行方式">{detailTask.synthetic?'模拟 Worker':detailTask.engines?.join('、')||'—'}</Descriptions.Item>
@@ -225,7 +224,7 @@ export const TasksPage:React.FC=()=>{
         <Card size="small" title="目标级状态">
           <DataTable<ScanTask['chunks'][number]> size="small" rowKey="id" pagination={false} dataSource={detailTask.chunks??[]} columns={[
             {title:'目标',dataIndex:'targets',render:(targets:string[])=>targets?.join('、')||'—'},
-            {title:'状态',dataIndex:'status',width:120,render:(value:string)=>names[value]??value},
+            {title:'状态',dataIndex:'status',width:120,render:(value:string)=><TaskStatusTag value={value}/>},
             {title:'Worker',dataIndex:'workerNodeId',render:(value:string)=>value||'尚未领取'},
           ]}/>
         </Card>
@@ -339,7 +338,7 @@ export const TasksPage:React.FC=()=>{
       {scheduleRunError&&<Alert type="error" showIcon message="历史运行记录加载失败" description={scheduleRunError}/>}
       <DataTable<ScheduleRun> rowKey="id" loading={scheduleRunLoading} dataSource={scheduleRuns} locale={{emptyText:'暂无运行记录'}} pagination={{current:scheduleRunPage,pageSize:50,total:scheduleRunTotal,hideOnSinglePage:true,showSizeChanger:false,onChange:page=>setScheduleRunPage(page)}} columns={[
         {title:'触发时间',dataIndex:'triggeredAt',width:190,render:(value:string)=>new Date(value).toLocaleString()},
-        {title:'状态',dataIndex:'status',width:150,render:(value:string)=><Tag color={value==='COMPLETED'?'success':value==='FAILED'?'error':value==='RUNNING'?'processing':'default'}>{scheduleRunNames[value]??value}</Tag>},
+        {title:'状态',dataIndex:'status',width:150,render:(value:string)=><ScheduleStatusTag value={value}/>},
         {title:'任务 ID',dataIndex:'taskId',width:240,ellipsis:true,render:(value:string)=>value||'—'},
         {title:'错误',dataIndex:'error',ellipsis:true,render:(value:string)=>value||'—'},
       ]}/>
