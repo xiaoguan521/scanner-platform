@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import {
   Layout,
   Menu,
+  type MenuProps,
   theme,
   Badge,
   Space,
@@ -13,23 +14,20 @@ import {
 import {
   DashboardOutlined,
   ApartmentOutlined,
-  CalendarOutlined,
   RadarChartOutlined,
   BugOutlined,
   ClusterOutlined,
   BulbOutlined,
   BulbFilled,
   SafetyCertificateOutlined,
-  TeamOutlined,
   FileTextOutlined,
-  BookOutlined,
-  AuditOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAppTheme } from '../../context/ThemeContext';
 import { isDemoMode } from '../../api/client';
 import { useSystemStatus } from '../../api/hooks';
 import { useAuth } from '../../auth/AuthProvider';
+import { navigationLabel, visibleNavigation } from './navigation';
 
 const { Header, Sider, Content } = Layout;
 
@@ -41,55 +39,22 @@ export const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children })
   const { token } = theme.useToken();
   const { status, error } = useSystemStatus();
   const { user, logout } = useAuth();
-
-  const menuItems = [
-    {
-      key: '/',
-      icon: <DashboardOutlined />,
-      label: '态势大屏',
-    },
-    {
-      key: '/assets',
-      icon: <ApartmentOutlined />,
-      label: '资产与端口准入',
-    },
-    {
-      key: '/scopes',
-      icon: <CalendarOutlined />,
-      label: '授权与时间窗',
-    },
-    {
-      key: '/tasks',
-      icon: <RadarChartOutlined />,
-      label: '扫描任务中心',
-    },
-    {
-      key: '/findings',
-      icon: <BugOutlined />,
-      label: '漏洞生命周期',
-    },
-    {
-      key: '/reports',
-      icon: <FileTextOutlined />,
-      label: '安全报告',
-    },
-    {key:'/knowledge',icon:<BookOutlined />,label:'漏洞知识库'},
-    {
-      key: '/nodes',
-      icon: <ClusterOutlined />,
-      label: '节点与规则版本',
-    },
-    {
-      key: '/users',
-      icon: <TeamOutlined />,
-      label: '用户与权限',
-    },
-    {
-      key: '/audit',
-      icon: <AuditOutlined />,
-      label: '审计日志',
-    },
-  ].filter(item => !['/users', '/audit'].includes(item.key) || isDemoMode || user?.role === 'admin');
+  const groups = visibleNavigation(isDemoMode, user?.role);
+  const icons: Record<string, React.ReactNode> = {
+    overview: <DashboardOutlined />,
+    assets: <ApartmentOutlined />,
+    scans: <RadarChartOutlined />,
+    findings: <BugOutlined />,
+    reports: <FileTextOutlined />,
+    system: <ClusterOutlined />,
+  };
+  const menuItems: MenuProps['items'] = groups.map(group => ({
+    key: group.key,
+    icon: icons[group.key],
+    label: group.label,
+    children: group.children.map(item => ({ key: item.key, label: item.label })),
+  }));
+  const selectedLabel = navigationLabel(location.pathname, groups);
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
@@ -130,8 +95,12 @@ export const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children })
           theme={isDark ? 'dark' : 'light'}
           mode="inline"
           selectedKeys={[location.pathname]}
+          defaultOpenKeys={groups.map(group => group.key)}
           items={menuItems}
-          onClick={({ key }) => navigate(key)}
+          onClick={({ key }) => {
+            const group = groups.find(item => item.key === key);
+            navigate(group?.defaultPath ?? key);
+          }}
           style={{ background: 'transparent', borderRight: 0, marginTop: 8 }}
         />
       </Sider>
@@ -153,7 +122,7 @@ export const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children })
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
             <span style={{ fontSize: 16, fontWeight: 600 }}>
-              {menuItems.find((m) => m.key === location.pathname)?.label || '控制台'}
+              {selectedLabel || '控制台'}
             </span>
             <Tag color="blue" bordered={false}>
               {status?.enabled.includes('synthetic-worker') ? '早期开发 · 本地运行' : 'Phase 0 PoC'}
