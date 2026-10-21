@@ -56,6 +56,7 @@ sec-worker \
   --server https://192.0.2.10:8443 \
   --node-token-file /run/secrets/worker-token \
   --fence --once --fence-parent-netns-fd 3 \
+  --fence-cgroup-root /sys/fs/cgroup/sec-worker \
   --fence-infra tcp://192.0.2.53:53 \
   --bin-dir /opt/sec/bin --rules-dir /vuln-data \
   --runtime-dir /runtime/worker --inputs-dir /runtime/inputs
@@ -79,7 +80,7 @@ The following items are intentionally not represented by a fake Compose file:
 - pinned Server/Updater/Worker images and reproducible image builds;
 - secret, certificate, token, and parent-namespace launcher orchestration;
 - isolated-Linux evidence for out-of-scope packet drops, uid/capabilities,
-  `no_new_privs`, cgroup descendant cleanup, and forbidden `hostNetwork`;
+    `no_new_privs`, cgroup-v2 descendant cleanup, and forbidden `hostNetwork`;
 - production PostgreSQL backup/restore, monitoring, and migration rollout;
 - remote node deployment and automatic certificate issuance.
 

@@ -4,6 +4,7 @@ package poc01
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ import (
 
 	"scanner-platform/internal/portprobe"
 	"scanner-platform/internal/taskflow"
+	"scanner-platform/internal/workerfence"
 )
 
 // These wire structs intentionally mirror the private bootstrap protocol. The
@@ -25,6 +27,8 @@ type fencedWorkerConfigWire struct {
 	NftPath       string `json:"NftPath"`
 	SetprivPath   string `json:"SetprivPath"`
 	ParentNetNSFD int    `json:"ParentNetNSFD"`
+	CgroupRoot    string `json:"CgroupRoot"`
+	CgroupPath    string `json:"CgroupPath"`
 	BinDir        string `json:"BinDir"`
 	RulesDir      string `json:"RulesDir"`
 	RuntimeDir    string `json:"RuntimeDir"`
@@ -113,6 +117,18 @@ func TestFencedWorkerTask(t *testing.T) {
 	}
 	defer parentNS.Close()
 	defer progress.Close()
+	cgroupRoot := os.Getenv("LAB_CGROUP_ROOT")
+	if cgroupRoot == "" {
+		cgroupRoot = "/sys/fs/cgroup/sec-worker-lab"
+	}
+	if err := os.MkdirAll(cgroupRoot, 0750); err != nil {
+		t.Fatalf("create cgroup root: %v", err)
+	}
+	cgroup, err := workerfence.NewTaskCgroup(cgroupRoot)
+	if err != nil {
+		t.Fatalf("create task cgroup: %v", err)
+	}
+	defer func() { _ = cgroup.Close(context.Background()) }()
 	input := fencedWorkerInputWire{
 		Operation: "probe-ports",
 		Task: taskflow.Task{
@@ -134,6 +150,8 @@ func TestFencedWorkerTask(t *testing.T) {
 			NftPath:       "/usr/sbin/nft",
 			SetprivPath:   "/usr/bin/setpriv",
 			ParentNetNSFD: 3,
+			CgroupRoot:    cgroupRoot,
+			CgroupPath:    cgroup.Path(),
 			BinDir:        "/runtime/bin",
 			RulesDir:      "/vuln-data",
 			RuntimeDir:    "/runtime/worker",

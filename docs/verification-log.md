@@ -1,5 +1,11 @@
 # Verification log
 
+## 2026-10-21：fenced Worker cgroup v2 生命周期边界
+
+- `internal/workerfence/cgroup_linux.go` 新增专用 cgroup v2 任务边界：只接受部署提供的绝对根目录，强制存在 `cgroup.controllers`、`cgroup.procs` 和 `cgroup.kill`，每个任务使用独立子 cgroup；加入失败或缺少 `cgroup.kill` 时在引擎启动前拒绝。
+- fenced root 子进程在安装 nftables 前加入任务 cgroup，任务结束/取消/失败时使用内核 `cgroup.kill` 清理后代，再删除任务目录；root supervisor 会先回到父 cgroup，避免清理动作杀死自身。
+- 单元测试覆盖根目录/路径越界、缺少 `cgroup.kill`、加入/kill 控制文件和清理；在一次性 Linux arm64 特权实验容器中，`TestFencedCgroupKillsDescendants` 与 `TestFencedWorkerTask` 均已通过，前者故意创建后代进程并验证内核 cgroup kill，后者实际创建临时 cgroup v2、完成 root 子进程加入、setpriv 执行和任务目录清理。该证据尚未覆盖范围外 DROP 计数或生产 Compose `hostNetwork` 约束。
+
 ## 2026-10-21：隔离引擎回归与可选 ZAP 行为
 
 - `LAB_ENV=isolated make test-engines-local` 已通过：Nuclei 真实进程、Trivy 离线系统包/依赖/镜像归档、Java 归档、Go amd64/arm64 ELF、稳定去重、快照篡改拒绝、麒麟未适配拒绝和缺失输入失败路径均有回归证据。测试只创建本机回环 HTTP 夹具，不连接当前靶机或 PostgreSQL。

@@ -14,6 +14,7 @@ sec-worker \
   --server https://192.0.2.10:8443 \
   --node-token-file /run/secrets/worker-token \
   --fence --once --fence-parent-netns-fd 3 \
+  --fence-cgroup-root /sys/fs/cgroup/sec-worker \
   --fence-infra tcp://192.0.2.53:53 \
   --bin-dir /opt/sec/bin --rules-dir /vuln-data \
   --runtime-dir /runtime/worker --inputs-dir /runtime/inputs
@@ -26,8 +27,9 @@ Server 的 HTTPS 地址会自动加入基础设施白名单；额外的 DNS、Ha
 1. 在 Worker 进入专属网络 namespace **之前**打开父 namespace 文件描述符，并以 fd 3 传入；fd 必须指向不同于当前 Worker namespace 的 Linux `nsfs` 对象。
 2. 部署必须使用独立 network namespace，禁止 `hostNetwork` 或把 Worker 复用到宿主机 namespace。围栏规则只在当前 namespace 安装，代码会拒绝修改与父 namespace 相同的防火墙。
 3. Worker 镜像固定 `nft` 和 `setpriv` 的绝对路径与版本。启动器只授予安装 nftables 所需的临时权限；子进程通过固定参数清除 UID/GID、附加组和全部 capabilities，并设置 `no_new_privs`。
-4. 规则目录以只读方式挂载；`/runtime` 和输入目录由 uid 10001 私有可写。若启用 SSH 采集，Worker-local SSH 配置、known_hosts、私钥文件或 SSH Agent 必须对 uid 10001 可用，且仍保持私钥 owner-only，不能把密钥内容传入 Server 或任务 JSON。
-5. Server 节点 API 必须使用 HTTPS 和 owner-only 节点令牌文件；令牌不放入环境变量或日志。启动器负责在 namespace 内保留到 Server 的精确 `IP:端口` 通道。
+4. 启动器必须预置专用、可写的 cgroup v2 根目录（例如 `/sys/fs/cgroup/sec-worker`），并提供 `cgroup.controllers`、`cgroup.procs` 和 `cgroup.kill`。每个任务创建一个子 cgroup，root 阶段先加入该组；缺少 `cgroup.kill` 或加入失败时不得启动引擎。
+5. 规则目录以只读方式挂载；`/runtime` 和输入目录由 uid 10001 私有可写。若启用 SSH 采集，Worker-local SSH 配置、known_hosts、私钥文件或 SSH Agent 必须对 uid 10001 可用，且仍保持私钥 owner-only，不能把密钥内容传入 Server 或任务 JSON。
+6. Server 节点 API 必须使用 HTTPS 和 owner-only 节点令牌文件；令牌不放入环境变量或日志。启动器负责在 namespace 内保留到 Server 的精确 `IP:端口` 通道。
 
 ## 代码执行顺序
 
@@ -42,5 +44,5 @@ Server 的 HTTPS 地址会自动加入基础设施白名单；额外的 DNS、Ha
 本地已通过计划生成、非法目标拒绝、围栏失败不启动、受限 argv 构造、交叉编译和 Go race 单测。在一次性 Linux arm64 隔离容器中，真实 `nft`/`setpriv`/network namespace Worker 联调也已通过，并核对了 uid/gid 10001、`NoNewPrivs=1` 和全部 capability 字段为零；这不是生产部署验收。以下仍必须在隔离 Linux 部署环境验证后才能进入部署清单：
 
 - 范围外 TCP/UDP/DNS/HTTP 请求确实被 DROP，计数可观测；
-- 任务结束或租约失联时进程组/cgroup 后代全部终止；
+- 任务结束或租约失联时进程组和 cgroup 后代全部终止；代码现在强制使用 cgroup v2 `cgroup.kill`，仍需在部署环境实测后代清理和超时行为；
 - Docker/Compose 网络路径不会绕过 namespace，Server、规则库和 SSH 输入路径仅通过明确白名单访问。

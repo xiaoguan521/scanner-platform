@@ -27,6 +27,8 @@ type fencedRunnerConfig struct {
 	NftPath        string
 	SetprivPath    string
 	ParentNetNSFD  int
+	CgroupRoot     string
+	CgroupPath     string
 	Infrastructure []workerfence.Permit `json:"-"`
 	BinDir         string
 	RulesDir       string

@@ -45,6 +45,9 @@ func newFencedTaskRunner(config fencedRunnerConfig) (*fencedTaskRunner, error) {
 	if !filepath.IsAbs(config.SetprivPath) || filepath.Clean(config.SetprivPath) != config.SetprivPath {
 		return nil, errors.New("setpriv path must be absolute/canonical")
 	}
+	if !filepath.IsAbs(config.CgroupRoot) || filepath.Clean(config.CgroupRoot) != config.CgroupRoot || config.CgroupRoot == "/" {
+		return nil, errors.New("fence requires an absolute dedicated cgroup root")
+	}
 	if len(config.Infrastructure) == 0 {
 		return nil, errors.New("--fence requires at least one infrastructure permit")
 	}
@@ -64,7 +67,16 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 	return b.Buffer.Write(p)
 }
 
-func (r *fencedTaskRunner) run(ctx context.Context, operation string, task taskflow.Task) (fencedTaskOutput, error) {
+func (r *fencedTaskRunner) run(ctx context.Context, operation string, task taskflow.Task) (result fencedTaskOutput, runErr error) {
+	cgroup, err := workerfence.NewTaskCgroup(r.config.CgroupRoot)
+	if err != nil {
+		return fencedTaskOutput{}, fmt.Errorf("create fenced task cgroup: %w", err)
+	}
+	defer func() {
+		if closeErr := cgroup.Close(context.Background()); closeErr != nil && runErr == nil {
+			runErr = fmt.Errorf("clean up fenced task cgroup: %w", closeErr)
+		}
+	}()
 	input := fencedTaskInput{
 		Operation: operation,
 		Task:      task,
@@ -72,6 +84,7 @@ func (r *fencedTaskRunner) run(ctx context.Context, operation string, task taskf
 		Infra:     permitsWire(r.config.Infrastructure),
 	}
 	input.Config.ParentNetNSFD = 3
+	input.Config.CgroupPath = cgroup.Path()
 	raw, err := json.Marshal(input)
 	if err != nil {
 		return fencedTaskOutput{}, fmt.Errorf("encode fenced task: %w", err)
@@ -96,6 +109,7 @@ func (r *fencedTaskRunner) run(ctx context.Context, operation string, task taskf
 		if command.Process == nil {
 			return os.ErrProcessDone
 		}
+		_ = cgroup.Kill()
 		return syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
 	}
 	if err := command.Start(); err != nil {
@@ -118,16 +132,16 @@ func (r *fencedTaskRunner) run(ctx context.Context, operation string, task taskf
 	if progressErr != nil {
 		return fencedTaskOutput{}, errors.New("invalid fenced task progress")
 	}
-	var result fencedTaskOutput
+	var decoded fencedTaskOutput
 	decoder := json.NewDecoder(bytes.NewReader(output.Bytes()))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&result); err != nil || decoder.Decode(new(any)) != io.EOF || result.Status == "" {
+	if err := decoder.Decode(&decoded); err != nil || decoder.Decode(new(any)) != io.EOF || decoded.Status == "" {
 		return fencedTaskOutput{}, errors.New("invalid fenced task result")
 	}
-	if result.Status != "ok" {
+	if decoded.Status != "ok" {
 		return fencedTaskOutput{}, errors.New("fenced task execution failed")
 	}
-	return result, nil
+	return decoded, nil
 }
 
 const (
@@ -201,7 +215,7 @@ func fencedDeadline(task taskflow.Task) (time.Time, error) {
 	return deadline, nil
 }
 
-func runFencedChild(stdout, stderr io.Writer) int {
+func runFencedChild(stdout, stderr io.Writer) (exitCode int) {
 	raw, input, err := readFencedInput(os.Stdin)
 	if err != nil {
 		fmt.Fprintln(stderr, "fenced worker input rejected")
@@ -216,11 +230,40 @@ func runFencedChild(stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "fenced worker deadline rejected")
 		return 2
 	}
+	var taskCgroup *workerfence.TaskCgroup
+	defer func() {
+		if taskCgroup == nil {
+			return
+		}
+		if err := taskCgroup.Detach(os.Getpid()); err != nil {
+			fmt.Fprintln(stderr, "fenced task cgroup detach failed")
+			if exitCode == 0 {
+				exitCode = 1
+			}
+		}
+		if err := taskCgroup.Close(context.Background()); err != nil {
+			fmt.Fprintln(stderr, "fenced task cgroup cleanup failed")
+			if exitCode == 0 {
+				exitCode = 1
+			}
+		}
+	}()
 	if os.Getenv("SCANNER_FENCE_DROPPED") != "1" {
 		if os.Geteuid() != 0 {
 			fmt.Fprintln(stderr, "fenced worker requires root only for firewall setup")
 			return 2
 		}
+		cgroup, err := workerfence.OpenTaskCgroup(input.Config.CgroupRoot, input.Config.CgroupPath)
+		if err != nil {
+			fmt.Fprintln(stderr, "fenced task cgroup rejected")
+			return 2
+		}
+		if err := cgroup.Attach(os.Getpid()); err != nil {
+			_ = cgroup.Close(context.Background())
+			fmt.Fprintln(stderr, "fenced task cgroup attach rejected")
+			return 2
+		}
+		taskCgroup = cgroup
 		parent := os.NewFile(3, "parent-network-namespace")
 		if parent == nil {
 			fmt.Fprintln(stderr, "trusted parent network namespace fd missing")

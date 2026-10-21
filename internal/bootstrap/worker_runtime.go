@@ -47,6 +47,7 @@ func RunWorker(args []string, stdout, stderr io.Writer) int {
 	fenceParentFD := flags.Int("fence-parent-netns-fd", -1, "Trusted inherited fd for the parent network namespace (Linux fence mode)")
 	fenceNftPath := flags.String("fence-nft-path", "/usr/sbin/nft", "Absolute nft path used by Linux fence supervisor")
 	fenceSetprivPath := flags.String("fence-setpriv-path", "/usr/bin/setpriv", "Absolute setpriv path used by Linux fence supervisor")
+	fenceCgroupRoot := flags.String("fence-cgroup-root", "/sys/fs/cgroup/sec-worker", "Dedicated writable cgroup-v2 root for Linux fence tasks")
 	fenceInfra := flags.String("fence-infra", "", "Comma-separated exact TCP/UDP IP:port infrastructure permits; tcp:// and udp:// prefixes are supported")
 	rate := flags.Int("rate", 5, "Nuclei requests per second (1-100)")
 	timeout := flags.Int("request-timeout", 10, "HTTP request timeout in seconds (1-60)")
@@ -129,6 +130,7 @@ func RunWorker(args []string, stdout, stderr io.Writer) int {
 		}
 		fenced, err = newFencedTaskRunner(fencedRunnerConfig{
 			Executable: executable, NftPath: absolute(*fenceNftPath), SetprivPath: absolute(*fenceSetprivPath), ParentNetNSFD: *fenceParentFD,
+			CgroupRoot:     absolute(*fenceCgroupRoot),
 			Infrastructure: infrastructure, BinDir: runner.BinDir, RulesDir: runner.RulesDir, RuntimeDir: runner.RuntimeDir, InputsDir: runner.InputsDir,
 			SSHConfigPath: fencedSSHConfig, Rate: runner.Rate, Timeout: runner.Timeout,
 		})

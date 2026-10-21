@@ -35,4 +35,4 @@ sec-server --listen 127.0.0.1:8080 \
 
 ## Linux 围栏 Worker
 
-Linux 生产执行器需要使用 `sec-worker --fence --once --fence-parent-netns-fd <fd>`，并由可信启动器在进入专属 network namespace 前打开父 namespace 文件句柄。该模式会在当前 namespace 安装精确 nftables 默认拒绝规则，随后以 uid 10001、无 capabilities、`no_new_privs` 的子进程执行任务；Server 地址自动加入白名单，其他 DNS/Harbor/制品库地址必须逐项通过 `--fence-infra IP:port` 提供。每个 Worker 只处理一个任务并退出，不能在同一 namespace 复用规则。详细前置条件、SSH 文件权限和隔离验收见 [Linux Worker 围栏运行约定](worker-fence.md)。本地回环模式和 macOS/Windows 仍只提供应用层范围校验，不能替代 Linux namespace 验收。
+Linux 生产执行器需要使用 `sec-worker --fence --once --fence-parent-netns-fd <fd> --fence-cgroup-root <dir>`，并由可信启动器在进入专属 network namespace 前打开父 namespace 文件句柄。该模式会在当前 namespace 安装精确 nftables 默认拒绝规则，随后以 uid 10001、无 capabilities、`no_new_privs` 的子进程执行任务；每个任务还必须加入部署提供的 cgroup v2 子组并使用 `cgroup.kill` 清理后代。Server 地址自动加入白名单，其他 DNS/Harbor/制品库地址必须逐项通过 `--fence-infra IP:port` 提供。每个 Worker 只处理一个任务并退出，不能在同一 namespace 复用规则。详细前置条件、SSH 文件权限和隔离验收见 [Linux Worker 围栏运行约定](worker-fence.md)。本地回环模式和 macOS/Windows 仍只提供应用层范围校验，不能替代 Linux namespace 验收。

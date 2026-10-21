@@ -79,7 +79,7 @@ test-fence-lab:
 	fi
 	@test "$(GOOS)" = linux || { printf '%s\n' 'test-fence-lab must run on Linux; cross-compile the Worker and test binary first.' >&2; exit 2; }
 	@test -n "$${LAB_WORKER_BIN:-}" || { printf '%s\n' 'LAB_WORKER_BIN must point to the matching Linux sec-worker binary.' >&2; exit 2; }
-	$(GO) test -tags=lab ./pocs/01 -run 'Test(IsolatedFenceInstall|FencedWorkerTask)$$' -v
+	$(GO) test -tags=lab ./pocs/01 -run 'Test(IsolatedFenceInstall|FencedWorkerTask|FencedCgroupKillsDescendants)$$' -v
 
 test-local: build web-build
 	python3 scripts/test_local.py
