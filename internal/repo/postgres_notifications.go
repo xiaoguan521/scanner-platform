@@ -35,6 +35,9 @@ func (s *PostgresRuntimeStore) RefreshNotifications(ctx context.Context) error {
 	if err := s.refreshPostgresTaskNotifications(ctx, tx, now); err != nil {
 		return err
 	}
+	if err := s.refreshPostgresFenceNotifications(ctx, tx, now); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit postgres notification refresh: %w", err)
 	}
@@ -185,6 +188,41 @@ func (s *PostgresRuntimeStore) refreshPostgresTaskNotifications(ctx context.Cont
 			ID: "notification-task-failed-" + id, Kind: "task_failed", Severity: "error",
 			Title: "扫描任务执行失败", Message: "有一条扫描任务执行失败，请查看任务详情中的安全日志。",
 			ObjectType: "task", ObjectID: id,
+		}, now); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *PostgresRuntimeStore) refreshPostgresFenceNotifications(ctx context.Context, tx *sql.Tx, now time.Time) error {
+	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT object_id FROM audit_logs
+		WHERE action='fence_drop_observed' AND object_type='task'
+		ORDER BY object_id LIMIT 500`)
+	if err != nil {
+		return fmt.Errorf("list postgres fence notifications: %w", err)
+	}
+	ids := make([]string, 0, 500)
+	for rows.Next() {
+		var taskID string
+		if err := rows.Scan(&taskID); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan postgres fence notification: %w", err)
+		}
+		ids = append(ids, taskID)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("iterate postgres fence notifications: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close postgres fence notifications: %w", err)
+	}
+	for _, taskID := range ids {
+		if err := insertPostgresNotificationTx(ctx, tx, Notification{
+			ID: "notification-fence-drop-" + taskID, Kind: "fence_drop", Severity: "warning",
+			Title: "扫描围栏拦截范围外连接", Message: "有一条扫描任务触发了网络围栏，请检查授权范围和 Worker 状态。",
+			ObjectType: "task", ObjectID: taskID,
 		}, now); err != nil {
 			return err
 		}

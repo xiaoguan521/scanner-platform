@@ -635,4 +635,4 @@ Linux fenced Worker 由可信 `sec-fence-launcher` 创建一次性 network names
 
 ### 2026-10-21 围栏 DROP 计数回报
 
-fenced Worker 子进程在围栏成功且计数读取完成后，将 `fenceStatus=ENFORCED` 与非负 `dropCount` 作为任务回报元数据发送；Server 只接受这两个受限字段，计数超过 JSON 安全整数范围或状态不匹配时拒绝回报。SQLite 任务详情与 PostgreSQL 任务安全投影保存最后一次任务计数；计数大于零时写入不含目标地址、请求/响应或凭据的 `fence_drop_observed` 审计事件，任务日志和详情只显示静态脱敏告警。该链路不新增迁移，也不改变授权范围；真实范围外发包抓包、部署告警和 Compose 网络约束仍需隔离部署验收。
+fenced Worker 子进程在围栏成功且计数读取完成后，将 `fenceStatus=ENFORCED` 与非负 `dropCount` 作为任务回报元数据发送；Server 只接受这两个受限字段，计数超过 JSON 安全整数范围或状态不匹配时拒绝回报。SQLite 任务详情与 PostgreSQL 任务安全投影保存最后一次任务计数；计数大于零时写入不含目标地址、请求/响应或凭据的 `fence_drop_observed` 审计事件，任务日志、详情和平台通知中心只显示静态脱敏告警。该链路不新增迁移，也不改变授权范围；真实范围外发包抓包、部署告警和 Compose 网络约束仍需隔离部署验收。

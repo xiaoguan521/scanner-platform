@@ -3,6 +3,7 @@ package repo
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -54,5 +55,38 @@ func TestNotificationsRefreshIsIdempotentAndReadStatePersists(t *testing.T) {
 	allRead, err := store.ListNotifications(ctx, true)
 	if err != nil || len(allRead.Items) != 0 || allRead.UnreadCount != 0 {
 		t.Fatalf("mark all read: %+v %v", allRead, err)
+	}
+}
+
+func TestFenceDropNotificationIsIdempotentAndRedacted(t *testing.T) {
+	store, actor := localFixture(t)
+	ctx := context.Background()
+	task, err := store.CreateSyntheticTask(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO audit_logs(id,actor,action,object_type,object_id,detail,created_at)
+		VALUES(?,?,?,?,?,?,?)`, "audit-fence-drop-fixture", actor, "fence_drop_observed", "task", task.ID, "drop_count=4", time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	first, err := store.ListNotifications(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.ListNotifications(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found *Notification
+	for i := range second.Items {
+		if second.Items[i].Kind == "fence_drop" && second.Items[i].ObjectID == task.ID {
+			found = &second.Items[i]
+		}
+	}
+	if found == nil || found.Title == "" || found.Message == "" || first.Total != second.Total {
+		t.Fatalf("fence notification=%+v first=%+v second=%+v", found, first, second)
+	}
+	if found.ObjectID != task.ID || strings.Contains(found.Message, "192.0.2") || strings.Contains(found.Message, "drop_count") {
+		t.Fatalf("notification leaked raw detail: %+v", found)
 	}
 }

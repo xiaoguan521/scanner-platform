@@ -39,8 +39,8 @@ func TestPostgresNotificationsRefreshReadAndWebhookDelivery(t *testing.T) {
 		taskID  = "lab-postgres-notification-task"
 	)
 	cleanup := func() {
-		_, _ = db.ExecContext(ctx, `DELETE FROM notification_deliveries WHERE notification_id LIKE 'notification-scope_%' OR notification_id LIKE 'notification-task-failed-%'`)
-		_, _ = db.ExecContext(ctx, `DELETE FROM notifications WHERE id LIKE 'notification-scope_%' OR id=$1`, "notification-task-failed-"+taskID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM notification_deliveries WHERE notification_id LIKE 'notification-scope_%' OR notification_id LIKE 'notification-task-failed-%' OR notification_id=$1`, "notification-fence-drop-"+taskID)
+		_, _ = db.ExecContext(ctx, `DELETE FROM notifications WHERE id LIKE 'notification-scope_%' OR id=$1 OR id=$2`, "notification-task-failed-"+taskID, "notification-fence-drop-"+taskID)
 		_, _ = db.ExecContext(ctx, `DELETE FROM product_settings WHERE id=$1`, notificationSettingsID)
 		_, _ = db.ExecContext(ctx, `DELETE FROM scan_tasks WHERE id=$1`, taskID)
 		_, _ = db.ExecContext(ctx, `DELETE FROM authorized_scopes WHERE id=$1`, scopeID)
@@ -69,6 +69,11 @@ func TestPostgresNotificationsRefreshReadAndWebhookDelivery(t *testing.T) {
 		(id,scope_id,engines,status,created_by) VALUES ($1,$2,'["auto"]','FAILED',$3)`, taskID, scopeID, actor); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO audit_logs
+		(id,actor,action,object_type,object_id,detail,created_at)
+		VALUES ($1,$2,'fence_drop_observed','task',$3,'drop_count=4',CURRENT_TIMESTAMP)`, "lab-postgres-fence-audit", actor, taskID); err != nil {
+		t.Fatal(err)
+	}
 
 	store, err := NewPostgresRuntime(db)
 	if err != nil {
@@ -81,16 +86,21 @@ func TestPostgresNotificationsRefreshReadAndWebhookDelivery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var scopeNotification, taskNotification string
+	var scopeNotification, taskNotification, fenceNotification string
 	for _, item := range page.Items {
 		if item.ObjectID == scopeID {
 			scopeNotification = item.ID
 		}
 		if item.ObjectID == taskID {
-			taskNotification = item.ID
+			if item.Kind == "task_failed" {
+				taskNotification = item.ID
+			}
+			if item.Kind == "fence_drop" {
+				fenceNotification = item.ID
+			}
 		}
 	}
-	if scopeNotification == "" || taskNotification == "" || page.UnreadCount < 2 {
+	if scopeNotification == "" || taskNotification == "" || fenceNotification == "" || page.UnreadCount < 3 {
 		t.Fatalf("notification page=%+v", page)
 	}
 	if err := store.MarkNotificationRead(ctx, scopeNotification); err != nil {
@@ -132,7 +142,7 @@ func TestPostgresNotificationsRefreshReadAndWebhookDelivery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if delivered < 2 || received < 2 {
+	if delivered < 3 || received < 3 {
 		t.Fatalf("delivered=%d received=%d", delivered, received)
 	}
 	var state string

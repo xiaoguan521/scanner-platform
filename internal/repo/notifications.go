@@ -206,6 +206,33 @@ func (s *RuntimeStore) RefreshNotifications(ctx context.Context) error {
 	}
 	rows.Close()
 
+	rows, err = tx.QueryContext(ctx, `SELECT DISTINCT object_id FROM audit_logs
+		WHERE action='fence_drop_observed' AND object_type='task'
+		ORDER BY object_id LIMIT 500`)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var taskID string
+		if err := rows.Scan(&taskID); err != nil {
+			rows.Close()
+			return err
+		}
+		if err := insertNotification(ctx, tx, Notification{
+			ID: "notification-fence-drop-" + taskID, Kind: "fence_drop", Severity: "warning",
+			Title: "扫描围栏拦截范围外连接", Message: "有一条扫描任务触发了网络围栏，请检查授权范围和 Worker 状态。",
+			ObjectType: "task", ObjectID: taskID, CreatedAt: created,
+		}); err != nil {
+			rows.Close()
+			return err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+
 	return tx.Commit()
 }
 
