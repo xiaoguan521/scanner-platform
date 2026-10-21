@@ -1034,17 +1034,21 @@ func (s *RuntimeStore) Tick(ctx context.Context, now time.Time) error {
 }
 
 type LocalNode struct {
-	ID               string                  `json:"id"`
-	Kind             string                  `json:"kind"`
-	HostID           string                  `json:"hostId"`
-	IP               string                  `json:"ip"`
-	Status           string                  `json:"status"`
-	CurrentTask      string                  `json:"currentTask"`
-	BoundRuleVersion string                  `json:"boundRuleVersion"`
-	LastHeartbeat    time.Time               `json:"lastHeartbeat"`
-	FenceStatus      string                  `json:"fenceStatus"`
-	DropCount        int                     `json:"dropCount"`
-	Engines          []taskflow.EngineStatus `json:"engines,omitempty"`
+	ID                         string                  `json:"id"`
+	Kind                       string                  `json:"kind"`
+	HostID                     string                  `json:"hostId"`
+	IP                         string                  `json:"ip"`
+	Status                     string                  `json:"status"`
+	CurrentTask                string                  `json:"currentTask"`
+	BoundRuleVersion           string                  `json:"boundRuleVersion"`
+	LastHeartbeat              time.Time               `json:"lastHeartbeat"`
+	FenceStatus                string                  `json:"fenceStatus"`
+	DropCount                  int                     `json:"dropCount"`
+	Engines                    []taskflow.EngineStatus `json:"engines,omitempty"`
+	LifecycleStatus            string                  `json:"lifecycleStatus,omitempty"`
+	LifecycleRegisteredAt      string                  `json:"lifecycleRegisteredAt,omitempty"`
+	LifecycleRevokedAt         string                  `json:"lifecycleRevokedAt,omitempty"`
+	LifecycleOfflineGeneration int                     `json:"lifecycleOfflineGeneration,omitempty"`
 }
 
 func (s *RuntimeStore) ListQuarantines(ctx context.Context) ([]map[string]any, error) {

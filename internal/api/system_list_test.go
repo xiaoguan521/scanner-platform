@@ -26,6 +26,9 @@ func TestNodeAndRuleListPaginationAPI(t *testing.T) {
 	if err := store.TouchNodeState(ctx, "node-beta", "updater", "", "", "ONLINE"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := store.RegisterNodeLifecycle(ctx, repo.NodeLifecycle{ID: "registered-only", Kind: "worker", HostID: "scan-host"}, "admin"); err != nil {
+		t.Fatal(err)
+	}
 	if err := store.SyncRules(ctx, []rules.Bundle{{Version: "20261021.01", Channel: "stable"}, {Version: "20261020.01", Channel: "local"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +38,8 @@ func TestNodeAndRuleListPaginationAPI(t *testing.T) {
 		wantTotal  int
 		wantLength int
 	}{
-		{path: "/api/v1/nodes?page=1&page_size=1&q=worker", wantTotal: 1, wantLength: 1},
+		{path: "/api/v1/nodes?page=1&page_size=1&q=worker", wantTotal: 2, wantLength: 1},
+		{path: "/api/v1/nodes?page=1&page_size=1&q=registered-only", wantTotal: 1, wantLength: 1},
 		{path: "/api/v1/rules?page=1&page_size=1&sort=-version", wantTotal: 2, wantLength: 1},
 	} {
 		request := httptest.NewRequest(http.MethodGet, test.path, nil)

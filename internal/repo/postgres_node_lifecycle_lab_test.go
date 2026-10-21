@@ -46,6 +46,10 @@ func TestPostgresNodeLifecycleLab(t *testing.T) {
 	if err != nil || item.Status != "REGISTERED" {
 		t.Fatalf("register item=%+v err=%v", item, err)
 	}
+	page, err := store.ListNodesPage(ctx, NodeListQuery{Page: 1, PageSize: 20, Search: nodeID})
+	if err != nil || page.Total != 1 || len(page.Items) != 1 || page.Items[0].LifecycleStatus != "REGISTERED" {
+		t.Fatalf("registered-only node page=%+v err=%v", page, err)
+	}
 	if err := store.TouchNodeLifecycle(ctx, nodeID, "worker"); err != nil {
 		t.Fatal(err)
 	}

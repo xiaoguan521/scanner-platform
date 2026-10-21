@@ -1,17 +1,21 @@
 import React, { useEffect, useState } from 'react';
 import { DataTable } from '../../components/DataState';
-import { Alert, Button, Card, Form, Input, message, Modal, Select, Space, Tag, Typography } from 'antd';
+import { Alert, Button, Card, Descriptions, Form, Input, List, message, Modal, Select, Space, Tag, Typography } from 'antd';
 import { apiClient } from '../../api/client';
 import { CollectionNotice } from '../../api/CollectionNotice';
 import { useAuth } from '../../auth/AuthProvider';
 import { activateRules, createCustomRule, deleteCustomRule, fetchRules, importRules, updateCustomRule } from '../../api/runtime';
-import type { CustomRule, NodeInfo, RuleBundle, RuleJob } from '../../types';
+import type { CustomRule, NodeInfo, NodeLifecycle, NodeLifecycleEvent, RuleBundle, RuleJob } from '../../types';
 
 import { ScanPolicySettings } from './ScanPolicySettings';
 type CustomRuleForm={id:string;name:string;severity:CustomRule['severity'];description:string;matchType:CustomRule['matchType'];part:'header'|'body';valuesText:string;statusCodesText:string;enabled:boolean};
+type NodeRegistrationForm=Pick<NodeLifecycle,'id'|'kind'|'hostId'>;
+const formatNodeTime=(value?:string)=>value?new Date(value).toLocaleString():'—';
+const lifecycleStatusLabel=(value:NodeLifecycle['status'])=>({REGISTERED:'已登记',ONLINE:'在线',OFFLINE:'离线',REVOKED:'已吊销'}[value]);
+const lifecycleEventLabel=(value:NodeLifecycleEvent['kind'])=>({REGISTERED:'登记',ONLINE:'上线',OFFLINE:'离线',RECOVERED:'恢复',REVOKED:'吊销'}[value]);
 
 export const NodesPage:React.FC=()=>{
-  const {user}=useAuth();const canWrite=user?.role==='admin'||user?.role==='security_engineer';
+  const {user}=useAuth();const canWrite=user?.role==='admin'||user?.role==='security_engineer';const canAdmin=user?.role==='admin';
   const [nodes,setNodes]=useState<NodeInfo[]>([]);const [nodePage,setNodePage]=useState(1);const [nodePageSize,setNodePageSize]=useState(10);const [nodeTotal,setNodeTotal]=useState(0);const [nodeSearch,setNodeSearch]=useState('');
   const [bundles,setBundles]=useState<RuleBundle[]>([]);const [rulePage,setRulePage]=useState(1);const [rulePageSize,setRulePageSize]=useState(10);const [ruleTotal,setRuleTotal]=useState(0);const [ruleSearch,setRuleSearch]=useState('');
   const [jobs,setJobs]=useState<RuleJob[]>([]);const [jobPage,setJobPage]=useState(1);const [jobPageSize,setJobPageSize]=useState(10);const [jobTotal,setJobTotal]=useState(0);const [jobSearch,setJobSearch]=useState('');const [jobStatus,setJobStatus]=useState('ALL');const [jobKind,setJobKind]=useState('ALL');
@@ -19,6 +23,7 @@ export const NodesPage:React.FC=()=>{
   const [systemLoading,setSystemLoading]=useState(true);const [systemError,setSystemError]=useState<string|null>(null);
   const [file,setFile]=useState<File|null>(null);const [busy,setBusy]=useState(false);const [fetchOpen,setFetchOpen]=useState(false);const [form]=Form.useForm();
   const [ruleOpen,setRuleOpen]=useState(false);const [editingRule,setEditingRule]=useState<CustomRule|null>(null);const [ruleForm]=Form.useForm<CustomRuleForm>();
+  const [nodeRegisterOpen,setNodeRegisterOpen]=useState(false);const [nodeDetailsOpen,setNodeDetailsOpen]=useState(false);const [nodeDetail,setNodeDetail]=useState<NodeLifecycle|null>(null);const [nodeEvents,setNodeEvents]=useState<NodeLifecycleEvent[]>([]);const [nodeDetailLoading,setNodeDetailLoading]=useState(false);const [nodeBusy,setNodeBusy]=useState(false);const [nodeForm]=Form.useForm<NodeRegistrationForm>();
   const ruleMatchType=Form.useWatch('matchType',ruleForm)??'word';
   useEffect(()=>{const controller=new AbortController();let inFlight=false;const load=()=>{if(inFlight)return;inFlight=true;setSystemLoading(true);Promise.all([apiClient.nodesPage<NodeInfo>(nodePage,nodePageSize,{search:nodeSearch},controller.signal),apiClient.rulesPage<RuleBundle>(rulePage,rulePageSize,{search:ruleSearch},controller.signal),apiClient.ruleJobsPage<RuleJob>(jobPage,jobPageSize,{search:jobSearch,status:jobStatus,kind:jobKind},controller.signal),apiClient.customRulesPage<CustomRule>(customPage,customPageSize,{search:customSearch,severity:customSeverity,enabled:customEnabled},controller.signal)]).then(([nextNodes,nextRules,nextJobs,nextCustomRules])=>{if(!controller.signal.aborted){setNodes(nextNodes.items);setNodeTotal(nextNodes.total);setBundles(nextRules.items);setRuleTotal(nextRules.total);setJobs(nextJobs.items);setJobTotal(nextJobs.total);setCustomRules(nextCustomRules.items);setCustomTotal(nextCustomRules.total);setSystemError(null);}}).catch(cause=>{if(!controller.signal.aborted)setSystemError(cause instanceof Error?cause.message:'系统清册服务不可用');}).finally(()=>{inFlight=false;if(!controller.signal.aborted)setSystemLoading(false);});};load();const timer=window.setInterval(load,1000);return()=>{controller.abort();window.clearInterval(timer);};},[nodePage,nodePageSize,nodeSearch,rulePage,rulePageSize,ruleSearch,jobPage,jobPageSize,jobSearch,jobStatus,jobKind,customPage,customPageSize,customSearch,customSeverity,customEnabled]);
   useEffect(()=>{if(nodePage!==1)setNodePage(1);},[nodeSearch]);
@@ -26,6 +31,9 @@ export const NodesPage:React.FC=()=>{
   useEffect(()=>{if(jobPage!==1)setJobPage(1);},[jobSearch,jobStatus,jobKind]);
   useEffect(()=>{if(customPage!==1)setCustomPage(1);},[customSearch,customSeverity,customEnabled]);
   const run=async(action:()=>Promise<unknown>)=>{setBusy(true);try{await action();message.success('操作已排队，等待本地 Updater 处理；请查看操作记录');return true;}catch(e){message.error(e instanceof Error?e.message:String(e));return false;}finally{setBusy(false);}};
+  const showNodeLifecycle=async(id:string)=>{setNodeDetailsOpen(true);setNodeDetailLoading(true);try{const [detail,events]=await Promise.all([apiClient.nodeLifecycle(id),apiClient.nodeLifecycleEvents(id)]);setNodeDetail(detail);setNodeEvents(events.items);}catch(e){setNodeDetail(null);setNodeEvents([]);message.error(e instanceof Error?e.message:String(e));}finally{setNodeDetailLoading(false);}};
+  const submitNodeRegistration=async(values:NodeRegistrationForm)=>{setNodeBusy(true);try{await apiClient.registerNode(values);message.success('节点已登记');setNodeRegisterOpen(false);nodeForm.resetFields();}catch(e){message.error(e instanceof Error?e.message:String(e));}finally{setNodeBusy(false);}};
+  const confirmNodeRevoke=(node:NodeInfo)=>Modal.confirm({title:`吊销节点“${node.id}”？`,content:'吊销后，启用节点令牌认证的 Worker/Updater 请求会被拒绝；该操作会写入审计记录。',okText:'吊销',okButtonProps:{danger:true},cancelText:'取消',onOk:async()=>{try{await apiClient.revokeNode(node.id);message.success('节点已吊销');if(nodeDetail?.id===node.id)await showNodeLifecycle(node.id);}catch(e){message.error(e instanceof Error?e.message:String(e));throw e;}}});
   const saveRule=async(values:CustomRuleForm)=>{setBusy(true);try{const input:Omit<CustomRule,'template'>={id:values.id.trim().toLowerCase(),name:values.name.trim(),severity:values.severity,description:values.description??'',matchType:values.matchType,enabled:values.enabled??true,...(values.matchType==='status'?{statusCodes:values.statusCodesText.split(',').map(v=>Number(v.trim()))}:{part:values.part,values:values.valuesText.split('\n').map(v=>v.trim()).filter(Boolean)})};const saved=editingRule?await updateCustomRule(editingRule.id,input):await createCustomRule(input);setCustomRules(prev=>editingRule?prev.map(item=>item.id===saved.id?saved:item):[saved,...prev]);setCustomPage(1);message.success(editingRule?'自定义规则已更新':'自定义规则已创建');setRuleOpen(false);setEditingRule(null);ruleForm.resetFields();}catch(e){message.error(e instanceof Error?e.message:String(e));}finally{setBusy(false);}};
   const editRule=(rule:CustomRule)=>{setEditingRule(rule);ruleForm.setFieldsValue({id:rule.id,name:rule.name,severity:rule.severity,description:rule.description,matchType:rule.matchType,part:rule.part??'body',valuesText:rule.values?.join('\n')??'',statusCodesText:rule.statusCodes?.join(', ')??'',enabled:rule.enabled});setRuleOpen(true);};
   const removeRule=(rule:CustomRule)=>Modal.confirm({title:'删除自定义规则',content:`删除“${rule.name}”后新建任务将不再使用它；已创建任务保留创建时的规则快照。`,okText:'删除',okButtonProps:{danger:true},cancelText:'取消',onOk:async()=>{try{await deleteCustomRule(rule.id);setCustomRules(prev=>prev.filter(item=>item.id!==rule.id));setCustomPage(1);message.success('自定义规则已删除');}catch(e){message.error(e instanceof Error?e.message:String(e));throw e;}}});
@@ -33,12 +41,13 @@ export const NodesPage:React.FC=()=>{
     <CollectionNotice loading={systemLoading} error={systemError}/>
     <Alert type="info" showIcon message="本地节点与规则包" description="Worker 和 Updater 通过本机 API 工作，只有 Updater 写入规则目录。外部规则包导入和激活需要受信任公钥验证签名，并检查文件 SHA-256；未验签的历史版本可查看，不能通过此页面激活。真实任务在执行前校验固定规则版本。"/>
     <ScanPolicySettings/>
-    <Card title="节点心跳" extra={<Input aria-label="节点搜索" placeholder="搜索节点、类型或主机" allowClear value={nodeSearch} onChange={event=>setNodeSearch(event.target.value)} style={{width:220}}/>}><DataTable<NodeInfo> dataSource={nodes} loading={systemLoading} rowKey="id" pagination={{current:nodePage,pageSize:nodePageSize,total:nodeTotal,showSizeChanger:true,pageSizeOptions:[10,20,50],showTotal:total=>`共 ${total} 项`,onChange:(page,size)=>{if(size!==nodePageSize){setNodePageSize(size);setNodePage(1);}else setNodePage(page);}}} scroll={{x:850}} columns={[
+    <Card title="节点心跳" extra={<Space><Button type="primary" disabled={!canAdmin} onClick={()=>{nodeForm.resetFields();nodeForm.setFieldsValue({kind:'worker'});setNodeRegisterOpen(true);}}>登记节点</Button><Input aria-label="节点搜索" placeholder="搜索节点、类型或主机" allowClear value={nodeSearch} onChange={event=>setNodeSearch(event.target.value)} style={{width:220}}/></Space>}><DataTable<NodeInfo> dataSource={nodes} loading={systemLoading} rowKey="id" pagination={{current:nodePage,pageSize:nodePageSize,total:nodeTotal,showSizeChanger:true,pageSizeOptions:[10,20,50],showTotal:total=>`共 ${total} 项`,onChange:(page,size)=>{if(size!==nodePageSize){setNodePageSize(size);setNodePage(1);}else setNodePage(page);}}} scroll={{x:1050}} columns={[
       {title:'节点',dataIndex:'id'},{title:'类型',dataIndex:'kind'},
-      {title:'状态',dataIndex:'status',render:(v:string)=><Tag color={v==='OFFLINE'?'default':'green'}>{v==='BUSY'?'处理中':v==='ONLINE'?'在线':'离线'}</Tag>},
+      {title:'状态',render:(_,node)=><Tag color={node.lifecycleStatus==='REVOKED'?'red':node.lifecycleStatus==='ONLINE'||node.status==='ONLINE'?'green':node.lifecycleStatus==='OFFLINE'||node.status==='OFFLINE'?'default':'gold'}>{node.lifecycleStatus?lifecycleStatusLabel(node.lifecycleStatus):node.status==='BUSY'?'处理中':node.status==='ONLINE'?'在线':node.status==='OFFLINE'?'离线':'未知'}</Tag>},
       {title:'当前任务',dataIndex:'currentTask',ellipsis:true},
-      {title:'最近心跳',dataIndex:'lastHeartbeat',render:(v:string)=>new Date(v).toLocaleString()},
+      {title:'最近心跳',render:(_,node)=><Typography.Text>{node.lifecycleStatus&&node.lifecycleStatus!=='ONLINE'?'—':formatNodeTime(node.lastHeartbeat)}</Typography.Text>},
       {title:'运行模式',render:()=> <Tag>本机开发 · 未启用网络围栏</Tag>},
+      {title:'生命周期',render:(_,node)=><Space>{node.lifecycleStatus&&<Button size="small" onClick={()=>void showNodeLifecycle(node.id)}>查看状态</Button>}{canAdmin&&node.lifecycleStatus&&node.lifecycleStatus!=='REVOKED'&&<Button size="small" danger onClick={()=>confirmNodeRevoke(node)}>吊销</Button>}</Space>},
     ]}/></Card>
     <Card title="扫描引擎"><DataTable dataSource={nodes.flatMap(n=>(n.engines??[]).map(e=>({...e,nodeId:n.id,online:n.status!=='OFFLINE'})))} rowKey={e=>e.nodeId+'-'+e.name} pagination={false} columns={[{title:'引擎',dataIndex:'name',render:(v:string)=>v.toUpperCase()},{title:'固定版本',dataIndex:'version'},{title:'节点',dataIndex:'nodeId'},{title:'状态',render:(_,e)=><Tag color={e.online&&e.ready?'green':'default'}>{!e.online?'节点离线':e.ready?'本地就绪':e.installed?'缺少数据 / 运行环境':'未安装'}</Tag>},{title:'说明',dataIndex:'message'}]}/></Card>
     <Card title="规则包版本" extra={<Space wrap><Input aria-label="规则包搜索" placeholder="搜索版本或渠道" allowClear value={ruleSearch} onChange={event=>setRuleSearch(event.target.value)} style={{width:180}}/><input aria-label="选择离线规则包" type="file" accept=".zip" disabled={!canWrite} onChange={e=>setFile(e.target.files?.[0]??null)}/><Button disabled={!canWrite||!file} loading={busy} onClick={()=>void run(()=>importRules(file!))}>离线导入 ZIP</Button><Button disabled={!canWrite} onClick={()=>setFetchOpen(true)}>从规则源下载</Button></Space>}>
@@ -65,6 +74,22 @@ export const NodesPage:React.FC=()=>{
       {title:'版本',dataIndex:'version'},{title:'状态',dataIndex:'status',render:(v:string)=><Tag color={v==='FAILED'?'error':v==='COMPLETED'?'success':'processing'}>{v}</Tag>},
       {title:'说明',dataIndex:'message'},{title:'提交时间',dataIndex:'createdAt',render:(v:string)=>new Date(v).toLocaleString()},
     ]}/></Card>
+    <Modal title="登记节点" open={nodeRegisterOpen} onCancel={()=>{setNodeRegisterOpen(false);nodeForm.resetFields();}} onOk={()=>nodeForm.submit()} confirmLoading={nodeBusy} destroyOnClose>
+      <Alert type="info" showIcon message="登记只记录明确提交的节点" description="不会自动发现主机、签发令牌或扩大扫描范围。节点令牌和证书仍由部署流程单独配置。" style={{marginBottom:16}}/>
+      <Form form={nodeForm} layout="vertical" onFinish={submitNodeRegistration} initialValues={{kind:'worker'}}>
+        <Form.Item name="id" label="节点 ID" rules={[{required:true,pattern:/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/,message:'请输入 1–64 位英文、数字、点、下划线或短横线'}]}><Input maxLength={64} placeholder="例如 worker-a"/></Form.Item>
+        <Form.Item name="kind" label="节点类型" rules={[{required:true}]}><Select options={[{value:'worker',label:'Worker'},{value:'updater',label:'Updater'}]}/></Form.Item>
+        <Form.Item name="hostId" label="主机 ID" rules={[{required:true,pattern:/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/,message:'请输入 1–64 位英文、数字、点、下划线或短横线'}]}><Input maxLength={64} placeholder="例如 scan-host-a"/></Form.Item>
+      </Form>
+    </Modal>
+    <Modal title={nodeDetail?`节点生命周期 · ${nodeDetail.id}`:'节点生命周期'} open={nodeDetailsOpen} onCancel={()=>setNodeDetailsOpen(false)} footer={null} width={720} destroyOnClose>
+      {nodeDetailLoading?<Typography.Paragraph>正在读取节点状态…</Typography.Paragraph>:nodeDetail?<><Descriptions bordered size="small" column={2}>
+        <Descriptions.Item label="节点 ID">{nodeDetail.id}</Descriptions.Item><Descriptions.Item label="类型">{nodeDetail.kind}</Descriptions.Item>
+        <Descriptions.Item label="主机 ID">{nodeDetail.hostId}</Descriptions.Item><Descriptions.Item label="状态"><Tag color={nodeDetail.status==='ONLINE'?'green':nodeDetail.status==='REVOKED'?'red':'default'}>{lifecycleStatusLabel(nodeDetail.status)}</Tag></Descriptions.Item>
+        <Descriptions.Item label="登记时间">{formatNodeTime(nodeDetail.registeredAt)}</Descriptions.Item><Descriptions.Item label="最近心跳">{formatNodeTime(nodeDetail.lastHeartbeat)}</Descriptions.Item>
+        <Descriptions.Item label="离线周期">{nodeDetail.offlineGeneration}</Descriptions.Item><Descriptions.Item label="吊销时间">{formatNodeTime(nodeDetail.revokedAt)}</Descriptions.Item>
+      </Descriptions><Typography.Title level={5} style={{marginTop:20}}>生命周期事件</Typography.Title><List size="small" dataSource={nodeEvents} locale={{emptyText:'暂无生命周期事件'}} renderItem={event=><List.Item><Space><Tag>{lifecycleEventLabel(event.kind)}</Tag><Typography.Text>{formatNodeTime(event.createdAt)}</Typography.Text><Typography.Text type="secondary">周期 {event.generation}</Typography.Text></Space></List.Item>}/></>:<Alert type="warning" showIcon message="节点尚未登记或生命周期记录不可用"/>}
+    </Modal>
     <Modal title="从指定规则源下载 ZIP" open={fetchOpen} onCancel={()=>setFetchOpen(false)} onOk={()=>form.submit()} confirmLoading={busy}>
       <Form form={form} layout="vertical" onFinish={async(v:{url:string;expectedSha256:string})=>{if(await run(()=>fetchRules(v.url,v.expectedSha256))) setFetchOpen(false);}}>
         <Form.Item name="url" label="HTTPS ZIP 地址" rules={[{required:true,type:'url'}]} extra="不允许 URL 内携带账号、密码、查询参数；不自动发现规则源。"><Input placeholder="https://rules.example.com/bundle.zip"/></Form.Item>

@@ -337,6 +337,30 @@ export interface NodeInfo {
   fenceStatus: 'ACTIVE' | 'NOT_SUPPORTED' | 'NOT_VERIFIED';
   dropCount: number;
   engines?: EngineStatus[];
+  lifecycleStatus?: NodeLifecycleStatus;
+  lifecycleRegisteredAt?: string;
+  lifecycleRevokedAt?: string;
+  lifecycleOfflineGeneration?: number;
+}
+
+export type NodeLifecycleStatus = 'REGISTERED' | 'ONLINE' | 'OFFLINE' | 'REVOKED';
+export type NodeLifecycleEventKind = 'REGISTERED' | 'ONLINE' | 'OFFLINE' | 'RECOVERED' | 'REVOKED';
+export interface NodeLifecycle {
+  id: string;
+  kind: 'worker' | 'updater';
+  hostId: string;
+  status: NodeLifecycleStatus;
+  registeredAt: string;
+  lastHeartbeat?: string;
+  revokedAt?: string;
+  offlineGeneration: number;
+}
+export interface NodeLifecycleEvent {
+  id: string;
+  nodeId: string;
+  kind: NodeLifecycleEventKind;
+  generation: number;
+  createdAt: string;
 }
 
 export interface RuleBundle {

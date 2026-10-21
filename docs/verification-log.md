@@ -683,3 +683,9 @@
 - 新增生命周期管理/查询 API 和 OpenAPI 契约；自动签发证书/令牌、部署编排及节点管理 UI 仍未实现，不会自动发现主机或扩大扫描范围。
 - 验证：`make build`、`make lint`、`make test`（Go race 与 Python 采集测试）通过；`POSTGRES_DSN_FILE="$PWD/runtime/postgres/dsn" make migrate-postgres` 应用并记录 `0017_node_lifecycle`；`POSTGRES_DSN_FILE="$PWD/runtime/postgres/dsn" go test -tags=lab ./internal/repo -run TestPostgresNodeLifecycleLab -count=1` 通过；`git diff --check` 通过。测试使用隔离 PostgreSQL 和临时节点 ID，未写入真实 IP、密钥或扫描结果。
 
+## 2026-10-21：节点清册生命周期管理回归
+
+- `/nodes` 系统清册已接入节点生命周期闭环：管理员可登记明确的 Worker/Updater 元数据，清册可查看状态与有界事件时间线，管理员可吊销节点；页面提示该操作不会自动发现主机、签发凭据或扩大扫描范围。
+- SQLite 与 PostgreSQL 的节点分页投影会合并已登记但尚未产生心跳的生命周期记录，保留 `REGISTERED`/`ONLINE`/`OFFLINE`/`REVOKED` 状态字段；搜索、排序和既有运行节点列表语义保持不变。
+- 验证：`make build`、`make lint`、`make test`（Go race 与 Python 18 项采集测试）、`node web/src/pages/Nodes/pagination.test.mjs`、`npm --prefix web run build`、OpenAPI YAML 解析、`git diff --check` 均通过；`POSTGRES_DSN_FILE="$PWD/runtime/postgres/dsn" go test -tags=lab -count=1 ./internal/repo` 通过。并补充 SQLite 注册-only 节点分页测试和 PostgreSQL lab 节点清册投影测试。
+

@@ -99,8 +99,26 @@ func (s *RuntimeStore) ListNodesPage(ctx context.Context, in NodeListQuery) (Nod
 		return NodeListPage{}, err
 	}
 	where, args := nodeListWhere(query)
+	nodeRows := `WITH node_rows AS (
+		SELECT n.id AS id,
+			CASE WHEN l.id IS NULL THEN n.data ELSE json_set(n.data,
+				'$.lifecycleStatus',l.status,
+				'$.lifecycleRegisteredAt',l.registered_at,
+				'$.lifecycleRevokedAt',l.revoked_at,
+				'$.lifecycleOfflineGeneration',l.offline_generation) END AS data
+		FROM local_nodes n LEFT JOIN node_lifecycle l ON l.id=n.id
+		UNION ALL
+		SELECT l.id AS id, json_object(
+			'id',l.id,'kind',l.kind,'hostId',l.host_id,'ip','',
+			'status','UNKNOWN','currentTask','','boundRuleVersion','',
+			'lastHeartbeat',COALESCE(l.last_heartbeat,'1970-01-01T00:00:00Z'),'fenceStatus','NOT_SUPPORTED',
+			'dropCount',0,'engines',json('[]'),'lifecycleStatus',l.status,
+			'lifecycleRegisteredAt',l.registered_at,'lifecycleRevokedAt',l.revoked_at,
+			'lifecycleOfflineGeneration',l.offline_generation) AS data
+		FROM node_lifecycle l WHERE NOT EXISTS (SELECT 1 FROM local_nodes n WHERE n.id=l.id)
+	)`
 	var total int
-	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM local_nodes WHERE "+where, args...).Scan(&total); err != nil {
+	if err := s.db.QueryRowContext(ctx, nodeRows+" SELECT COUNT(*) FROM node_rows WHERE "+where, args...).Scan(&total); err != nil {
 		return NodeListPage{}, fmt.Errorf("count nodes: %w", err)
 	}
 	sortColumn := "id"
@@ -117,7 +135,7 @@ func (s *RuntimeStore) ListNodesPage(ctx context.Context, in NodeListQuery) (Nod
 		direction = "DESC"
 	}
 	queryArgs := append([]any(nil), args...)
-	statement := "SELECT data FROM local_nodes WHERE " + where + " ORDER BY " + sortColumn + " " + direction + ",id"
+	statement := nodeRows + " SELECT data FROM node_rows WHERE " + where + " ORDER BY " + sortColumn + " " + direction + ",id"
 	if query.PageSize > 0 {
 		statement += " LIMIT ? OFFSET ?"
 		queryArgs = append(queryArgs, query.PageSize, (query.Page-1)*query.PageSize)
@@ -156,7 +174,12 @@ func unmarshalNode(data string, node *LocalNode) error {
 	if err := json.Unmarshal([]byte(data), node); err != nil {
 		return fmt.Errorf("decode node: %w", err)
 	}
-	if time.Since(node.LastHeartbeat) > 10*time.Second {
+	if node.LifecycleStatus == "OFFLINE" {
+		node.Status = "OFFLINE"
+	} else if node.LifecycleStatus == "REGISTERED" || node.LifecycleStatus == "REVOKED" {
+		node.Status = "UNKNOWN"
+	}
+	if node.LifecycleStatus == "" && !node.LastHeartbeat.IsZero() && time.Since(node.LastHeartbeat) > 10*time.Second {
 		node.Status = "OFFLINE"
 	}
 	return nil

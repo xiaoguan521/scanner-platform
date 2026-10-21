@@ -1307,14 +1307,43 @@ func (s *PostgresRuntimeStore) ListNodesPage(ctx context.Context, in NodeListQue
 	if err != nil {
 		return NodeListPage{}, err
 	}
+	nodeRows := `WITH node_rows AS (
+		SELECT n.id,n.kind,n.host_id,
+			to_char(n.last_heartbeat AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS last_heartbeat_text,
+			l.status AS lifecycle_status,l.registered_at AS lifecycle_registered_at,l.revoked_at AS lifecycle_revoked_at,l.offline_generation AS lifecycle_offline_generation
+		FROM nodes n LEFT JOIN node_lifecycle l ON l.id=n.id
+		UNION ALL
+		SELECT l.id,l.kind,l.host_id,l.last_heartbeat,
+			l.status,l.registered_at,l.revoked_at,l.offline_generation
+		FROM node_lifecycle l WHERE NOT EXISTS (SELECT 1 FROM nodes n WHERE n.id=l.id)
+	)`
+	where := "TRUE"
+	args := []any{}
+	if query.Search != "" {
+		pattern := "%" + escapeFindingLike(query.Search) + "%"
+		where += ` AND (id LIKE $1 ESCAPE '\' OR kind LIKE $1 ESCAPE '\' OR host_id LIKE $1 ESCAPE '\')`
+		args = append(args, pattern)
+	}
 	var total int
-	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM nodes").Scan(&total); err != nil {
+	if err := s.db.QueryRowContext(ctx, nodeRows+" SELECT COUNT(*) FROM node_rows WHERE "+where, args...).Scan(&total); err != nil {
 		return NodeListPage{}, err
 	}
-	args := []any{}
-	querySQL := `SELECT id,kind,host_id,last_heartbeat FROM nodes ORDER BY id`
+	sortColumn := "id"
+	switch strings.TrimPrefix(query.Sort, "-") {
+	case "kind":
+		sortColumn = "kind"
+	case "status":
+		sortColumn = "COALESCE(lifecycle_status,'')"
+	case "last_heartbeat":
+		sortColumn = "COALESCE(last_heartbeat_text,'')"
+	}
+	direction := "ASC"
+	if strings.HasPrefix(query.Sort, "-") {
+		direction = "DESC"
+	}
+	querySQL := nodeRows + " SELECT id,kind,host_id,last_heartbeat_text,lifecycle_status,lifecycle_registered_at,lifecycle_revoked_at,lifecycle_offline_generation FROM node_rows WHERE " + where + " ORDER BY " + sortColumn + " " + direction + ",id"
 	if query.PageSize > 0 {
-		querySQL += fmt.Sprintf(" LIMIT $1 OFFSET $2")
+		querySQL += fmt.Sprintf(" LIMIT $%d OFFSET $%d", len(args)+1, len(args)+2)
 		args = append(args, query.PageSize, (query.Page-1)*query.PageSize)
 	}
 	rows, err := s.db.QueryContext(ctx, querySQL, args...)
@@ -1325,10 +1354,28 @@ func (s *PostgresRuntimeStore) ListNodesPage(ctx context.Context, in NodeListQue
 	items := make([]LocalNode, 0)
 	for rows.Next() {
 		var item LocalNode
-		if err := rows.Scan(&item.ID, &item.Kind, &item.HostID, &item.LastHeartbeat); err != nil {
+		var heartbeat, lifecycleStatus, lifecycleRegisteredAt, lifecycleRevokedAt sql.NullString
+		var lifecycleGeneration sql.NullInt64
+		if err := rows.Scan(&item.ID, &item.Kind, &item.HostID, &heartbeat, &lifecycleStatus, &lifecycleRegisteredAt, &lifecycleRevokedAt, &lifecycleGeneration); err != nil {
 			return NodeListPage{}, err
 		}
 		item.Status = "UNKNOWN"
+		item.FenceStatus = "NOT_SUPPORTED"
+		if heartbeat.Valid {
+			item.LastHeartbeat, _ = time.Parse(time.RFC3339Nano, heartbeat.String)
+		}
+		if lifecycleStatus.Valid {
+			item.LifecycleStatus = lifecycleStatus.String
+		}
+		if lifecycleRegisteredAt.Valid {
+			item.LifecycleRegisteredAt = lifecycleRegisteredAt.String
+		}
+		if lifecycleRevokedAt.Valid {
+			item.LifecycleRevokedAt = lifecycleRevokedAt.String
+		}
+		if lifecycleGeneration.Valid {
+			item.LifecycleOfflineGeneration = int(lifecycleGeneration.Int64)
+		}
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {

@@ -30,6 +30,29 @@ func TestNodeListPageSearchSortAndValidation(t *testing.T) {
 	}
 }
 
+func TestNodeListPageIncludesRegisteredLifecycleOnlyNode(t *testing.T) {
+	store, _ := reportTestStore(t)
+	ctx := context.Background()
+	registered, err := store.RegisterNodeLifecycle(ctx, NodeLifecycle{ID: "registered-worker", Kind: "worker", HostID: "scan-host"}, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if registered.Status != "REGISTERED" {
+		t.Fatalf("registered lifecycle=%+v", registered)
+	}
+	page, err := store.ListNodesPage(ctx, NodeListQuery{Page: 1, PageSize: 20, Search: "registered-worker"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 1 || len(page.Items) != 1 {
+		t.Fatalf("registered-only node missing: %+v", page)
+	}
+	item := page.Items[0]
+	if item.ID != "registered-worker" || item.Kind != "worker" || item.HostID != "scan-host" || item.LifecycleStatus != "REGISTERED" || item.Status != "UNKNOWN" {
+		t.Fatalf("registered-only node projection=%+v", item)
+	}
+}
+
 func TestRuleListPageSearchSortAndValidation(t *testing.T) {
 	store, _ := reportTestStore(t)
 	ctx := context.Background()

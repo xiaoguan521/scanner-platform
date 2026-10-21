@@ -4787,6 +4787,19 @@ components:
           type: array
           items:
             "$ref": "#/components/schemas/EngineStatus"
+        lifecycleStatus:
+          type: string
+          enum: [REGISTERED, ONLINE, OFFLINE, REVOKED]
+          description: Persisted node lifecycle state; present when the node has an explicit lifecycle registration.
+        lifecycleRegisteredAt:
+          type: string
+          format: date-time
+        lifecycleRevokedAt:
+          type: string
+          format: date-time
+        lifecycleOfflineGeneration:
+          type: integer
+          minimum: 0
     NodeLifecycleRegistration:
       type: object
       required: [id, kind, hostId]
