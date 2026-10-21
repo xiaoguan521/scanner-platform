@@ -8,7 +8,7 @@
 |---|---|---|---|---|
 | P0 | 六域信息架构与统一布局 | 现有路由 | 本提交完成导航分组和角色菜单守卫 | `navigation.test.mjs`、前端构建 |
 | P0 | 单一真实 API 通道 | P0 导航 | 已完成：认证、集合、总览和业务写入统一走 Server；已移除浏览器 mock、演示种子和 `VITE_DATA_MODE` | Server-only 源码契约、前端构建、真实靶机回归 |
-| P0 | 通用状态与表格组件 | P0 布局/API | 已完成：共享加载、错误、空状态、`DataTable`、严重度/漏洞状态/任务状态/通知标签和统计卡片已覆盖主要列表与总览 | `DataState.test.mjs`、`Semantic.test.mjs`、30 项前端测试、前端构建 |
+| P0 | 通用状态与表格组件 | P0 布局/API | 已完成：共享加载、错误、空状态、`DataTable`、严重度/漏洞状态/任务状态/通知标签和统计卡片已覆盖主要列表与总览；API 错误统一返回稳定 code、提示和请求编号，兼容旧 error 字段 | `DataState.test.mjs`、`Semantic.test.mjs`、`internal/api/errors_test.go`、前端构建、OpenAPI 错误模型 |
 | P1 | 资产 → 扫描 → 结果核心旅程 | P0 | 已有真实 SQLite/Worker 闭环；资产和任务清册支持 Server 端分页及主要筛选，资产清册显示最近扫描和活动风险数，资产详情可查看漏洞摘要与扫描历史；业务组目录、CSV 导入摘要、隔离靶机 Playwright 资产登记/扫描向导/任务结果验收均已接入；用户已确认隔离靶机真实 SSH/自动综合扫描回归通过；PostgreSQL 临时库上的五条 Playwright 浏览器旅程已全部通过，发布级范围抓包证据仍单独保留 | `docs/browser-acceptance.md`、`web/e2e/core-journey.spec.mjs`、资产/任务列表 API race 测试、授权范围抓包证据 |
 | P1 | 漏洞处置与总览下钻 | P0 | 服务端和页面能力已实现，漏洞清册已支持 Server 端分页、搜索、分类筛选、稳定排序和分类计数；已提供单项/批量状态处置、单项/批量指派、指派历史、备注和复测关联；SQLite 与 PostgreSQL 处置适配均已落地；总览下钻与指定发现项只读详情验收脚本已提供，并已在 PostgreSQL 隔离靶机浏览器回归中通过 | `web/e2e/disposition-dashboard.spec.mjs`、漏洞列表 API race 测试、数字与明细一致、URL 筛选回归、批量写入原子性、PostgreSQL finding-work/retest lab 测试 |
 | P1 | 报告、定时与系统管理 | P0 | 报告与定时主体已实现；报告历史、节点、规则版本、规则操作、自定义规则、知识库、业务组、导入记录、通知、授权范围和端口审批清册支持 Server 端有界分页、搜索/筛选和稳定排序；管理员系统设置、平台内通知中心、默认关闭的安全摘要 Webhook 和 PDF 输出已接入持久化、权限、审计/已读状态、异步队列与限次重试；定时/报告浏览器旅程已在 PostgreSQL 隔离靶机回归通过；邮件/其他消息渠道尚缺 | `web/e2e/schedule-report.spec.mjs`、系统清册/知识库/资产管理/通知/审批 API race 测试、系统设置/通知/报告 API 权限测试、浏览器验收 |

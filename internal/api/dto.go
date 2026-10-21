@@ -54,8 +54,12 @@ type ReportPageResponse struct {
 	PageSize int             `json:"pageSize"`
 }
 type APIError struct {
-	Error   string `json:"error"`
-	Message string `json:"message"`
+	Code string `json:"code"`
+	// Error is a deprecated compatibility alias. New clients should use Code.
+	Error     string `json:"error"`
+	Message   string `json:"message"`
+	Hint      string `json:"hint"`
+	RequestID string `json:"request_id"`
 }
 type UserDTO = account.User
 type AssetDTO = assets.Asset

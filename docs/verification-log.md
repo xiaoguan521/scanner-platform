@@ -1,5 +1,12 @@
 # Verification log
 
+## 2026-10-21：统一 API 错误契约与请求编号
+
+- Server、节点协议和早期 scaffold 的 JSON 失败响应统一补充稳定 `code`、安全操作提示 `hint` 和服务端生成的 `request_id`；`X-Request-ID` 响应头与响应体保持一致。旧 `error` 字段保留为兼容别名，不含凭据、目标证据或引擎输出。
+- 前端 API 客户端优先按 `code` 选择本地化文案，同时保留旧 `error` 响应兼容；`ApiRequestError` 暴露 code、hint 和 requestId，便于页面和日志关联。
+- OpenAPI `APIError` 模型、`docs/api/error-codes.md`、产品现状和路线图已同步。
+- 新增 `internal/api/errors_test.go`，覆盖错误结构、兼容别名、提示、响应头和嵌套处理器的请求编号稳定性。已运行：`make build`、`make lint`、`make test`（含 `go test -race ./...` 和脚本测试）、`go test -race ./internal/api -run 'TestAPIError|TestRequestID' -count=1`、全部 36 项前端测试、`npm --prefix web run build`、OpenAPI YAML 解析和 `git diff --check`，全部通过。
+
 ## 2026-10-21：PostgreSQL 报告模板、快照与作业适配
 
 - 新增 `internal/repo/postgres_reports.go`，覆盖默认模板初始化、模板保存/读取、资产/任务/发现项冻结快照、分页历史、格式复用、失败重试、生成恢复、文件完整性读取和带 `FOR UPDATE SKIP LOCKED` 的报告队列。报告快照使用 PostgreSQL 资产画像/服务/登录入口、任务安全投影、任务观察和当前发现项投影，不读取目标或执行扫描。

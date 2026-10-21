@@ -3490,14 +3490,28 @@ components:
     APIError:
       type: object
       required:
-      - error
+      - code
       - message
+      - hint
+      - request_id
       properties:
+        code:
+          type: string
+          description: Stable machine-readable error code.
+          example: invalid_input
         error:
           type: string
+          deprecated: true
+          description: Compatibility alias for code; new clients must use code.
           example: not_implemented
         message:
           type: string
+        hint:
+          type: string
+          description: Safe next action for an operator; never contains credentials or target evidence.
+        request_id:
+          type: string
+          description: Server-generated identifier also returned in X-Request-ID.
     DashboardSummary:
       type: object
       required: [assetCount, taskCount, runningTaskCount, riskScore, riskyAssetCount, findingCount, criticalCount, highCount, severityDistribution, findingCounts, trend, riskGroups, riskAssets, pendingCount, pendingFindings]

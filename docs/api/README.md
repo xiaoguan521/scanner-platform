@@ -1,5 +1,7 @@
 # 本机业务 API
 
+失败响应统一使用 `code`、`message`、`hint` 和 `request_id` 字段；`error` 仅作为旧客户端兼容别名。请求编号也通过 `X-Request-ID` 返回，完整错误码表见 [error-codes.md](./error-codes.md)。
+
 契约为 [openapi.yaml](openapi.yaml)，Go DTO 直接别名到实际返回模型，前端类型位于 `web/src/types/index.ts`。统一 Server 提供网页、账号、资产、任务、定时和规则操作；不再使用两套业务入口。
 
 UI 使用 HttpOnly 的 `scanner_session` Cookie，所有写请求携带 `X-Requested-With: XMLHttpRequest`。管理员管理用户；管理员/安全工程师维护资产、任务、定时、发现项和规则包；审批由管理员/运维审批人处理，禁止自审；已登录只读用户可查询业务列表。

@@ -65,6 +65,13 @@ func respond(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Request-ID", responseRequestID(w))
+	if err, ok := v.(APIError); ok {
+		v = normalizeAPIError(w, err)
+	} else if err, ok := v.(*APIError); ok && err != nil {
+		copy := normalizeAPIError(w, *err)
+		v = copy
+	}
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(v)
 }
@@ -552,5 +559,5 @@ func NewDevelopmentHandler(s account.Repository, assetStore assets.Repository, a
 	if len(approvalStores) > 0 && approvalStores[0] != nil {
 		registerApprovalHandlers(mux, s, approvalStores[0])
 	}
-	return mux
+	return withRequestID(mux)
 }
