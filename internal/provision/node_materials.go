@@ -122,6 +122,9 @@ func Provision(opts Options) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	if when.Add(opts.ValidFor).After(ca.cert.NotAfter) {
+		return Result{}, errors.New("leaf certificate lifetime exceeds CA lifetime")
+	}
 
 	tmp, err := os.MkdirTemp(filepath.Dir(outputDir), ".scanner-node-materials-*")
 	if err != nil {

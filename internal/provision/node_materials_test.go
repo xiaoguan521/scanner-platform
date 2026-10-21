@@ -134,6 +134,7 @@ func TestProvisionRejectsUnsafeScopeAndPaths(t *testing.T) {
 		{OutputDir: filepath.Join(root, "out"), CADir: filepath.Join(root, "ca"), ServerIP: netip.MustParseAddr("0.0.0.0"), Nodes: []NodeSpec{{ID: "worker-a", Kind: "worker"}}, ValidFor: defaults, CAValidFor: caLife, GenerateCA: true},
 		{OutputDir: filepath.Join(root, "out"), CADir: filepath.Join(root, "ca"), ServerIP: netip.MustParseAddr("192.0.2.10"), Nodes: []NodeSpec{{ID: "worker/a", Kind: "worker"}}, ValidFor: defaults, CAValidFor: caLife, GenerateCA: true},
 		{OutputDir: filepath.Join(root, "ca", "out"), CADir: filepath.Join(root, "ca"), ServerIP: netip.MustParseAddr("192.0.2.10"), Nodes: []NodeSpec{{ID: "worker-a", Kind: "worker"}}, ValidFor: defaults, CAValidFor: caLife, GenerateCA: true},
+		{OutputDir: filepath.Join(root, "out-lifetime"), CADir: filepath.Join(root, "ca-lifetime"), ServerIP: netip.MustParseAddr("192.0.2.10"), Nodes: []NodeSpec{{ID: "worker-a", Kind: "worker"}}, ValidFor: 48 * time.Hour, CAValidFor: 24 * time.Hour, GenerateCA: true},
 	}
 	for i, in := range cases {
 		if _, err := Provision(in); err == nil {
