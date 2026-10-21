@@ -72,7 +72,6 @@ func TestPostgresTaskStoreLab(t *testing.T) {
 		t.Fatal(err)
 	}
 	store.leaseDuration = time.Minute
-	store.now = func() time.Time { return time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC) }
 	if err := store.CreateTask(ctx, ScanTask{
 		ID: taskID, ScopeID: scopeID, Status: "PENDING", CreatedBy: userID,
 		Engines: []string{"nuclei"}, Targets: []string{"192.0.2.10:8080"}, PinnedRuleVersion: "rules-lab",

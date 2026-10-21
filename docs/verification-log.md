@@ -1,5 +1,10 @@
 # Verification log
 
+## 2026-10-21：PostgreSQL 隔离仓储回归
+
+- 使用当前运行时的时间基准修正 `postgres_queue_lab_test.go` 的租约夹具，避免固定日期被数据库当前时间判定为过期。
+- `POSTGRES_DSN_FILE="$PWD/runtime/postgres/dsn" go test -tags lab -race ./internal/repo` 通过（完整仓储隔离回归，未输出 DSN、资产或结果数据）。
+
 ## 2026-10-21：生产镜像与 Compose 部署契约
 
 - 新增 `deploy/Dockerfile` 的 `server`、`worker`、`updater` BuildKit targets：Go 服务、Server UI、SHA-256 固定的 Nuclei/Trivy 和 Linux `nft`/`setpriv` 运行依赖在镜像阶段构建；运行目标不携带数据库凭据或节点秘密。
