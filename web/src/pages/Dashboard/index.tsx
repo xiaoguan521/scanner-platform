@@ -1,307 +1,165 @@
 import React, { useMemo, useState } from 'react';
-import { DataTable } from '../../components/DataState';
-import { Row, Col, Card, Progress, Tag, Space, Alert, Typography, Badge, Button, theme } from 'antd';
-import {
-  SafetyOutlined,
-  AlertOutlined,
-  ClockCircleOutlined,
-  DatabaseOutlined,
-  CheckCircleOutlined,
-  FieldTimeOutlined,
-} from '@ant-design/icons';
+import { Button, Segmented, Tooltip } from 'antd';
+import { CheckCircleOutlined } from '@ant-design/icons';
+import { Link } from 'react-router-dom';
 import { useDashboardSummary, useRecentTasks } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
-import { Link } from 'react-router-dom';
-import { FindingStatusTag, SeverityTag, StatCard, TaskStatusTag } from '../../components/Semantic';
+import { FindingStatusTag, Mono, SeverityTag, StatCard, StatusPill, TaskStatusTag, severityMeta } from '../../components/Semantic';
+import { AutoGrid, PageHeader, Panel } from '../../components/Page';
+import { useAppTheme } from '../../context/ThemeContext';
+import type { Severity } from '../../theme/palette';
+import { taskTargetSummary } from '../Tasks/targets';
+import { applicationCoverage, systemCoverage } from '../Tasks/coverage';
 
-const { Text } = Typography;
+const severities: Severity[] = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO'];
 
 export const DashboardPage: React.FC = () => {
   const [trendDays, setTrendDays] = useState<7 | 30 | 90>(30);
-  const { token } = theme.useToken();
-  const { data: dashboardSummary, loading: summaryLoading, error: summaryError } = useDashboardSummary(trendDays);
-  const { data: tasks, loading: tasksLoading, error: tasksError } = useRecentTasks(10);
-  const emptyCounts = { vulnerabilities: 0, loginEntries: 0, unknown: 0, version: 0, verified: 0 };
-  const currentRule = dashboardSummary?.currentRule;
-  const counts = dashboardSummary?.findingCounts ?? emptyCounts;
-  const criticalCount = dashboardSummary?.criticalCount ?? 0;
-  const highCount = dashboardSummary?.highCount ?? 0;
-  const totalFindings = dashboardSummary?.findingCount ?? 0;
-  const currentRiskScore = dashboardSummary?.riskScore ?? 0;
-  const riskyAssets = dashboardSummary?.riskyAssetCount ?? 0;
-  const trend = dashboardSummary?.trend ?? [];
+  const { palette } = useAppTheme();
+  const { data: summary, loading: summaryLoading, error: summaryError } = useDashboardSummary(trendDays);
+  const { data: tasks, loading: tasksLoading, error: tasksError } = useRecentTasks(6);
+  const counts = summary?.findingCounts ?? { vulnerabilities: 0, loginEntries: 0, unknown: 0, version: 0, verified: 0 };
+  const distribution = summary?.severityDistribution ?? {};
+  const totalFindings = summary?.findingCount ?? 0;
+  const riskScore = summary?.riskScore ?? 0;
+  const trend = summary?.trend ?? [];
   const maxTrend = Math.max(1, ...trend.map(point => point.count));
-  const emptyDistribution = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0, INFO: 0 };
-  const distribution = dashboardSummary?.severityDistribution ?? emptyDistribution;
-  const riskGroups = dashboardSummary?.riskGroups ?? [];
-  const riskAssets = dashboardSummary?.riskAssets ?? [];
-  const pendingFindings = dashboardSummary?.pendingFindings ?? [];
-  const pendingFindingCount = dashboardSummary?.pendingCount ?? 0;
-  const assetCount = dashboardSummary?.assetCount ?? 0;
-  const taskCount = dashboardSummary?.taskCount ?? 0;
-  const runningTaskCount = dashboardSummary?.runningTaskCount ?? 0;
+  const scoreColor = riskScore >= 70 ? palette.severity.HIGH.solid : riskScore >= 40 ? palette.severity.MEDIUM.solid : palette.success;
   const quickStart = useMemo(() => [
-    { key: 'asset', label: '登记第一个资产', done: Boolean(dashboardSummary?.assetCount), to: '/assets', action: '去登记' },
-    { key: 'task', label: '发起第一次扫描', done: Boolean(dashboardSummary?.hasNonSyntheticTask), to: '/tasks', action: '去扫描' },
-    { key: 'result', label: '查看第一份扫描结果', done: Boolean(dashboardSummary?.hasCompletedScan), to: '/findings', action: '看结果' },
-  ], [dashboardSummary]);
-  const showQuickStart = !summaryLoading && !tasksLoading && quickStart.some((step) => !step.done);
+    { key: 'asset', label: '登记第一个资产', done: Boolean(summary?.assetCount), to: '/assets', action: '去登记' },
+    { key: 'task', label: '发起第一次扫描', done: Boolean(summary?.hasNonSyntheticTask), to: '/tasks', action: '去扫描' },
+    { key: 'result', label: '查看第一份扫描结果', done: Boolean(summary?.hasCompletedScan), to: '/findings', action: '看结果' },
+  ], [summary]);
+  const showQuickStart = !summaryLoading && Boolean(summary) && quickStart.some(step => !step.done);
+  const labelEvery = Math.max(1, Math.ceil(trend.length / 6));
+  const barWidth = 600 / Math.max(1, trend.length);
+  const muted = { color: palette.textSecondary };
+  const rowBorder = `1px solid ${palette.borderSubtle}`;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-      <CollectionNotice loading={summaryLoading || tasksLoading} error={summaryError || tasksError} />
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <PageHeader
+        title="态势总览"
+        description={`已登记 ${summary?.assetCount ?? 0} 台资产 · 规则版本 ${summary?.currentRule?.version ?? '尚未导入'} · 数据每 10 秒刷新`}
+        extra={<Link to="/tasks"><Button type="primary">新建扫描</Button></Link>}
+      />
+      <CollectionNotice loading={summaryLoading && !summary} error={summaryError || tasksError} />
 
-      {showQuickStart && <Card title="快速开始" extra={<Text type="secondary">完成后自动隐藏</Text>}>
-        <Space direction="vertical" size={12} style={{ width: '100%' }}>
-          <Text type="secondary">按这三步即可看到第一份扫描结果；只对你明确登记并授权的目标执行检查。</Text>
-          {quickStart.map((step) => <Space key={step.key} style={{ width: '100%', justifyContent: 'space-between' }}>
-            <Space><CheckCircleOutlined style={{ color: step.done ? token.colorSuccess : token.colorTextQuaternary }} /><Text delete={step.done}>{step.label}</Text></Space>
+      {showQuickStart && <Panel title="快速开始" extra={<span style={muted}>完成后自动隐藏</span>}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {quickStart.map(step => <div key={step.key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 8, color: step.done ? palette.textTertiary : palette.text, textDecoration: step.done ? 'line-through' : undefined }}>
+              <CheckCircleOutlined style={{ color: step.done ? palette.success : palette.textTertiary }} />{step.label}
+            </span>
             {!step.done && <Link to={step.to}><Button size="small" type={step.key === 'asset' ? 'primary' : 'default'}>{step.action}</Button></Link>}
-          </Space>)}
-        </Space>
-      </Card>}
-
-      <Card title="检测结果口径"><Space wrap>
-        <Tag color="red"><Link to="/findings">漏洞总数 {counts.vulnerabilities}</Link></Tag>
-        <Tag color="blue"><Link to="/findings?risk=login_entry">登录入口 {counts.loginEntries}</Link></Tag>
-        <Tag><Link to="/findings?risk=unknown">历史类型未核实 {counts.unknown}</Link></Tag>
-        <Tag color="orange"><Link to="/findings?method=version">版本推断 {counts.version}</Link></Tag>
-        <Tag color="green"><Link to="/findings?onlyVerified=true">已验证 {counts.verified}</Link></Tag>
-        <Tag>弱口令：本次未启用该检测项</Tag>
-      </Space><Typography.Paragraph type="secondary" style={{marginTop:12,marginBottom:0}}>漏洞总数仅含系统漏洞与 Web 漏洞。登录入口单独统计；缺少类型的历史记录不纳入漏洞总数。已验证指原理验证或确定性配置检查。</Typography.Paragraph></Card>
-      {/* 关键统计卡片 */}
-      <Row gutter={[16, 16]}>
-        <Col xs={24} sm={12} lg={6}>
-          <StatCard
-            title="风险评分"
-            value={currentRiskScore}
-            suffix="/ 100"
-            valueStyle={{ color: currentRiskScore >= 70 ? token.colorError : currentRiskScore >= 40 ? token.colorWarning : token.colorSuccess }}
-            prefix={<SafetyOutlined />}
-            footer={<Link to="/findings">查看活动漏洞明细</Link>}
-          />
-        </Col>
-
-        <Col xs={24} sm={12} lg={6}>
-          <StatCard
-            title="有风险资产数"
-            value={riskyAssets}
-            suffix="个"
-            prefix={<DatabaseOutlined style={{ color: token.colorPrimary }} />}
-            footer={<>受控资产总数: {assetCount}；<Link to="/assets">查看资产台账</Link></>}
-          />
-        </Col>
-
-        <Col xs={24} sm={12} lg={6}>
-          <StatCard
-            title="漏洞总数"
-            value={totalFindings}
-            valueStyle={{ color: token.colorError }}
-            prefix={<AlertOutlined />}
-            footer={<><Link to="/findings?severity=CRITICAL">严重 {criticalCount}</Link> · <Link to="/findings?severity=HIGH">高危 {highCount}</Link></>}
-          />
-        </Col>
-
-        <Col xs={24} sm={12} lg={6}>
-          <StatCard
-            title="活跃扫描任务 / 分块"
-            value={runningTaskCount}
-            suffix={`/ ${taskCount}`}
-            prefix={<ClockCircleOutlined style={{ color: token.colorWarning }} />}
-            footer="任务按指定时间窗等待、执行和恢复"
-          />
-        </Col>
-
-        <Col xs={24} sm={12} lg={6}>
-          <StatCard
-            title="规则库版本 (CURRENT)"
-            value={currentRule?.version || '尚未导入'}
-            prefix={<CheckCircleOutlined style={{ color: token.colorSuccess }} />}
-            valueStyle={{ fontSize: 18 }}
-            footer={<>本地 Updater 上报：{currentRule?.signatureVerified ? '签名已验证' : '签名未验证'}；{currentRule?.engineValidated ? '引擎兼容性已验证' : '引擎兼容性未验证'}</>}
-          />
-        </Col>
-      </Row>
-
-      <Card title="漏洞趋势" bordered={false} extra={<Space.Compact>
-        {[7, 30, 90].map(days => <Tag key={days} color={trendDays === days ? 'blue' : undefined} style={{ cursor: 'pointer' }} onClick={() => setTrendDays(days as 7 | 30 | 90)}>{days} 天</Tag>)}
-      </Space.Compact>}>
-        <div aria-label={`${trendDays} 天漏洞趋势`} style={{ display: 'flex', alignItems: 'end', gap: 4, minHeight: 150, overflowX: 'auto', padding: '8px 0' }}>
-          {trend.map(point => <div key={point.date} title={`${point.date}：${point.count} 个`} style={{ minWidth: trendDays === 90 ? 12 : 24, flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'end', gap: 4 }}>
-            <Link to="/findings" aria-label={`${point.date} ${point.count} 个漏洞`} style={{ width: '100%', height: `${Math.max(4, point.count / maxTrend * 112)}px`, background: token.colorPrimary, borderRadius: '4px 4px 0 0', display: 'block' }} />
-            {(trendDays <= 30 || point.date.endsWith('-01') || point.date.endsWith('-15')) && <Text type="secondary" style={{ fontSize: 10, whiteSpace: 'nowrap' }}>{point.label}</Text>}
           </div>)}
         </div>
-        <Text type="secondary">趋势按每日结束时仍活动的系统/Web 漏洞数计算，详见风险评分口径。</Text>
-      </Card>
+      </Panel>}
 
-      {/* 风险分布与风险业务组 */}
-      <Row gutter={[16, 16]}>
-        <Col xs={24} lg={14}>
-          <Card title="风险最高业务组" bordered={false}>
-            <DataTable
-              scroll={{x:600}}
-              dataSource={riskGroups}
-              pagination={false}
-              size="middle"
-              columns={[
-                { title: '排名', render: (_: unknown, __: unknown, index: number) => index + 1, width: 60 },
-                { title: '业务组名称', dataIndex: 'name', render: (name: string) => <Link to={`/findings?businessGroup=${encodeURIComponent(name)}`}>{name}</Link> },
-                {
-                  title: '综合风险指数',
-                  dataIndex: 'score',
-                  render: (score: number) => (
-                    <Progress
-                      percent={score}
-                      size="small"
-                      status={score > 80 ? 'exception' : score > 50 ? 'active' : 'normal'}
-                      strokeColor={score > 80 ? token.colorError : score > 50 ? token.colorWarning : token.colorSuccess}
-                    />
-                  ),
-                },
-                {
-                  title: '活动漏洞',
-                  dataIndex: 'openCount',
-                  render: (v: number) => (
-                    <Tag color={v > 0 ? 'red' : 'green'}>{v} 个未修复</Tag>
-                  ),
-                },
-              ]}
-            />
-          </Card>
-        </Col>
+      <AutoGrid min={220}>
+        <StatCard title="风险评分" value={riskScore} suffix="/ 100" valueColor={scoreColor} meter={riskScore} meterColor={scoreColor} />
+        <StatCard title="活动漏洞" value={totalFindings.toLocaleString()} footer={<span style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          <Link to="/findings?severity=CRITICAL" aria-label={`严重 ${summary?.criticalCount ?? 0} 项`}><SeverityTag value="CRITICAL" /> {summary?.criticalCount ?? 0}</Link>
+          <Link to="/findings?severity=HIGH" aria-label={`高危 ${summary?.highCount ?? 0} 项`}><SeverityTag value="HIGH" /> {summary?.highCount ?? 0}</Link>
+        </span>} />
+        <StatCard title="风险资产" value={summary?.riskyAssetCount ?? 0} suffix={`/ ${summary?.assetCount ?? 0} 台`} footer={<Link to="/assets">查看资产台账</Link>} />
+        <StatCard title="执行中任务" value={summary?.runningTaskCount ?? 0} suffix={`/ 共 ${summary?.taskCount ?? 0}`} footer={<Link to="/tasks">查看扫描任务</Link>} />
+      </AutoGrid>
 
-        <Col xs={24} lg={10}>
-          <Card title="漏洞风险等级构成" bordered={false}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                  <Text type="danger" strong>
-                    严重 (Critical)
-                  </Text>
-                    <Link to="/findings?severity=CRITICAL">{distribution.CRITICAL} / {totalFindings}</Link>
-                </div>
-                <Progress percent={totalFindings ? Math.round(distribution.CRITICAL / totalFindings * 100) : 0} strokeColor={token.colorError} showInfo={false} />
-              </div>
+      <AutoGrid min={420}>
+        <Panel title="活动漏洞趋势" extra={<Segmented size="small" value={trendDays} onChange={value => setTrendDays(value as 7 | 30 | 90)} options={[{ label: '7 天', value: 7 }, { label: '30 天', value: 30 }, { label: '90 天', value: 90 }]} />}>
+          <svg viewBox="0 0 600 190" width="100%" height="190" role="img" aria-label={`近 ${trendDays} 天每日活动漏洞数，最高 ${maxTrend} 项`}>
+            <g stroke={palette.borderSubtle} strokeWidth="1"><line x1="0" y1="20" x2="600" y2="20" /><line x1="0" y1="85" x2="600" y2="85" /><line x1="0" y1="150" x2="600" y2="150" /></g>
+            {trend.map((point, index) => {
+              const height = Math.max(2, point.count / maxTrend * 130);
+              return <rect key={point.date} x={index * barWidth + barWidth * 0.2} y={150 - height} width={barWidth * 0.6} height={height} rx={Math.min(3, barWidth * 0.2)} fill={palette.primary}><title>{`${point.date}：${point.count} 项`}</title></rect>;
+            })}
+            <g fill={palette.textTertiary} fontSize="11">
+              {trend.map((point, index) => index % labelEvery === 0 || index === trend.length - 1 ? <text key={point.date} x={index * barWidth + barWidth / 2} y="172" textAnchor="middle">{point.label}</text> : null)}
+              <text x="600" y="14" textAnchor="end">{maxTrend.toLocaleString()}</text>
+            </g>
+          </svg>
+          <span style={{ fontSize: 12, ...muted }}>按每日结束时仍处于活动状态的系统 / Web 漏洞统计</span>
+        </Panel>
 
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                  <Text style={{ color: token.colorWarning }} strong>
-                    高危 (High)
-                  </Text>
-                  <Link to="/findings?severity=HIGH">{distribution.HIGH} / {totalFindings}</Link>
-                </div>
-                <Progress percent={totalFindings ? Math.round(distribution.HIGH / totalFindings * 100) : 0} strokeColor={token.colorWarning} showInfo={false} />
-              </div>
-
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                  <Text style={{ color: token.gold }} strong>
-                    中危 (Medium)
-                  </Text>
-                  <Link to="/findings?severity=MEDIUM">{distribution.MEDIUM} / {totalFindings}</Link>
-                </div>
-                <Progress percent={totalFindings ? Math.round(distribution.MEDIUM / totalFindings * 100) : 0} strokeColor={token.gold} showInfo={false} />
-              </div>
-
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                  <Text style={{ color: token.colorPrimary }} strong>
-                    低危 (Low)
-                  </Text>
-                  <Link to="/findings?severity=LOW">{distribution.LOW} / {totalFindings}</Link>
-                </div>
-                <Progress percent={totalFindings ? Math.round(distribution.LOW / totalFindings * 100) : 0} strokeColor={token.colorPrimary} showInfo={false} />
-              </div>
-              <div><Text>信息 (Info)：<Link to="/findings?severity=INFO">{distribution.INFO} / {totalFindings}</Link></Text><Progress percent={totalFindings?Math.round(distribution.INFO/totalFindings*100):0} showInfo={false}/></div>
+        <Panel title="严重级别分布" extra={<Link to="/findings">查看漏洞列表</Link>}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div role="img" aria-label={severities.map(level => `${severityMeta[level].label} ${distribution[level] ?? 0}`).join('，')} style={{ display: 'flex', height: 12, borderRadius: 6, overflow: 'hidden', gap: 2, background: palette.borderSubtle }}>
+              {severities.map(level => (distribution[level] ?? 0) > 0 && <div key={level} style={{ flex: distribution[level], background: palette.severity[level].solid }} />)}
             </div>
-          </Card>
-        </Col>
-      </Row>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '10px 24px' }}>
+              {severities.map(level => <Link key={level} to={`/findings?severity=${level}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: palette.text }} aria-label={`${severityMeta[level].label} ${distribution[level] ?? 0} 项`}>
+                <SeverityTag value={level} /><Mono>{(distribution[level] ?? 0).toLocaleString()}</Mono>
+              </Link>)}
+            </div>
+            <div style={{ paddingTop: 12, borderTop: rowBorder, display: 'flex', flexDirection: 'column', gap: 8, fontSize: 13 }}>
+              <span style={{ fontWeight: 600 }}>检测结果口径</span>
+              <span style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 16px', ...muted }}>
+                <Link to="/findings?method=version">版本推断 {counts.version}</Link>
+                <Link to="/findings?onlyVerified=true">已验证 {counts.verified}</Link>
+                <Link to="/findings?risk=login_entry">登录入口 {counts.loginEntries}</Link>
+                <Link to="/findings?risk=unknown">未核实类型 {counts.unknown}</Link>
+              </span>
+            </div>
+          </div>
+        </Panel>
+      </AutoGrid>
 
-      <Card title={<Space>待处置严重/高危漏洞 <Badge count={pendingFindingCount} showZero color={token.colorError} /></Space>} bordered={false} extra={<Link to="/findings?severity=CRITICAL">查看漏洞列表</Link>}>
-        <DataTable
-          dataSource={pendingFindings}
-          rowKey="id"
-          pagination={false}
-          size="small"
-          locale={{ emptyText: '暂无待处置的严重或高危漏洞' }}
-          columns={[
-            { title: '等级', dataIndex: 'severity', width: 90, render: (severity: string) => <SeverityTag value={severity} /> },
-            { title: '漏洞', render: (_: unknown, finding: typeof pendingFindings[number]) => <Link to={`/findings?severity=${finding.severity}&businessGroup=${encodeURIComponent(finding.businessGroup)}`}>{finding.title}</Link>, ellipsis: true },
-            { title: '资产/目标', dataIndex: 'target', width: 220, ellipsis: true },
-            { title: '状态', dataIndex: 'status', width: 100, render: (status: string) => <FindingStatusTag value={status} /> },
-          ]}
-        />
-      </Card>
+      <AutoGrid min={420}>
+        <Panel flush title="待处置 · 严重 / 高危" extra={<Link to="/findings?severity=CRITICAL">全部 {summary?.pendingCount ?? 0} 项</Link>}>
+          {(summary?.pendingFindings ?? []).length === 0
+            ? <div style={{ padding: '24px 20px', ...muted }}>暂无待处置的严重或高危漏洞</div>
+            : (summary?.pendingFindings ?? []).map(finding => <div key={finding.id} style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto auto', gap: 12, alignItems: 'center', padding: '12px 20px', borderTop: rowBorder, fontSize: 13 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+                <Link to={`/findings?severity=${finding.severity}&businessGroup=${encodeURIComponent(finding.businessGroup)}`} style={{ color: palette.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{finding.title}</Link>
+                <Mono style={{ ...muted, fontSize: 12 }}>{finding.target}</Mono>
+              </div>
+              <FindingStatusTag value={finding.status} />
+              <SeverityTag value={finding.severity} />
+            </div>)}
+        </Panel>
 
-      <Card title="风险最高资产" bordered={false}>
-        <DataTable dataSource={riskAssets} rowKey="id" pagination={false} size="small" columns={[
-          { title: '资产', render: (_: unknown, item: { id: string; name: string; address: string }) => <Link to={`/findings?assetId=${encodeURIComponent(item.id)}`}>{item.name}</Link> },
-          { title: '地址', dataIndex: 'address' },
-          { title: '风险指数', dataIndex: 'score', render: (score: number) => <Progress percent={score} size="small" /> },
-          { title: '活动漏洞', dataIndex: 'openCount' },
-        ]} locale={{ emptyText: '暂无活动漏洞资产' }} />
-      </Card>
+        <Panel flush title="风险最高资产" extra={<Link to="/assets">资产台账</Link>}>
+          {(summary?.riskAssets ?? []).length === 0
+            ? <div style={{ padding: '24px 20px', ...muted }}>暂无活动漏洞资产</div>
+            : <div style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: '8px 20px 20px' }}>
+              {(summary?.riskAssets ?? []).map(asset => <Link key={asset.id} to={`/findings?assetId=${encodeURIComponent(asset.id)}`} style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.2fr) minmax(0, 1fr) 72px', gap: 12, alignItems: 'center', fontSize: 13, color: palette.text }}>
+                <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{asset.name || asset.address}</span><Mono style={{ ...muted, fontSize: 12 }}>{asset.address}</Mono></span>
+                <span role="presentation" style={{ height: 8, borderRadius: 4, background: palette.borderSubtle }}><span style={{ display: 'block', height: 8, borderRadius: 4, width: `${Math.min(100, asset.score)}%`, background: asset.score > 80 ? palette.severity.HIGH.solid : palette.primary }} /></span>
+                <Mono style={{ textAlign: 'right', ...muted }}>{asset.openCount} 项</Mono>
+              </Link>)}
+            </div>}
+          {(summary?.riskGroups ?? []).length > 0 && <div style={{ borderTop: rowBorder, padding: '12px 20px 16px', display: 'flex', flexDirection: 'column', gap: 8, fontSize: 13 }}>
+            <span style={{ fontWeight: 600 }}>风险最高业务组</span>
+            {(summary?.riskGroups ?? []).map(group => <Link key={group.name} to={`/findings?businessGroup=${encodeURIComponent(group.name)}`} style={{ display: 'flex', justifyContent: 'space-between', color: palette.text }}>
+              <span>{group.name}</span><Mono style={muted}>风险 {group.score} · {group.openCount} 项</Mono>
+            </Link>)}
+          </div>}
+        </Panel>
+      </AutoGrid>
 
-      {/* 近期扫描任务执行流 */}
-      <Card title="正在执行与近期任务" bordered={false}>
-        <DataTable
-          scroll={{x:1000}}
-          dataSource={tasks}
-          rowKey="id"
-          pagination={false}
-          size="middle"
-          columns={[
-            { title: '任务 ID', dataIndex: 'id', width: 110 },
-            { title: '目标范围', dataIndex: 'scopeName' },
-            {
-              title: '扫描引擎',
-              dataIndex: 'engines',
-              render: (engines: string[]) => (
-                <Space>
-                  {engines.map((e) => (
-                    <Tag key={e} color={e === 'nuclei' ? 'purple' : 'cyan'}>
-                      {e.toUpperCase()}
-                    </Tag>
-                  ))}
-                </Space>
-              ),
-            },
-            {
-              title: '分块进度',
-              render: (_, record) => (
-                <div style={{ width: 140 }}>
-                  <Progress
-                    percent={record.totalChunks ? Math.round((record.completedChunks / record.totalChunks) * 100) : 0}
-                    size="small"
-                  />
-                  <span style={{ fontSize: 11, color: token.colorTextSecondary }}>
-                    {record.completedChunks}/{record.totalChunks} 块完成
-                  </span>
-                </div>
-              ),
-            },
-            {
-              title: '当前状态',
-              dataIndex: 'status',
-              render: (status: string) => {
-                return <TaskStatusTag value={status} />;
-              },
-            },
-            {
-              title: '硬截止时间 (本地强制)',
-              dataIndex: 'hardDeadline',
-              render: (val: string) => (
-                <Space size={4}>
-                  <FieldTimeOutlined style={{ color: token.colorWarning }} />
-                  <span style={{ fontSize: 12 }}>{val}</span>
-                </Space>
-              ),
-            },
-          ]}
-        />
-      </Card>
+      <Panel flush title="近期扫描任务" extra={<Link to="/tasks">全部任务</Link>}>
+        <div style={{ overflowX: 'auto' }}>
+          {!tasksLoading && tasks.length === 0 && <div style={{ padding: '24px 20px', ...muted }}>尚未发起扫描</div>}
+          {tasks.map(task => {
+            const target = taskTargetSummary(task);
+            const auto = task.engines?.[0] === 'auto';
+            const system = systemCoverage(task.systemScanStatus);
+            const app = applicationCoverage(task.applicationScanStatus);
+            return <div key={task.id} style={{ display: 'grid', gridTemplateColumns: 'minmax(180px, 1.3fr) minmax(0, 2fr) 120px', gap: 16, alignItems: 'center', padding: '14px 20px', borderTop: rowBorder, fontSize: 13, minWidth: 640 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}><Mono>{target.primary}</Mono><span style={{ ...muted, fontSize: 12 }}>{new Date(task.createdAt).toLocaleString()} · {target.detail}</span></div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {auto ? <>
+                  <Tooltip title={task.systemScanStatus}><span><StatusPill tone={system.tone}>系统包 · {system.label}</StatusPill></span></Tooltip>
+                  <StatusPill tone={app.tone}>应用依赖 · {app.label}</StatusPill>
+                  <StatusPill tone="neutral">HTTP 服务 · {task.serviceResults?.filter(item => item.kind === 'HTTP').length ?? 0}</StatusPill>
+                </> : <StatusPill tone="neutral">{task.synthetic ? '模拟任务' : task.inputPath ? '离线输入扫描' : (task.engines ?? []).join(' / ')}</StatusPill>}
+              </div>
+              <span style={{ justifySelf: 'end' }}><TaskStatusTag value={task.status} /></span>
+            </div>;
+          })}
+        </div>
+      </Panel>
     </div>
   );
 };

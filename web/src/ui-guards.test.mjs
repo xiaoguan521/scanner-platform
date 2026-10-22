@@ -26,8 +26,8 @@ for (const file of files) {
   const lines = (await readFile(file, 'utf8')).split('\n');
   lines.forEach((line, index) => {
     // Page colors must come from antd theme tokens so both themes stay readable.
-    // ThemeContext defines the palette; explicit light/dark pairs are allowed.
-    if (name !== join('context', 'ThemeContext.tsx') && /#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?\b/.test(line) && !line.includes('isDark')) {
+    // theme/palette.ts defines the palette; ThemeContext maps it onto antd.
+    if (name !== join('context', 'ThemeContext.tsx') && name !== join('theme', 'palette.ts') && /#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?\b/.test(line) && !line.includes('isDark')) {
       colorViolations.push(`${name}:${index + 1}`);
     }
     if (devText.test(line)) devTextViolations.push(`${name}:${index + 1}`);

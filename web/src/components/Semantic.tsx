@@ -1,47 +1,46 @@
 import React from 'react';
-import { Card, Skeleton, Statistic, Tag, Typography } from 'antd';
+import { Skeleton } from 'antd';
 import type { CSSProperties, ReactNode } from 'react';
-import type { StatisticProps, TagProps } from 'antd';
 import type { FindingSeverity, FindingStatus, NotificationSeverity, TaskStatus, UserRole } from '../types';
-
-type TagColor = TagProps['color'];
+import { useAppTheme } from '../context/ThemeContext';
+import { monoFamily, type Severity, type Tone } from '../theme/palette';
 
 export type SemanticMeta = {
-  color: TagColor;
+  tone: Tone;
   label: string;
 };
 
-export const severityMeta: Record<FindingSeverity, SemanticMeta> = {
-  CRITICAL: { color: 'magenta', label: '严重 (Critical)' },
-  HIGH: { color: 'red', label: '高危 (High)' },
-  MEDIUM: { color: 'orange', label: '中危 (Medium)' },
-  LOW: { color: 'blue', label: '低危 (Low)' },
-  INFO: { color: 'default', label: '信息 (Info)' },
+export const severityMeta: Record<FindingSeverity, { label: string }> = {
+  CRITICAL: { label: '严重' },
+  HIGH: { label: '高危' },
+  MEDIUM: { label: '中危' },
+  LOW: { label: '低危' },
+  INFO: { label: '信息' },
 };
 
 export const findingStatusMeta: Record<FindingStatus, SemanticMeta> = {
-  OPEN: { color: 'error', label: '待修复 (OPEN)' },
-  REOPENED: { color: 'error', label: '重新出现 (REOPENED)' },
-  IN_PROGRESS: { color: 'processing', label: '修复中 (IN_PROGRESS)' },
-  FIXED: { color: 'success', label: '已修复 (FIXED)' },
-  FALSE_POSITIVE: { color: 'default', label: '误报静默 (FALSE_POSITIVE)' },
-  ACCEPTED_RISK: { color: 'warning', label: '接受风险 (ACCEPTED_RISK)' },
+  OPEN: { tone: 'error', label: '待修复' },
+  REOPENED: { tone: 'error', label: '重新出现' },
+  IN_PROGRESS: { tone: 'running', label: '修复中' },
+  FIXED: { tone: 'ok', label: '已修复' },
+  FALSE_POSITIVE: { tone: 'neutral', label: '误报' },
+  ACCEPTED_RISK: { tone: 'warning', label: '接受风险' },
 };
 
 export const taskStatusMeta: Record<TaskStatus, SemanticMeta> = {
-  PENDING: { color: 'default', label: '待领取' },
-  RUNNING: { color: 'processing', label: '执行中' },
-  WAITING_WINDOW: { color: 'warning', label: '等待时间窗' },
-  PAUSED: { color: 'default', label: '已暂停' },
-  PAUSED_WINDOW: { color: 'default', label: '窗口结束，等待恢复' },
-  COMPLETED: { color: 'success', label: '已完成' },
-  CANCELED: { color: 'default', label: '已取消' },
-  FAILED: { color: 'error', label: '失败' },
+  PENDING: { tone: 'neutral', label: '待领取' },
+  RUNNING: { tone: 'running', label: '执行中' },
+  WAITING_WINDOW: { tone: 'warning', label: '等待时间窗' },
+  PAUSED: { tone: 'neutral', label: '已暂停' },
+  PAUSED_WINDOW: { tone: 'neutral', label: '窗口结束，等待恢复' },
+  COMPLETED: { tone: 'ok', label: '已完成' },
+  CANCELED: { tone: 'neutral', label: '已取消' },
+  FAILED: { tone: 'error', label: '失败' },
 };
 
 export const scheduleStatusMeta: Record<string, SemanticMeta> = {
   ...taskStatusMeta,
-  DELETED: { color: 'default', label: '任务记录已删除' },
+  DELETED: { tone: 'neutral', label: '任务记录已删除' },
 };
 
 export const roleNames: Record<UserRole, string> = {
@@ -52,53 +51,83 @@ export const roleNames: Record<UserRole, string> = {
 };
 
 export const notificationSeverityMeta: Record<NotificationSeverity, SemanticMeta> = {
-  info: { color: 'blue', label: '信息' },
-  warning: { color: 'orange', label: '提醒' },
-  error: { color: 'red', label: '需要处理' },
+  info: { tone: 'running', label: '信息' },
+  warning: { tone: 'warning', label: '提醒' },
+  error: { tone: 'error', label: '需要处理' },
 };
 
-function resolveMeta<T extends string>(value: T, metadata: Record<string, SemanticMeta>): SemanticMeta {
-  return metadata[value] ?? { color: 'default', label: value };
+function resolveMeta(value: string, metadata: Record<string, SemanticMeta>): SemanticMeta {
+  return metadata[value] ?? { tone: 'neutral', label: value };
 }
 
+const pillStyle: CSSProperties = {
+  display: 'inline-flex', alignItems: 'center', gap: 6, padding: '1px 10px', borderRadius: 999,
+  fontSize: 12, fontWeight: 500, lineHeight: '20px', whiteSpace: 'nowrap',
+};
+const dotStyle: CSSProperties = { width: 6, height: 6, borderRadius: '50%', background: 'currentColor', flex: '0 0 auto' };
+
+/** A rounded status label with a leading dot; colour comes from the theme tone. */
+export const StatusPill: React.FC<{ tone: Tone; children: ReactNode; title?: string }> = ({ tone, children, title }) => {
+  const { palette } = useAppTheme();
+  const colors = palette.tone[tone];
+  return <span title={title} style={{ ...pillStyle, color: colors.fg, background: colors.bg }}><span aria-hidden="true" style={dotStyle} />{children}</span>;
+};
+
 export const SeverityTag: React.FC<{ value: FindingSeverity | string }> = ({ value }) => {
-  const meta = resolveMeta(value, severityMeta);
-  return <Tag color={meta.color}>{meta.label}</Tag>;
+  const { palette } = useAppTheme();
+  const colors = palette.severity[value as Severity] ?? palette.severity.INFO;
+  const label = severityMeta[value as FindingSeverity]?.label ?? value;
+  return <span style={{ ...pillStyle, fontWeight: 600, padding: '1px 8px', color: colors.fg, background: colors.bg }}><span aria-hidden="true" style={dotStyle} />{label}</span>;
 };
 
 export const FindingStatusTag: React.FC<{ value: FindingStatus | string }> = ({ value }) => {
   const meta = resolveMeta(value, findingStatusMeta);
-  return <Tag color={meta.color}>{meta.label}</Tag>;
+  return <StatusPill tone={meta.tone}>{meta.label}</StatusPill>;
 };
 
 export const TaskStatusTag: React.FC<{ value: TaskStatus | string }> = ({ value }) => {
   const meta = resolveMeta(value, taskStatusMeta);
-  return <Tag color={meta.color}>{meta.label}</Tag>;
+  return <StatusPill tone={meta.tone}>{meta.label}</StatusPill>;
 };
 
 export const ScheduleStatusTag: React.FC<{ value: string }> = ({ value }) => {
   const meta = resolveMeta(value, scheduleStatusMeta);
-  return <Tag color={meta.color}>{meta.label}</Tag>;
+  return <StatusPill tone={meta.tone}>{meta.label}</StatusPill>;
 };
 
 export const NotificationSeverityTag: React.FC<{ value: NotificationSeverity | string }> = ({ value }) => {
   const meta = resolveMeta(value, notificationSeverityMeta);
-  return <Tag color={meta.color}>{meta.label}</Tag>;
+  return <StatusPill tone={meta.tone}>{meta.label}</StatusPill>;
 };
 
+/** Monospace text for addresses, CVE IDs, versions and other identifiers. */
+export const Mono: React.FC<{ children: ReactNode; style?: CSSProperties; title?: string }> = ({ children, style, title }) => (
+  <span title={title} style={{ fontFamily: monoFamily, fontVariantNumeric: 'tabular-nums', ...style }}>{children}</span>
+);
+
+/** Key metric tile: label, large tabular value, optional meter and footer. */
 export const StatCard: React.FC<{
   title: ReactNode;
-  value: StatisticProps['value'];
+  value: ReactNode;
   suffix?: ReactNode;
-  prefix?: ReactNode;
-  valueStyle?: CSSProperties;
+  valueColor?: string;
+  meter?: number;
+  meterColor?: string;
   footer?: ReactNode;
-}> = ({ title, value, suffix, prefix, valueStyle, footer }) => (
-  <Card bordered={false}>
-    <Statistic title={title} value={value} suffix={suffix} prefix={prefix} valueStyle={valueStyle} />
-    {footer && <div style={{ marginTop: 8, fontSize: 12 }}><Typography.Text type="secondary">{footer}</Typography.Text></div>}
-  </Card>
-);
+}> = ({ title, value, suffix, valueColor, meter, meterColor, footer }) => {
+  const { palette } = useAppTheme();
+  return (
+    <div style={{ padding: 20, borderRadius: 12, background: palette.bgContainer, border: `1px solid ${palette.borderSubtle}`, display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 }}>
+      <span style={{ fontSize: 13, color: palette.textSecondary }}>{title}</span>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0 }}>
+        <span style={{ fontSize: 32, lineHeight: 1.1, fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: valueColor ?? palette.text, overflowWrap: 'anywhere' }}>{value}</span>
+        {suffix && <span style={{ color: palette.textTertiary }}>{suffix}</span>}
+      </div>
+      {meter !== undefined && <div role="presentation" style={{ height: 6, borderRadius: 3, background: palette.borderSubtle }}><div style={{ width: `${Math.max(0, Math.min(100, meter))}%`, height: 6, borderRadius: 3, background: meterColor ?? palette.primary }} /></div>}
+      {footer && <div style={{ fontSize: 13, color: palette.textSecondary }}>{footer}</div>}
+    </div>
+  );
+};
 
 export const LoadingSkeleton: React.FC<{ rows?: number; label?: string }> = ({ rows = 3, label = '正在加载…' }) => (
   <div role="status" aria-label={label} style={{ padding: '8px 0' }}>

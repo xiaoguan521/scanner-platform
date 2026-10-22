@@ -23,7 +23,7 @@ test('finding detail can be opened without mutating the finding', async ({ page 
   const finding = body.items?.find((item) => item.id === findingID);
   expect(finding, `finding ${findingID} was not returned by the authenticated Server`).toBeTruthy();
   await page.goto('/#/findings');
-  await page.getByLabel('按目标、组件或 CVE 筛选', { exact: true }).fill(finding.title);
+  await page.getByLabel('按目标、软件包、CVE 或标题筛选', { exact: true }).fill(finding.title);
   const row = page.locator('tr').filter({ hasText: finding.title }).first();
   await expect(row).toBeVisible();
   await row.getByRole('button', { name: `查看详情：${finding.title}`, exact: true }).click();
