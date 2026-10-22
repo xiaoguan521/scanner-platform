@@ -431,7 +431,15 @@ func postgresRuntimeTaskWhere(query TaskListQuery) (string, []any) {
 		clauses = append(clauses, "t.archived_at IS NULL")
 	}
 	if query.Status != "" {
-		clauses = append(clauses, "t.status="+add(query.Status))
+		if statuses := taskStatusSet(query.Status); len(statuses) == 1 {
+			clauses = append(clauses, "t.status="+add(statuses[0]))
+		} else {
+			placeholders := []string{}
+			for _, status := range statuses {
+				placeholders = append(placeholders, add(status))
+			}
+			clauses = append(clauses, "t.status IN ("+strings.Join(placeholders, ",")+")")
+		}
 	}
 	if query.Engine != "" {
 		engine := add(query.Engine)

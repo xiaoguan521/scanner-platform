@@ -48,6 +48,9 @@ export const ScopesPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expiryFilter, setExpiryFilter] = useState<ScopeExpiryFilter>('all');
+  const [scopeQuery, setScopeQuery] = useState('');
+  const [scopeSearch, setScopeSearch] = useState('');
+  useEffect(() => { const timer = window.setTimeout(() => setScopeSearch(scopeQuery.trim()), 300); return () => window.clearTimeout(timer); }, [scopeQuery]);
   const [reloadKey, setReloadKey] = useState(0);
   const [requestOpen, setRequestOpen] = useState(false);
   const [editingScope, setEditingScope] = useState<AuthorizedScope | null>(null);
@@ -72,7 +75,7 @@ export const ScopesPage: React.FC = () => {
       inFlight = true;
       if (initial) setLoading(true);
       Promise.all([
-        apiClient.scopesPage(scopePage, scopePageSize, expiryFilter, controller.signal),
+        apiClient.scopesPage(scopePage, scopePageSize, expiryFilter, controller.signal, scopeSearch),
         apiClient.portRequestsPage(portPage, portPageSize, { status: portStatus, search: portSearch }, controller.signal),
       ]).then(([scopeResult, portResult]) => {
         if (controller.signal.aborted) return;
@@ -92,9 +95,9 @@ export const ScopesPage: React.FC = () => {
     load(true);
     const stop = pollWhileVisible(() => load(), pollIntervals.reference);
     return () => { controller.abort(); stop(); };
-  }, [scopePage, scopePageSize, expiryFilter, portPage, portPageSize, portStatus, portSearch, reloadKey]);
+  }, [scopePage, scopePageSize, expiryFilter, scopeSearch, portPage, portPageSize, portStatus, portSearch, reloadKey]);
 
-  useEffect(() => { if (scopePage !== 1) setScopePage(1); }, [expiryFilter]);
+  useEffect(() => { if (scopePage !== 1) setScopePage(1); }, [expiryFilter, scopeSearch]);
   useEffect(() => { if (portPage !== 1) setPortPage(1); }, [portStatus, portSearch]);
   const refresh = () => setReloadKey(value => value + 1);
 
@@ -208,6 +211,7 @@ export const ScopesPage: React.FC = () => {
       description="当前只保存已登记主机 IP 的授权申请及端口人工审核结果。审批记录用于管理台账；任务按明确登记的端口和任务时间窗执行，跳过端口不会下发。" />
     <Card title="扫描授权范围与执行时间窗" extra={<Space>
       <Text type="secondary">共 {scopeTotal} 条</Text>
+      <Input aria-label="授权范围搜索" placeholder="搜索资产地址或 ID" allowClear value={scopeQuery} onChange={event => setScopeQuery(event.target.value)} style={{ width: 200 }} />
       <Select aria-label="授权期限筛选" value={expiryFilter} onChange={setExpiryFilter} style={{ width: 150 }}
         options={[{ value: 'all', label: '全部期限' }, { value: 'expiring', label: '7 天内到期' }, { value: 'expired', label: '已过期' }]} />
       <Button disabled={!canRequest || selectedScopeIDs.length === 0 || busy} onClick={() => setRenewOpen(true)}>批量续期{selectedScopeIDs.length ? `（${selectedScopeIDs.length}）` : ''}</Button>

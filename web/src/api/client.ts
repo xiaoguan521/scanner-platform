@@ -304,7 +304,7 @@ export const apiClient = {
   revokeScope(id:string) {
     return requestJSON<AuthorizedScope>('/api/v1/scopes/' + encodeURIComponent(id) + '/revoke', 'POST', {});
   },
-  scopesPage(page:number,pageSize:number,expiry='all',signal?:AbortSignal) { const params=new URLSearchParams({page:String(page),page_size:String(pageSize),expiry}); return requestJSON<ScopePageResponse>('/api/v1/scopes?'+params.toString(),'GET',undefined,signal); },
+  scopesPage(page:number,pageSize:number,expiry='all',signal?:AbortSignal,search='') { const params=new URLSearchParams({page:String(page),page_size:String(pageSize),expiry}); if(search.trim())params.set('q',search.trim()); return requestJSON<ScopePageResponse>('/api/v1/scopes?'+params.toString(),'GET',undefined,signal); },
   portRequestsPage(page:number,pageSize:number,options:{status?:string;search?:string}={},signal?:AbortSignal) { const params=new URLSearchParams({page:String(page),page_size:String(pageSize),status:options.status??'ALL'}); if(options.search?.trim())params.set('q',options.search.trim()); return requestJSON<PagedListResponse<PortRequest>>('/api/v1/port-requests?'+params.toString(),'GET',undefined,signal); },
   reviewScope(id:string, decision:ApprovalDecision) {
     return requestJSON<AuthorizedScope>('/api/v1/scopes/' + encodeURIComponent(id) + '/review', 'POST', decision);

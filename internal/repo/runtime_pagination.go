@@ -12,6 +12,17 @@ import (
 
 // TaskListQuery is the bounded Server-side task list contract. PageSize=0 is
 // reserved for internal callers that still need the complete historical list.
+// TaskStatusQueued groups the statuses of tasks that are waiting to run, so
+// the UI's "待执行" count can be used as a filter.
+const TaskStatusQueued = "QUEUED"
+
+func taskStatusSet(status string) []string {
+	if status == TaskStatusQueued {
+		return []string{"PENDING", "WAITING_WINDOW", "PAUSED_WINDOW"}
+	}
+	return []string{status}
+}
+
 type TaskListQuery struct {
 	Page     int
 	PageSize int
@@ -54,7 +65,7 @@ func NormalizeTaskListQuery(in TaskListQuery) (TaskListQuery, error) {
 		return TaskListQuery{}, ErrInvalidTaskListQuery
 	}
 	switch in.Status {
-	case "", "PENDING", "WAITING_WINDOW", "RUNNING", "PAUSED", "PAUSED_WINDOW", "COMPLETED", "FAILED", "CANCELED":
+	case "", "PENDING", "WAITING_WINDOW", "RUNNING", "PAUSED", "PAUSED_WINDOW", "COMPLETED", "FAILED", "CANCELED", TaskStatusQueued:
 	default:
 		return TaskListQuery{}, ErrInvalidTaskListQuery
 	}
@@ -182,8 +193,15 @@ func taskListWhere(query TaskListQuery, includeStatus bool) (string, []any) {
 		where = append(where, "COALESCE(json_extract(details,'$.archived'),0)=0")
 	}
 	if includeStatus && query.Status != "" {
-		where = append(where, "status=?")
-		args = append(args, query.Status)
+		statuses := taskStatusSet(query.Status)
+		if len(statuses) == 1 {
+			where = append(where, "status=?")
+		} else {
+			where = append(where, "status IN ("+strings.TrimSuffix(strings.Repeat("?,", len(statuses)), ",")+")")
+		}
+		for _, status := range statuses {
+			args = append(args, status)
+		}
 	}
 	if query.Engine != "" {
 		if query.Engine == "synthetic" {

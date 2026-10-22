@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { DataTable } from '../../components/DataState';
 import { ScheduleStatusTag, TaskStatusTag, taskStatusMeta } from '../../components/Semantic';
-import { Alert, Button, Card, Checkbox, Collapse, Descriptions, Drawer, Form, Input, InputNumber, message, Modal, Progress, Select, Space, Spin, Steps, Tag, Typography, theme } from 'antd';
+import { Alert, Button, Card, Checkbox, Collapse, Descriptions, Drawer, Form, Input, InputNumber, message, Modal, Progress, Segmented, Select, Space, Spin, Steps, Tag, Typography, theme } from 'antd';
 import { DownloadOutlined, PlusOutlined } from '@ant-design/icons';
 import { useCollection, useServerCapability } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
@@ -48,7 +48,7 @@ export const TasksPage:React.FC=()=>{
   const [editingSchedule,setEditingSchedule]=useState<Schedule|null>(null);
   const [historySchedule,setHistorySchedule]=useState<Schedule|null>(null);const [scheduleRunPage,setScheduleRunPage]=useState(1);const [scheduleRuns,setScheduleRuns]=useState<ScheduleRun[]>([]);const [scheduleRunTotal,setScheduleRunTotal]=useState(0);const [scheduleRunLoading,setScheduleRunLoading]=useState(false);const [scheduleRunError,setScheduleRunError]=useState('');
   const [detailTask,setDetailTask]=useState<ScanTask|null>(null);const [detailLogs,setDetailLogs]=useState<TaskLog[]>([]);const [detailLoading,setDetailLoading]=useState(false);const [detailError,setDetailError]=useState('');const [detailExporting,setDetailExporting]=useState<'json'|'csv'|null>(null);
-  const [taskFilter,setTaskFilter]=useState('');const [statusFilter,setStatusFilter]=useState('all');const [engineFilter,setEngineFilter]=useState('all');const [taskSort,setTaskSort]=useState<'-created_at'|'created_at'>('-created_at');
+  const [taskQuery,setTaskQuery]=useState('');const [taskFilter,setTaskFilter]=useState('');const [statusFilter,setStatusFilter]=useState('all');const [engineFilter,setEngineFilter]=useState('all');const [taskSort,setTaskSort]=useState<'-created_at'|'created_at'>('-created_at');
   const engine=Form.useWatch('engine',form)??'auto';const mode=Form.useWatch('mode',form);const useWindow=Form.useWatch('window',form);const portPreset=Form.useWatch('portPreset',form)??'common';const selectedPlan=Form.useWatch('scanPlan',form)??'quick';
   const wizard=isAutoTaskWizard({engine,mode},Boolean(editingSchedule));
   const watchedValues=Form.useWatch([],form) as Partial<Values>|undefined;
@@ -70,6 +70,10 @@ export const TasksPage:React.FC=()=>{
     return()=>{controller.abort();stop();};
   },[taskPage,taskPageSize,taskFilter,statusFilter,engineFilter,showArchived,taskSort,taskRevision]);
   useEffect(()=>{if(taskPage!==1)setTaskPage(1)},[taskFilter,statusFilter,engineFilter,showArchived,taskSort]);
+  useEffect(()=>{const timer=window.setTimeout(()=>setTaskFilter(taskQuery.trim()),300);return()=>window.clearTimeout(timer);},[taskQuery]);
+  // Status counts double as quick filters; QUEUED groups every waiting status.
+  const queuedCount=(['PENDING','WAITING_WINDOW','PAUSED_WINDOW'] as const).reduce((sum,status)=>sum+(taskStatusCounts[status]??0),0);
+  const statusQuick=[{value:'all',label:showArchived?'全部归档':'全部',count:Object.values(taskStatusCounts).reduce((sum,count)=>sum+count,0)},{value:'RUNNING',label:'执行中',count:taskStatusCounts.RUNNING??0},{value:'QUEUED',label:'待执行',count:queuedCount},{value:'PAUSED',label:'已暂停',count:taskStatusCounts.PAUSED??0},{value:'COMPLETED',label:'已完成',count:taskStatusCounts.COMPLETED??0},{value:'FAILED',label:'失败',count:taskStatusCounts.FAILED??0}];
   useEffect(()=>{setWizardStep(0);},[engine,mode]);
   const nextWizardStep=async()=>{
     try{
@@ -213,11 +217,11 @@ export const TasksPage:React.FC=()=>{
       <Button disabled={!canWrite} onClick={()=>openCreate('schedule')}>创建定时任务</Button>
     </Space>}>
       <Space wrap style={{marginBottom:16}}>
-        <Input.Search allowClear placeholder="搜索任务 ID、目标或输入路径" value={taskFilter} onChange={event=>setTaskFilter(event.target.value)} style={{width:260}}/>
-        <Select value={statusFilter} onChange={setStatusFilter} style={{width:150}} options={[{value:'all',label:'所有状态'},...Object.entries(taskStatusMeta).map(([value,meta])=>({value,label:meta.label}))]}/>
-        <Select value={engineFilter} onChange={setEngineFilter} style={{width:180}} options={[{value:'all',label:'所有扫描方案'},...(showArchived?['auto','trivy','port-probe','nuclei','zap','synthetic']:['auto','trivy',...(syntheticEnabled?['synthetic']:[])]).map(value=>({value,label:value==='auto'?'自动综合扫描':value==='port-probe'?'历史 TCP 端口探测':value==='synthetic'?'模拟任务':value==='trivy'?'离线输入扫描':`历史 ${value.toUpperCase()} 任务`}))]}/>
+        <Input.Search aria-label="任务搜索" allowClear placeholder="搜索任务 ID、目标或输入路径" value={taskQuery} onChange={event=>setTaskQuery(event.target.value)} style={{width:260}}/>
+        <Select aria-label="任务状态筛选" value={statusFilter} onChange={setStatusFilter} style={{width:170}} options={[{value:'all',label:'所有状态'},{value:'QUEUED',label:'待执行（含等待时间窗）'},...Object.entries(taskStatusMeta).map(([value,meta])=>({value,label:meta.label}))]}/>
+        <Select aria-label="扫描方案筛选" value={engineFilter} onChange={setEngineFilter} style={{width:180}} options={[{value:'all',label:'所有扫描方案'},...(showArchived?['auto','trivy','port-probe','nuclei','zap','synthetic']:['auto','trivy',...(syntheticEnabled?['synthetic']:[])]).map(value=>({value,label:value==='auto'?'自动综合扫描':value==='port-probe'?'历史 TCP 端口探测':value==='synthetic'?'模拟任务':value==='trivy'?'离线输入扫描':`历史 ${value.toUpperCase()} 任务`}))]}/>
         <Button onClick={()=>{setShowArchived(value=>!value);setEngineFilter('all');}}>{showArchived?'返回任务清册':'查看归档'}</Button>
-        <Tag>{showArchived?'归档任务':'未归档任务'} {taskTotal}</Tag><Tag color="processing">执行中 {taskStatusCounts.RUNNING??0}</Tag><Tag color="gold">待执行 {(['PENDING','WAITING_WINDOW','PAUSED_WINDOW'] as const).reduce((sum,status)=>sum+(taskStatusCounts[status]??0),0)}</Tag><Tag color="default">已暂停 {taskStatusCounts.PAUSED??0}</Tag><Tag color="success">已完成 {taskStatusCounts.COMPLETED??0}</Tag>
+        <Segmented aria-label="按状态快速筛选" value={statusQuick.some(item=>item.value===statusFilter)?statusFilter:''} onChange={value=>setStatusFilter(String(value))} options={statusQuick.map(item=>({value:item.value,label:`${item.label} ${item.count}`}))}/>
       </Space>
       <DataTable<ScanTask> dataSource={tasks} rowKey="id" loading={taskLoading} tableLayout="fixed" scroll={{x:1600}} onChange={(_pagination,_filters,sorter,extra)=>{if(extra.action!=='sort')return;const current=Array.isArray(sorter)?sorter[0]:sorter;setTaskSort(current?.order==='ascend'?'created_at':'-created_at');}} locale={{emptyText:taskFilter||statusFilter!=='all'||engineFilter!=='all'?'没有符合筛选条件的任务':showArchived?'暂无归档任务':'暂无任务，请从右上角创建扫描任务或定时任务'}} pagination={{current:taskPage,pageSize:taskPageSize,total:taskTotal,showSizeChanger:true,pageSizeOptions:[10,20,50],showTotal:total=>`共 ${total} 个任务`,onChange:(page,size)=>{if(size!==taskPageSize){setTaskPageSize(size);setTaskPage(1)}else setTaskPage(page)}}}
         expandable={{expandedRowRender:t=><Space direction="vertical"><Typography.Text>下发目标：{(()=>{const all=t.chunks?.flatMap(c=>c.targets)??[];return all.length>20?`${all.slice(0,20).join('、')} ……（共 ${all.length} 个）`:all.join('、')||'无';})()}</Typography.Text>{(t.engines?.[0]==='port-probe'||t.engines?.[0]==='auto')&&<><Typography.Text>探测配置：{presetLabels[t.portProbeConfig?.preset??'common']}；范围 {showRanges(t.portProbeConfig?.ranges)}；任务排除 {showRanges(t.portProbeConfig?.exclusions)}；合并排除 {showRanges(t.effectiveExclusions??t.portProbeConfig?.exclusions)}；隔离端口 {summarizePorts(t.quarantinedPorts)}；强度 {({gentle:'温和',standard:'标准',aggressive:'积极'})[t.portProbeConfig?.intensity??'gentle']}</Typography.Text><Typography.Text>实际探测：{t.portProbePorts?.length??0} 个 TCP 端口；发现开放候选：{t.portProbeResults?.length??0} 个{t.portProbeResults?.length?`（${t.portProbeResults.slice(0,20).map(p=>p.port).join(', ')}${t.portProbeResults.length>20?' …':''}）`:''}</Typography.Text>{t.engines[0]==='auto'&&<><Typography.Text>HTTP(S) 服务：{t.serviceResults?.filter(item=>item.kind==='HTTP').length??0} 个；自定义规则：{t.customRuleCount??0} 条</Typography.Text><Typography.Text>Linux 系统包：{t.systemScanStatus??'等待 Worker 回报'}</Typography.Text><ApplicationCoverage task={t}/><Typography.Text type="secondary">开放端口候选仅用于这次明确授权的范围，不会自动登记成长期授权端口。</Typography.Text></>}</>}{t.inputKind&&<Typography.Text>离线输入：{t.inputKind==='rootfs'?'Linux 系统包':t.inputKind==='image-archive'?'Docker / OCI 镜像':t.inputKind==='artifact'?'已部署 JAR / Go 文件':'应用依赖清单'} · {t.inputPath}</Typography.Text>}<Typography.Text>跳过目标：{t.skippedTargets?.join('、')||'无'}</Typography.Text><Typography.Text>规则版本：{t.ruleVersion||'无需外部规则包'}</Typography.Text>{t.error&&<Alert type="error" message={t.error}/>}</Space>}}

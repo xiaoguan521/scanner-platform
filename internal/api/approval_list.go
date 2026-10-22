@@ -55,7 +55,7 @@ func parseScopeListQuery(r *http.Request) (approvals.ScopeListQuery, bool, bool)
 	paged := false
 	for key := range values {
 		switch key {
-		case "page", "page_size", "expiry":
+		case "page", "page_size", "expiry", "q":
 			paged = true
 		default:
 			return approvals.ScopeListQuery{}, false, false
@@ -76,7 +76,11 @@ func parseScopeListQuery(r *http.Request) (approvals.ScopeListQuery, bool, bool)
 	if expiry != "" && expiry != "all" && expiry != "expiring" && expiry != "expired" {
 		return approvals.ScopeListQuery{}, true, false
 	}
-	return approvals.ScopeListQuery{Page: page.page, PageSize: page.pageSize, Expiry: expiry}, true, true
+	search, ok := approvalListValue(values, "q")
+	if !ok || len(strings.TrimSpace(search)) > 160 {
+		return approvals.ScopeListQuery{}, true, false
+	}
+	return approvals.ScopeListQuery{Page: page.page, PageSize: page.pageSize, Expiry: expiry, Search: search}, true, true
 }
 
 func parsePortRequestListQuery(r *http.Request) (approvals.PortRequestListQuery, bool, bool) {

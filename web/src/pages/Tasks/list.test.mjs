@@ -14,6 +14,9 @@ test('task registry uses bounded Server pagination and server filters', () => {
   assert.match(page, /taskTotal/);
   assert.match(page, /taskStatusCounts/);
   assert.match(page, /showSizeChanger:true/);
+  assert.match(page, /statusQuick/, 'status counts double as quick filters');
+  assert.match(page, /value:'QUEUED'/);
+  assert.match(page, /setTaskFilter\(taskQuery\.trim\(\)\),300/, 'task search is debounced');
   assert.doesNotMatch(page, /const filteredTasks=/, 'task filtering must not fall back to the current browser page');
 });
 

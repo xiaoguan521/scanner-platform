@@ -3,7 +3,9 @@ package approvals
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -79,6 +81,28 @@ func TestScopeAndPortPaginationFiltersAndBounds(t *testing.T) {
 	expiredPage, err := store.ListScopesPage(ctx, ScopeListQuery{Page: 1, PageSize: 10, Expiry: "expired"})
 	if err != nil || expiredPage.Total != 1 || len(expiredPage.Items) != 1 || expiredPage.Items[0].ID != expired.ID {
 		t.Fatalf("expired scope page=%+v err=%v", expiredPage, err)
+	}
+	searchPage, err := store.ListScopesPage(ctx, ScopeListQuery{Page: 1, PageSize: 10, Search: "192.0.2.31"})
+	if err != nil || searchPage.Total != 1 || searchPage.Items[0].ID != expiring.ID {
+		t.Fatalf("scope address search page=%+v err=%v", searchPage, err)
+	}
+	searchPage, err = store.ListScopesPage(ctx, ScopeListQuery{Page: 1, PageSize: 10, Search: second.ID, Expiry: "expired"})
+	if err != nil || searchPage.Total != 1 || searchPage.Items[0].ID != expired.ID {
+		t.Fatalf("scope asset id search with expiry page=%+v err=%v", searchPage, err)
+	}
+	searchPage, err = store.ListScopesPage(ctx, ScopeListQuery{Page: 1, PageSize: 10, Search: "192.0.2.31", Expiry: "expired"})
+	if err != nil || searchPage.Total != 0 {
+		t.Fatalf("search and expiry must both apply page=%+v err=%v", searchPage, err)
+	}
+	searchPage, err = store.ListScopesPage(ctx, ScopeListQuery{Page: 1, PageSize: 10, Search: "%"})
+	if err != nil || searchPage.Total != 0 {
+		t.Fatalf("LIKE wildcards must be escaped page=%+v err=%v", searchPage, err)
+	}
+	if where, args := withScopeSearch(" WHERE status='APPROVED' AND expires_at <= $1", []any{"now"}, "x", func(n int) string { return fmt.Sprintf("$%d", n) }); len(args) != 3 || !strings.Contains(where, "LIKE $2") || !strings.Contains(where, "LIKE $3") {
+		t.Fatalf("postgres search placeholders where=%q args=%v", where, args)
+	}
+	if _, err := store.ListScopesPage(ctx, ScopeListQuery{Search: string([]byte{'a', 0})}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("NUL search accepted: %v", err)
 	}
 	if _, err := store.ListScopesPage(ctx, ScopeListQuery{PageSize: 101}); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("invalid scope page size error=%v", err)

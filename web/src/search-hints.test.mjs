@@ -10,6 +10,7 @@ const cases = [
   { page: './pages/Tasks/index.tsx', hint: '搜索任务 ID、目标或输入路径', server: '../../internal/repo/runtime_pagination.go', fields: ['id LIKE', 'targets LIKE', "'$.input.inputPath'"] },
   { page: './pages/Nodes/index.tsx', hint: '搜索节点 ID、类型或主机 ID', server: '../../internal/repo/system_pagination.go', fields: ['id LIKE', "'$.kind'", "'$.hostId'"] },
   { page: './pages/Nodes/index.tsx', hint: '搜索记录 ID、类型、版本或说明', server: '../../internal/repo/rule_catalog_pagination.go', fields: ['id LIKE', "'$.kind'", "'$.version'", "'$.message'"] },
+  { page: './pages/Scopes/index.tsx', hint: '搜索资产地址或 ID', server: '../../internal/approvals/pagination.go', fields: ['LOWER(cidr_or_host) LIKE', 'LOWER(asset_id) LIKE', 'LOWER(a.address) LIKE', 'LOWER(r.asset_id) LIKE'] },
   { page: './pages/Reports/index.tsx', hint: '搜索报告 ID、名称、创建人或快照', server: '../../internal/repo/report_pagination.go', fields: ['id LIKE', "'$.name'", "'$.createdBy'", "'$.snapshotId'"] },
 ];
 for (const item of cases) {

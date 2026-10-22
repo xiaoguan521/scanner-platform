@@ -170,6 +170,12 @@ func TestApprovalListPaginationEndpoints(t *testing.T) {
 	if got := send("/api/v1/scopes?page=1&page_size=1&expiry=all"); got.Code != http.StatusOK || json.Unmarshal(got.Body.Bytes(), &scopePage) != nil || scopePage.Total != 1 || scopePage.PageSize != 1 {
 		t.Fatalf("scope page: %d %s %+v", got.Code, got.Body.String(), scopePage)
 	}
+	if got := send("/api/v1/scopes?page=1&page_size=10&q=192.0.2.41"); got.Code != http.StatusOK || json.Unmarshal(got.Body.Bytes(), &scopePage) != nil || scopePage.Total != 1 {
+		t.Fatalf("scope search: %d %s %+v", got.Code, got.Body.String(), scopePage)
+	}
+	if got := send("/api/v1/scopes?page=1&page_size=10&q=192.0.2.99"); got.Code != http.StatusOK || json.Unmarshal(got.Body.Bytes(), &scopePage) != nil || scopePage.Total != 0 {
+		t.Fatalf("scope search miss: %d %s %+v", got.Code, got.Body.String(), scopePage)
+	}
 	if got := send("/api/v1/scopes?page=1&page_size=101"); got.Code != http.StatusBadRequest || !strings.Contains(got.Body.String(), "invalid_scope_list_query") {
 		t.Fatalf("invalid scope page: %d %s", got.Code, got.Body.String())
 	}

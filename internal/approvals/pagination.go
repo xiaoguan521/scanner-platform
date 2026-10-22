@@ -21,6 +21,8 @@ type ScopeListQuery struct {
 	Page     int
 	PageSize int
 	Expiry   string
+	// Search matches the scope's host address or asset ID only.
+	Search string
 }
 
 type ScopeListPage struct {
@@ -85,6 +87,10 @@ func normalizeScopeListQuery(query ScopeListQuery) (ScopeListQuery, int, error) 
 	default:
 		return ScopeListQuery{}, 0, ErrInvalid
 	}
+	query.Search = strings.TrimSpace(query.Search)
+	if len(query.Search) > maxApprovalSearch || strings.IndexByte(query.Search, 0) >= 0 {
+		return ScopeListQuery{}, 0, ErrInvalid
+	}
 	return query, offset, nil
 }
 
@@ -97,6 +103,7 @@ func (s *Store) ListScopesPage(ctx context.Context, query ScopeListQuery) (Scope
 	nowText := now.Format(time.RFC3339)
 	warningText := now.Add(scopeExpiryWarning).Format(time.RFC3339)
 	where, args := scopeExpiryWhere(query.Expiry, nowText, warningText)
+	where, args = withScopeSearch(where, args, query.Search, func(int) string { return "?" })
 
 	var total int
 	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM authorized_scopes"+where, args...).Scan(&total); err != nil {
@@ -130,6 +137,21 @@ WHERE status='APPROVED' AND expires_at <= ?`, nowText).Scan(&expiredCount); err 
 	}
 	return ScopeListPage{Items: items, Total: total, Page: query.Page, PageSize: query.PageSize,
 		ExpiringCount: expiringCount, ExpiredCount: expiredCount}, nil
+}
+
+// withScopeSearch adds the address / asset ID search to an expiry filter;
+// placeholder renders the bind marker for the n-th argument.
+func withScopeSearch(where string, args []any, search string, placeholder func(int) string) (string, []any) {
+	if search == "" {
+		return where, args
+	}
+	pattern := "%" + escapeApprovalLike(strings.ToLower(search)) + "%"
+	args = append(args, pattern, pattern)
+	clause := "(LOWER(cidr_or_host) LIKE " + placeholder(len(args)-1) + " ESCAPE '\\' OR LOWER(asset_id) LIKE " + placeholder(len(args)) + " ESCAPE '\\')"
+	if where == "" {
+		return " WHERE " + clause, args
+	}
+	return where + " AND " + clause, args
 }
 
 func scopeExpiryWhere(expiry, nowText, warningText string) (string, []any) {

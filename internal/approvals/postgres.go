@@ -313,6 +313,7 @@ func (s *PostgresStore) ListScopesPage(ctx context.Context, query ScopeListQuery
 		return ScopeListPage{}, err
 	}
 	where, args := postgresScopeExpiryWhere(query.Expiry)
+	where, args = withScopeSearch(where, args, query.Search, func(n int) string { return fmt.Sprintf("$%d", n) })
 	var total int
 	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM authorized_scopes"+where, args...).Scan(&total); err != nil {
 		return ScopeListPage{}, fmt.Errorf("count postgres scopes: %w", err)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -41,6 +42,20 @@ func TestRuntimeTaskListPageFiltersAndCounts(t *testing.T) {
 	}
 	if page.StatusCounts["FAILED"] != 1 || page.StatusCounts["PENDING"] != 1 {
 		t.Fatalf("unexpected status counts: %+v", page.StatusCounts)
+	}
+
+	if _, err := store.db.ExecContext(ctx, "UPDATE scan_tasks SET status='WAITING_WINDOW' WHERE id=?", created[2]); err != nil {
+		t.Fatal(err)
+	}
+	queued, err := store.ListRuntimeTasksPage(ctx, TaskListQuery{Page: 1, PageSize: 20, Archived: "all", Status: TaskStatusQueued})
+	if err != nil || queued.Total != 1 || queued.Items[0].ID != created[2] || queued.StatusCounts["FAILED"] != 1 {
+		t.Fatalf("queued group must match waiting tasks and keep all status counts: %+v err=%v", queued, err)
+	}
+	if where, args := taskListWhere(TaskListQuery{Status: TaskStatusQueued}, true); len(args) != 3 || !strings.Contains(where, "status IN (?,?,?)") {
+		t.Fatalf("queued where=%q args=%v", where, args)
+	}
+	if where, args := postgresRuntimeTaskWhere(TaskListQuery{Status: TaskStatusQueued}); len(args) != 3 || !strings.Contains(where, "t.status IN ($1,$2,$3)") {
+		t.Fatalf("postgres queued where=%q args=%v", where, args)
 	}
 
 	enginePage, err := store.ListRuntimeTasksPage(ctx, TaskListQuery{Page: 1, PageSize: 20, Engine: "synthetic", Archived: "all"})
