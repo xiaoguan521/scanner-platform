@@ -327,6 +327,7 @@ func runFencedChild(stdout, stderr io.Writer) (exitCode int) {
 			return 2
 		}
 		fenceCtx, cancel = context.WithDeadline(context.Background(), deadline)
+		defer cancel()
 		command := exec.CommandContext(fenceCtx, input.Config.SetprivPath, argv...)
 		command.Stdin = bytes.NewReader(raw)
 		childOutput := &boundedBuffer{remaining: maxFencedTaskInput}
@@ -363,7 +364,6 @@ func runFencedChild(stdout, stderr io.Writer) (exitCode int) {
 			}
 			return syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
 		}
-		defer cancel()
 		if err := command.Run(); err != nil {
 			return 1
 		}
