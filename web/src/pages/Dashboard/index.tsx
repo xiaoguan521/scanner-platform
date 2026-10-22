@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { DataTable } from '../../components/DataState';
-import { Row, Col, Card, Progress, Tag, Space, Alert, Typography, Badge, Button } from 'antd';
+import { Row, Col, Card, Progress, Tag, Space, Alert, Typography, Badge, Button, theme } from 'antd';
 import {
   SafetyOutlined,
   AlertOutlined,
@@ -9,7 +9,7 @@ import {
   CheckCircleOutlined,
   FieldTimeOutlined,
 } from '@ant-design/icons';
-import { useCollection, useDashboardSummary } from '../../api/hooks';
+import { useDashboardSummary, useRecentTasks } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
 import { Link } from 'react-router-dom';
 import { FindingStatusTag, SeverityTag, StatCard, TaskStatusTag } from '../../components/Semantic';
@@ -18,8 +18,9 @@ const { Text } = Typography;
 
 export const DashboardPage: React.FC = () => {
   const [trendDays, setTrendDays] = useState<7 | 30 | 90>(30);
+  const { token } = theme.useToken();
   const { data: dashboardSummary, loading: summaryLoading, error: summaryError } = useDashboardSummary(trendDays);
-  const { data: tasks, loading: tasksLoading, error: tasksError } = useCollection('tasks');
+  const { data: tasks, loading: tasksLoading, error: tasksError } = useRecentTasks(10);
   const emptyCounts = { vulnerabilities: 0, loginEntries: 0, unknown: 0, version: 0, verified: 0 };
   const currentRule = dashboardSummary?.currentRule;
   const counts = dashboardSummary?.findingCounts ?? emptyCounts;
@@ -62,7 +63,7 @@ export const DashboardPage: React.FC = () => {
         <Space direction="vertical" size={12} style={{ width: '100%' }}>
           <Text type="secondary">按这三步即可看到第一份扫描结果；只对你明确登记并授权的目标执行检查。</Text>
           {quickStart.map((step) => <Space key={step.key} style={{ width: '100%', justifyContent: 'space-between' }}>
-            <Space><CheckCircleOutlined style={{ color: step.done ? '#52c41a' : '#bfbfbf' }} /><Text delete={step.done}>{step.label}</Text></Space>
+            <Space><CheckCircleOutlined style={{ color: step.done ? token.colorSuccess : token.colorTextQuaternary }} /><Text delete={step.done}>{step.label}</Text></Space>
             {!step.done && <Link to={step.to}><Button size="small" type={step.key === 'asset' ? 'primary' : 'default'}>{step.action}</Button></Link>}
           </Space>)}
         </Space>
@@ -83,7 +84,7 @@ export const DashboardPage: React.FC = () => {
             title="风险评分"
             value={currentRiskScore}
             suffix="/ 100"
-            valueStyle={{ color: currentRiskScore >= 70 ? '#ff4d4f' : currentRiskScore >= 40 ? '#fa8c16' : '#13c2c2' }}
+            valueStyle={{ color: currentRiskScore >= 70 ? token.colorError : currentRiskScore >= 40 ? token.colorWarning : token.colorSuccess }}
             prefix={<SafetyOutlined />}
             footer={<Link to="/findings">查看活动漏洞明细</Link>}
           />
@@ -94,7 +95,7 @@ export const DashboardPage: React.FC = () => {
             title="有风险资产数"
             value={riskyAssets}
             suffix="个"
-            prefix={<DatabaseOutlined style={{ color: '#1677ff' }} />}
+            prefix={<DatabaseOutlined style={{ color: token.colorPrimary }} />}
             footer={<>受控资产总数: {assetCount}；<Link to="/assets">查看资产台账</Link></>}
           />
         </Col>
@@ -103,7 +104,7 @@ export const DashboardPage: React.FC = () => {
           <StatCard
             title="漏洞总数"
             value={totalFindings}
-            valueStyle={{ color: '#ff4d4f' }}
+            valueStyle={{ color: token.colorError }}
             prefix={<AlertOutlined />}
             footer={<><Link to="/findings?severity=CRITICAL">严重 {criticalCount}</Link> · <Link to="/findings?severity=HIGH">高危 {highCount}</Link></>}
           />
@@ -114,7 +115,7 @@ export const DashboardPage: React.FC = () => {
             title="活跃扫描任务 / 分块"
             value={runningTaskCount}
             suffix={`/ ${taskCount}`}
-            prefix={<ClockCircleOutlined style={{ color: '#fa8c16' }} />}
+            prefix={<ClockCircleOutlined style={{ color: token.colorWarning }} />}
             footer="任务按指定时间窗等待、执行和恢复"
           />
         </Col>
@@ -123,7 +124,7 @@ export const DashboardPage: React.FC = () => {
           <StatCard
             title="规则库版本 (CURRENT)"
             value={currentRule?.version || '尚未导入'}
-            prefix={<CheckCircleOutlined style={{ color: '#13c2c2' }} />}
+            prefix={<CheckCircleOutlined style={{ color: token.colorSuccess }} />}
             valueStyle={{ fontSize: 18 }}
             footer={<>本地 Updater 上报：{currentRule?.signatureVerified ? '签名已验证' : '签名未验证'}；{currentRule?.engineValidated ? '引擎兼容性已验证' : '引擎兼容性未验证'}</>}
           />
@@ -135,7 +136,7 @@ export const DashboardPage: React.FC = () => {
       </Space.Compact>}>
         <div aria-label={`${trendDays} 天漏洞趋势`} style={{ display: 'flex', alignItems: 'end', gap: 4, minHeight: 150, overflowX: 'auto', padding: '8px 0' }}>
           {trend.map(point => <div key={point.date} title={`${point.date}：${point.count} 个`} style={{ minWidth: trendDays === 90 ? 12 : 24, flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'end', gap: 4 }}>
-            <Link to="/findings" aria-label={`${point.date} ${point.count} 个漏洞`} style={{ width: '100%', height: `${Math.max(4, point.count / maxTrend * 112)}px`, background: '#1677ff', borderRadius: '4px 4px 0 0', display: 'block' }} />
+            <Link to="/findings" aria-label={`${point.date} ${point.count} 个漏洞`} style={{ width: '100%', height: `${Math.max(4, point.count / maxTrend * 112)}px`, background: token.colorPrimary, borderRadius: '4px 4px 0 0', display: 'block' }} />
             {(trendDays <= 30 || point.date.endsWith('-01') || point.date.endsWith('-15')) && <Text type="secondary" style={{ fontSize: 10, whiteSpace: 'nowrap' }}>{point.label}</Text>}
           </div>)}
         </div>
@@ -162,7 +163,7 @@ export const DashboardPage: React.FC = () => {
                       percent={score}
                       size="small"
                       status={score > 80 ? 'exception' : score > 50 ? 'active' : 'normal'}
-                      strokeColor={score > 80 ? '#ff4d4f' : score > 50 ? '#fa8c16' : '#13c2c2'}
+                      strokeColor={score > 80 ? token.colorError : score > 50 ? token.colorWarning : token.colorSuccess}
                     />
                   ),
                 },
@@ -188,37 +189,37 @@ export const DashboardPage: React.FC = () => {
                   </Text>
                     <Link to="/findings?severity=CRITICAL">{distribution.CRITICAL} / {totalFindings}</Link>
                 </div>
-                <Progress percent={totalFindings ? Math.round(distribution.CRITICAL / totalFindings * 100) : 0} strokeColor="#ff4d4f" showInfo={false} />
+                <Progress percent={totalFindings ? Math.round(distribution.CRITICAL / totalFindings * 100) : 0} strokeColor={token.colorError} showInfo={false} />
               </div>
 
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                  <Text style={{ color: '#fa8c16' }} strong>
+                  <Text style={{ color: token.colorWarning }} strong>
                     高危 (High)
                   </Text>
                   <Link to="/findings?severity=HIGH">{distribution.HIGH} / {totalFindings}</Link>
                 </div>
-                <Progress percent={totalFindings ? Math.round(distribution.HIGH / totalFindings * 100) : 0} strokeColor="#fa8c16" showInfo={false} />
+                <Progress percent={totalFindings ? Math.round(distribution.HIGH / totalFindings * 100) : 0} strokeColor={token.colorWarning} showInfo={false} />
               </div>
 
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                  <Text style={{ color: '#faad14' }} strong>
+                  <Text style={{ color: token.gold }} strong>
                     中危 (Medium)
                   </Text>
                   <Link to="/findings?severity=MEDIUM">{distribution.MEDIUM} / {totalFindings}</Link>
                 </div>
-                <Progress percent={totalFindings ? Math.round(distribution.MEDIUM / totalFindings * 100) : 0} strokeColor="#faad14" showInfo={false} />
+                <Progress percent={totalFindings ? Math.round(distribution.MEDIUM / totalFindings * 100) : 0} strokeColor={token.gold} showInfo={false} />
               </div>
 
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                  <Text style={{ color: '#1677ff' }} strong>
+                  <Text style={{ color: token.colorPrimary }} strong>
                     低危 (Low)
                   </Text>
                   <Link to="/findings?severity=LOW">{distribution.LOW} / {totalFindings}</Link>
                 </div>
-                <Progress percent={totalFindings ? Math.round(distribution.LOW / totalFindings * 100) : 0} strokeColor="#1677ff" showInfo={false} />
+                <Progress percent={totalFindings ? Math.round(distribution.LOW / totalFindings * 100) : 0} strokeColor={token.colorPrimary} showInfo={false} />
               </div>
               <div><Text>信息 (Info)：<Link to="/findings?severity=INFO">{distribution.INFO} / {totalFindings}</Link></Text><Progress percent={totalFindings?Math.round(distribution.INFO/totalFindings*100):0} showInfo={false}/></div>
             </div>
@@ -226,7 +227,7 @@ export const DashboardPage: React.FC = () => {
         </Col>
       </Row>
 
-      <Card title={<Space>待处置严重/高危漏洞 <Badge count={pendingFindingCount} showZero color="#ff4d4f" /></Space>} bordered={false} extra={<Link to="/findings?severity=CRITICAL">查看漏洞列表</Link>}>
+      <Card title={<Space>待处置严重/高危漏洞 <Badge count={pendingFindingCount} showZero color={token.colorError} /></Space>} bordered={false} extra={<Link to="/findings?severity=CRITICAL">查看漏洞列表</Link>}>
         <DataTable
           dataSource={pendingFindings}
           rowKey="id"
@@ -283,7 +284,7 @@ export const DashboardPage: React.FC = () => {
                     percent={record.totalChunks ? Math.round((record.completedChunks / record.totalChunks) * 100) : 0}
                     size="small"
                   />
-                  <span style={{ fontSize: 11, color: '#64748b' }}>
+                  <span style={{ fontSize: 11, color: token.colorTextSecondary }}>
                     {record.completedChunks}/{record.totalChunks} 块完成
                   </span>
                 </div>
@@ -301,7 +302,7 @@ export const DashboardPage: React.FC = () => {
               dataIndex: 'hardDeadline',
               render: (val: string) => (
                 <Space size={4}>
-                  <FieldTimeOutlined style={{ color: '#fa8c16' }} />
+                  <FieldTimeOutlined style={{ color: token.colorWarning }} />
                   <span style={{ fontSize: 12 }}>{val}</span>
                 </Space>
               ),

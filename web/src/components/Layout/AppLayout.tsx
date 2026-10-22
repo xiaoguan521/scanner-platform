@@ -79,13 +79,13 @@ export const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children })
             borderBottom: `1px solid ${token.colorBorderSecondary}`,
           }}
         >
-          <SafetyCertificateOutlined style={{ fontSize: 26, color: '#1677ff' }} />
+          <SafetyCertificateOutlined style={{ fontSize: 26, color: token.colorPrimary }} />
           {!collapsed && (
             <div style={{ overflow: 'hidden', whiteSpace: 'nowrap' }}>
               <div style={{ fontWeight: 700, fontSize: 15, letterSpacing: '0.5px' }}>
                 安全扫描平台
               </div>
-              <div style={{ fontSize: 11, color: '#64748b' }}>企业级漏洞管理中心</div>
+              <div style={{ fontSize: 11, color: token.colorTextSecondary }}>企业级漏洞管理中心</div>
             </div>
           )}
         </div>
@@ -133,7 +133,7 @@ export const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children })
             <Tooltip title={error ?? '来自 Server 的控制面状态（不是扫描器状态）'}>
               <Space size={6}>
                 <Badge status={status?.ready ? 'success' : 'default'} />
-                <span style={{ fontSize: 13, color: '#94a3b8' }}>
+                <span style={{ fontSize: 13, color: token.colorTextTertiary }}>
                   {error ? 'Server 连接失败' : status ? `Server: ${status.state}（${status.ready ? "就绪" : "未就绪"}）` : '读取 Server 状态…'}
                 </span>
               </Space>
@@ -146,7 +146,7 @@ export const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children })
               <Button
                 type="text"
                 shape="circle"
-                icon={isDark ? <BulbFilled style={{ color: '#faad14' }} /> : <BulbOutlined />}
+                icon={isDark ? <BulbFilled style={{ color: token.gold }} /> : <BulbOutlined />}
                 onClick={toggleTheme}
               />
             </Tooltip>

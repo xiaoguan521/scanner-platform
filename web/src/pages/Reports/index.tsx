@@ -6,6 +6,7 @@ import { DownloadOutlined, FileTextOutlined, SettingOutlined, UploadOutlined } f
 import { useCollection } from '../../api/hooks';
 import { apiClient, requestJSON } from '../../api/client';
 import { CollectionNotice } from '../../api/CollectionNotice';
+import { pollIntervals, pollWhileVisible } from '../../api/polling';
 import { useAuth } from '../../auth/AuthProvider';
 import type { ReportJob, ReportScope, ReportTemplate } from './types';
 
@@ -33,8 +34,8 @@ function reportTargetHost(raw: string): string {
 export const ReportsPage: React.FC = () => {
   const { user } = useAuth();
   const canWrite = user?.role === 'admin' || user?.role === 'security_engineer';
-  const { data: assets, loading: assetsLoading, error: assetsError } = useCollection('assets');
-  const { data: tasks, loading: tasksLoading, error: tasksError } = useCollection('tasks');
+  const { data: assets, loading: assetsLoading, error: assetsError } = useCollection('assets', '', true, pollIntervals.reference);
+  const { data: tasks, loading: tasksLoading, error: tasksError } = useCollection('tasks', '', true, pollIntervals.reference);
   const [templates, setTemplates] = useState<ReportTemplate[]>([]);
   const [jobs, setJobs] = useState<ReportJob[]>([]);
   const [reportPage, setReportPage] = useState(1);
@@ -69,18 +70,21 @@ export const ReportsPage: React.FC = () => {
         hosts.has(reportTargetHost(target)))));
   }, [tasks, scopedAssets, businessGroup, assetId]);
   const selectedTemplate = templates.find(t => t.id === templateId);
-  const reload = useCallback(async (signal?: AbortSignal) => {
-    setReportLoading(true);
+  const reload = useCallback(async (signal?: AbortSignal, silent = false, includeTemplates = true) => {
+    if (!silent) setReportLoading(true);
     try {
       const [reports, nextTemplates] = await Promise.all([
         apiClient.reportsPage<ReportJob>(reportPage, reportPageSize, { search: reportSearch, status: reportStatus, format: reportFormat }, signal),
-        requestJSON<{ items: ReportTemplate[] }>(templatesEndpoint, 'GET', undefined, signal),
+        includeTemplates ? requestJSON<{ items: ReportTemplate[] }>(templatesEndpoint, 'GET', undefined, signal) : undefined,
       ]);
-      if (!signal?.aborted) { setJobs(reports.items); setReportTotal(reports.total); setTemplates(nextTemplates.items); setError(null); }
+      if (!signal?.aborted) { setJobs(reports.items); setReportTotal(reports.total); if (nextTemplates) setTemplates(nextTemplates.items); setError(null); }
     } catch (cause) { if (!signal?.aborted) setError(cause instanceof Error ? cause.message : '报告服务不可用'); }
     finally { if (!signal?.aborted) setReportLoading(false); }
   }, [reportPage, reportPageSize, reportSearch, reportStatus, reportFormat]);
-  useEffect(() => { const controller = new AbortController(); let loading = false; const load = async () => { if (loading) return; loading = true; await reload(controller.signal); loading = false; }; void load(); const timer = window.setInterval(() => void load(), 2000); return () => { controller.abort(); window.clearInterval(timer); }; }, [reload]);
+  useEffect(() => { const controller = new AbortController(); void reload(controller.signal, true); return () => controller.abort(); }, [reload]);
+  // Only queued or generating reports change on their own; poll just the job list while one exists.
+  const hasActiveJobs = jobs.some(job => job.status === 'QUEUED' || job.status === 'GENERATING');
+  useEffect(() => { if (!hasActiveJobs) return; const controller = new AbortController(); let loading = false; const load = async () => { if (loading) return; loading = true; await reload(controller.signal, true, false); loading = false; }; const stop = pollWhileVisible(() => void load(), pollIntervals.activeTask); return () => { controller.abort(); stop(); }; }, [reload, hasActiveJobs]);
   useEffect(() => { if (reportPage !== 1) setReportPage(1); }, [reportSearch, reportStatus, reportFormat]);
   const generate = async () => {
     const scope: ReportScope = { assetId, businessGroup, taskId, from: range?.[0]?.startOf('day').toISOString(), to: range?.[1]?.endOf('day').toISOString() };

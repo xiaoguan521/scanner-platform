@@ -18,6 +18,7 @@ import {
   Timeline,
   Modal,
   message,
+  theme,
 } from 'antd';
 import { SafetyCertificateOutlined } from '@ant-design/icons';
 import { Finding, FindingAssignmentEvent, FindingEvent, FindingAssignee, FindingNote, FindingRetest, FindingSeverity, FindingStatus } from '../../types';
@@ -26,6 +27,7 @@ import { useAuth } from '../../auth/AuthProvider';
 import { batchAssignFindings, batchFindingDisposition, updateFinding, fetchFindingEvents, fetchFindingAssignees, fetchFindingAssignments, assignFinding, fetchFindingNotes, addFindingNote, createFindingRetest, fetchFindingRetests } from '../../api/runtime';
 import { apiClient } from '../../api/client';
 import { CollectionNotice } from '../../api/CollectionNotice';
+import { pollWhileVisible } from '../../api/polling';
 
 import { riskLabels, methodLabels, confidenceLabels, isVerifiedFinding } from './presentation';
 import { FindingFilters, readFindingFilters, writeFindingFilters } from './filters';
@@ -38,6 +40,7 @@ const { Text } = Typography;
 
 export const FindingsPage: React.FC = () => {
   const {user}=useAuth();
+  const {token}=theme.useToken();
   const canWrite=user?.role==='admin'||user?.role==='security_engineer';
   const [findings,setFindings]=useState<Finding[]>([]);const [findingLoading,setFindingLoading]=useState(true);const [findingError,setFindingError]=useState<string|null>(null);const [findingPage,setFindingPage]=useState(1);const [findingPageSize,setFindingPageSize]=useState(10);const [findingTotal,setFindingTotal]=useState(0);const [findingCountsSummary,setFindingCountsSummary]=useState({vulnerabilities:0,loginEntries:0,unknown:0,version:0,verified:0});const [findingRevision,setFindingRevision]=useState(0);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -77,8 +80,8 @@ export const FindingsPage: React.FC = () => {
     if(!selectedFindingId)return;
     const controller=new AbortController();
     const load=()=>fetchFindingEvents(selectedFindingId,controller.signal).then(result=>{if(!controller.signal.aborted){setEvents(result.items);setEventsError('')}}).catch(()=>{if(!controller.signal.aborted)setEventsError('状态记录加载失败，请稍后重试')});
-    void load();const timer=window.setInterval(()=>void load(),10000);
-    return ()=>{controller.abort();window.clearInterval(timer)};
+    void load();const stop=pollWhileVisible(()=>void load(),10000);
+    return ()=>{controller.abort();stop()};
   },[selectedFindingId,eventRevision]);
 
   const [retests,setRetests]=useState<FindingRetest[]>([]);
@@ -383,7 +386,6 @@ export const FindingsPage: React.FC = () => {
                     <Button
                       type="link"
                       size="small"
-                      style={{ color: '#13c2c2' }}
                       disabled
                       onClick={event => { event.stopPropagation(); void handleUpdateStatus(r.id, 'FIXED'); }}
                     >
@@ -480,7 +482,7 @@ export const FindingsPage: React.FC = () => {
               <section key={field.label} style={{ width: '100%', minWidth: 0 }}>
                 <Typography.Title level={5} style={{ marginTop: 0 }}>{field.label}</Typography.Title>
                 <div tabIndex={0} role="region" aria-label={`${field.label}全文`}
-                  style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 240, overflowY: 'auto', padding: 12, background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 6 }}>
+                  style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 240, overflowY: 'auto', padding: 12, background: token.colorFillQuaternary, border: `1px solid ${token.colorBorderSecondary}`, borderRadius: token.borderRadius }}>
                   {field.value}
                 </div>
               </section>

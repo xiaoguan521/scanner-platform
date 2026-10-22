@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Card, Form, Input, Spin, Typography } from 'antd';
+import { Alert, Button, Card, Form, Input, Spin, Typography, theme } from 'antd';
 import { apiClient, ApiRequestError } from '../api/client';
 import type { User } from '../types';
 
@@ -13,6 +13,7 @@ export const useAuth = () => useContext(Context);
 export const AuthProvider: React.FC<{children:React.ReactNode}> = ({children}) => {
   const [user,setUser] = useState<User|null>(null);
   const [loading,setLoading] = useState(true);
+  const {token}=theme.useToken();
   const [error,setError] = useState('');
   const [setupRequired,setSetupRequired] = useState(false);
   const [submitting,setSubmitting] = useState(false);
@@ -29,7 +30,7 @@ export const AuthProvider: React.FC<{children:React.ReactNode}> = ({children}) =
   const state=useMemo(()=>({user,logout}),[user]);
   if(loading) return <div style={{display:'grid',placeItems:'center',height:'100vh'}}><Spin size="large" /></div>;
   if(!user) return (
-    <div style={{minHeight:'100vh',display:'grid',placeItems:'center',background:'#f1f5f9',padding:20}}>
+    <div style={{minHeight:'100vh',display:'grid',placeItems:'center',background:token.colorBgLayout,padding:20}}>
       <Card title={setupRequired ? "首次使用 · 创建管理员" : "安全扫描平台 · 登录"} style={{width:'100%',maxWidth:430}}>
         <Typography.Paragraph type="secondary">本地开发版：账号来自 SQLite；扫描仅在你明确创建真实引擎任务后执行。</Typography.Paragraph>
         {error && <Alert showIcon type="warning" message={error} style={{marginBottom:16}}/>}

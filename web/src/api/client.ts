@@ -23,6 +23,13 @@ export interface PagedListResponse<T> extends ListResponse<T> { page: number; pa
 export interface TaskPageResponse<T> extends PagedListResponse<T> { statusCounts: Record<string, number> }
 export interface FindingPageResponse<T> extends PagedListResponse<T> { counts: { vulnerabilities: number; loginEntries: number; unknown: number; version: number; verified: number } }
 export type ReportPageResponse<T> = PagedListResponse<T>
+export interface AssetInsight {
+  assetId: string;
+  activeFindingCount: number;
+  activeFindings: Pick<Finding,'id'|'severity'|'title'|'status'|'engine'|'templateOrCve'|'lastSeen'>[];
+  latestProbe?: { id: string; status: ScanTask['status']; createdAt: string; openPorts: number[] };
+  recentTasks: { id: string; engines: string[]; status: ScanTask['status']; findingCount: number; createdAt: string; finishedAt?: string }[];
+}
 export interface ScopePageResponse extends PagedListResponse<AuthorizedScope> { expiringCount: number; expiredCount: number }
 export interface DashboardSummary {
   assetCount: number;
@@ -226,6 +233,9 @@ export const apiClient = {
     if(options.status&&options.status!=='ALL')params.set('status',options.status);
     if(options.format&&options.format!=='ALL')params.set('format',options.format);
     return requestJSON<ReportPageResponse<T>>('/api/v1/reports?'+params.toString(),'GET',undefined,signal);
+  },
+  assetInsights(ids:string[],signal?:AbortSignal) {
+    return requestJSON<ListResponse<AssetInsight>>('/api/v1/assets/insights?ids='+ids.map(encodeURIComponent).join(','),'GET',undefined,signal);
   },
   exportAssets(filter = '', signal?: AbortSignal) {
     const query = filter.trim() ? '?q=' + encodeURIComponent(filter.trim()) : '';

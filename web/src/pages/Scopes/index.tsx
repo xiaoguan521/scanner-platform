@@ -5,6 +5,7 @@ import { PlusOutlined } from '@ant-design/icons';
 import { apiClient } from '../../api/client';
 import { useCollection } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
+import { pollIntervals, pollWhileVisible } from '../../api/polling';
 import { useAuth } from '../../auth/AuthProvider';
 import type { ApprovalDecision, AuthorizedScope, PortRequest, ReviewStatus, TimeWindow } from '../../types';
 import { scopeExpiryLabel, scopeExpiryState, type ScopeExpiryFilter } from './expiry';
@@ -66,10 +67,10 @@ export const ScopesPage: React.FC = () => {
   useEffect(() => {
     const controller = new AbortController();
     let inFlight = false;
-    const load = () => {
+    const load = (initial = false) => {
       if (inFlight) return;
       inFlight = true;
-      setLoading(true);
+      if (initial) setLoading(true);
       Promise.all([
         apiClient.scopesPage(scopePage, scopePageSize, expiryFilter, controller.signal),
         apiClient.portRequestsPage(portPage, portPageSize, { status: portStatus, search: portSearch }, controller.signal),
@@ -88,9 +89,9 @@ export const ScopesPage: React.FC = () => {
         if (!controller.signal.aborted) setLoading(false);
       });
     };
-    load();
-    const timer = window.setInterval(load, 60_000);
-    return () => { controller.abort(); window.clearInterval(timer); };
+    load(true);
+    const stop = pollWhileVisible(() => load(), pollIntervals.reference);
+    return () => { controller.abort(); stop(); };
   }, [scopePage, scopePageSize, expiryFilter, portPage, portPageSize, portStatus, portSearch, reloadKey]);
 
   useEffect(() => { if (scopePage !== 1) setScopePage(1); }, [expiryFilter]);

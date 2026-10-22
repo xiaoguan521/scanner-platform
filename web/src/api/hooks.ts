@@ -1,8 +1,12 @@
 import { useEffect, useState } from 'react';
 import { apiClient } from './client';
+import { pollIntervals, pollWhileVisible } from './polling';
 import type { DashboardSummary, Resources, SystemStatus, Capabilities } from './client';
+import type { ScanTask } from '../types';
 
-export function useCollection<K extends keyof Resources>(name: K, query = '', enabled = true) {
+// Collections are loaded once unless the caller opts into polling. Unpaged
+// collection endpoints return every record, so poll them sparingly.
+export function useCollection<K extends keyof Resources>(name: K, query = '', enabled = true, pollMs?: number) {
   const [data, setData] = useState<Resources[K][]>([]);
   const [loading, setLoading] = useState(enabled);
   const [error, setError] = useState<string | null>(null);
@@ -31,13 +35,12 @@ export function useCollection<K extends keyof Resources>(name: K, query = '', en
     });
     };
     load();
-    const pollInterval = name === 'assets' ? 10_000 : name === 'scopes' ? 60_000 : ['tasks','findings','nodes','rules','schedules','rule-jobs','custom-rules'].includes(name) ? 1000 : undefined;
-    const timer = pollInterval === undefined ? undefined : window.setInterval(load, pollInterval);
+    const stop = pollMs === undefined ? undefined : pollWhileVisible(load, pollMs);
     return () => {
       controller.abort();
-      if (timer !== undefined) window.clearInterval(timer);
+      stop?.();
     };
-  }, [name, query, enabled]);
+  }, [name, query, enabled, pollMs]);
   return { data, setData, loading, error };
 }
 
@@ -58,8 +61,8 @@ export function useDashboardSummary(days: 7 | 30 | 90) {
       }).finally(() => { inFlight = false; if (!controller.signal.aborted) setLoading(false); });
     };
     load();
-    const timer = window.setInterval(load, 5000);
-    return () => { controller.abort(); window.clearInterval(timer); };
+    const stop = pollWhileVisible(load, pollIntervals.dashboard);
+    return () => { controller.abort(); stop(); };
   }, [days]);
   return { data, loading, error };
 }
@@ -70,11 +73,36 @@ export function useSystemStatus() {
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     const controller = new AbortController();
-    const load=()=>Promise.all([apiClient.systemStatus(controller.signal), apiClient.capabilities(controller.signal)])
-      .then(([nextStatus,nextCapabilities])=>{if(!controller.signal.aborted){setStatus(nextStatus);setCapabilities(nextCapabilities);setError(null);}})
+    // Capabilities are fixed for the Server process; only status is refreshed.
+    void apiClient.capabilities(controller.signal).then(next=>{if(!controller.signal.aborted)setCapabilities(next);}).catch(()=>undefined);
+    const load=()=>apiClient.systemStatus(controller.signal)
+      .then(nextStatus=>{if(!controller.signal.aborted){setStatus(nextStatus);setError(null);}})
       .catch((cause:unknown)=>{if(!controller.signal.aborted){setStatus(null);setError(cause instanceof Error?cause.message:'Server unavailable');}});
-    void load(); const timer=window.setInterval(()=>void load(),3000);
-    return () => {controller.abort();window.clearInterval(timer);};
+    void load(); const stop=pollWhileVisible(()=>void load(),pollIntervals.systemStatus);
+    return () => {controller.abort();stop();};
   }, []);
   return { status, capabilities, error };
+}
+
+export function useRecentTasks(limit = 10) {
+  const [data, setData] = useState<ScanTask[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    let inFlight = false;
+    const load = () => {
+      if (inFlight) return;
+      inFlight = true;
+      apiClient.tasksPage(1, limit, {}, controller.signal).then((next) => {
+        if (!controller.signal.aborted) { setData(next.items); setError(null); }
+      }).catch((cause: unknown) => {
+        if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : '近期任务不可用');
+      }).finally(() => { inFlight = false; if (!controller.signal.aborted) setLoading(false); });
+    };
+    load();
+    const stop = pollWhileVisible(load, pollIntervals.dashboard);
+    return () => { controller.abort(); stop(); };
+  }, [limit]);
+  return { data, loading, error };
 }

@@ -24,12 +24,14 @@ test('asset management uses server resources and safe import summaries', () => {
 });
 
 test('asset registry exposes scan history and active risk summaries', () => {
-  assert.match(assetsPage, /useCollection\('findings'\)/);
+  assert.doesNotMatch(assetsPage, /useCollection\('(findings|tasks)'\)/);
+  assert.match(assetsPage, /apiClient\.assetInsights\(/);
+  assert.match(client, /\/api\/v1\/assets\/insights\?ids=/);
   assert.match(assetsPage, /title:'最近扫描'/);
   assert.match(assetsPage, /title:'当前风险数'/);
   assert.match(assetsPage, /title="漏洞摘要"/);
   assert.match(assetsPage, /title="扫描历史"/);
-  assert.match(assetsPage, /findingError.*未知/);
+  assert.match(assetsPage, /insightError.*未知/);
 });
 
 test('asset registry uses bounded Server pagination', () => {
