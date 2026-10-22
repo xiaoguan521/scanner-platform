@@ -1,5 +1,7 @@
 # 本地快速开始
 
+生产镜像、Compose、PostgreSQL、节点材料和 Linux 围栏部署以 [`deploy/README.md`](../deploy/README.md) 为主手册；本文只保留本地启动和隔离验证入口。
+
 在仓库根目录运行 `make dev`，打开 http://127.0.0.1:8080，首次设置管理员，已有账号直接登录。Server 同时提供网页和现有 API，不再需要另起 Vite 或使用另一套账号数据库。
 
 当前不再提供演示种子或浏览器 mock 数据。启动 Server 后请在资产页登记隔离靶机，完成端口授权，再从扫描任务页创建真实 SSH/自动综合扫描；默认 SQLite 模式下任务、发现项和审计记录均来自 `runtime/platform.db`。
