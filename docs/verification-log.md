@@ -1,5 +1,10 @@
 # Verification log
 
+## 2026-10-22：PostgreSQL 隔离仓储全量回归复核
+
+- 确认 `scanner-lab-postgres-postgres-1` 健康、DSN 文件指向本机回环映射后，重新运行 `POSTGRES_DSN_FILE="$PWD/runtime/postgres/dsn" go test -tags lab -race ./internal/repo -count=1`，114 秒完成并通过。
+- 本次只使用隔离 PostgreSQL 夹具，不连接业务服务器，不输出 DSN、资产、漏洞或扫描结果；此前无输出是完整仓储 race 回归耗时较长，不是数据库停服。
+
 ## 2026-10-22：规则包引擎兼容矩阵
 
 - manifest 新增 `engine_compatibility`。本地 `package_rules.py` 和 `--prepare-engines` 写入 Nuclei 3.11.1、Trivy 0.76.0 的精确版本范围；Trivy 同时写入主库 schema，包含 Java 数据库时写入 Java schema。
