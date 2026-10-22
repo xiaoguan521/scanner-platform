@@ -6,20 +6,37 @@ import { AuthProvider, useAuth } from './auth/AuthProvider';
 import { LoadingSkeleton } from './components/Semantic';
 
 // Each page is its own chunk so the first screen loads only what it shows.
-const DashboardPage = lazy(() => import('./pages/Dashboard').then(m => ({ default: m.DashboardPage })));
-const AssetsPage = lazy(() => import('./pages/Assets').then(m => ({ default: m.AssetsPage })));
-const BusinessGroupsPage = lazy(() => import('./pages/BusinessGroups').then(m => ({ default: m.BusinessGroupsPage })));
-const AssetImportHistoryPage = lazy(() => import('./pages/AssetImportHistory').then(m => ({ default: m.AssetImportHistoryPage })));
-const ScopesPage = lazy(() => import('./pages/Scopes').then(m => ({ default: m.ScopesPage })));
-const TasksPage = lazy(() => import('./pages/Tasks').then(m => ({ default: m.TasksPage })));
-const FindingsPage = lazy(() => import('./pages/Findings').then(m => ({ default: m.FindingsPage })));
-const KnowledgePage = lazy(() => import('./pages/Knowledge').then(m => ({ default: m.KnowledgePage })));
-const NodesPage = lazy(() => import('./pages/Nodes').then(m => ({ default: m.NodesPage })));
-const UsersPage = lazy(() => import('./pages/Users').then(m => ({ default: m.UsersPage })));
-const AuditPage = lazy(() => import('./pages/Audit').then(m => ({ default: m.AuditPage })));
-const ReportsPage = lazy(() => import('./pages/Reports').then(m => ({ default: m.ReportsPage })));
-const SettingsPage = lazy(() => import('./pages/Settings').then(m => ({ default: m.SettingsPage })));
-const NotificationsPage = lazy(() => import('./pages/Notifications').then(m => ({ default: m.NotificationsPage })));
+// A tab left open across a release asks for chunk names that no longer exist;
+// reload once to pick up the new build instead of showing a blank page.
+const reloadFlag = 'page-chunk-reload';
+function lazyPage<T extends React.ComponentType>(load: () => Promise<T>) {
+  return lazy(async () => {
+    try {
+      const page = await load();
+      try { sessionStorage.removeItem(reloadFlag); } catch { /* storage unavailable */ }
+      return { default: page };
+    } catch (cause) {
+      let reloaded = true;
+      try { reloaded = sessionStorage.getItem(reloadFlag) === '1'; if (!reloaded) sessionStorage.setItem(reloadFlag, '1'); } catch { /* storage unavailable */ }
+      if (!reloaded) { window.location.reload(); return new Promise<never>(() => {}); }
+      throw cause;
+    }
+  });
+}
+const DashboardPage = lazyPage(() => import('./pages/Dashboard').then(m => m.DashboardPage));
+const AssetsPage = lazyPage(() => import('./pages/Assets').then(m => m.AssetsPage));
+const BusinessGroupsPage = lazyPage(() => import('./pages/BusinessGroups').then(m => m.BusinessGroupsPage));
+const AssetImportHistoryPage = lazyPage(() => import('./pages/AssetImportHistory').then(m => m.AssetImportHistoryPage));
+const ScopesPage = lazyPage(() => import('./pages/Scopes').then(m => m.ScopesPage));
+const TasksPage = lazyPage(() => import('./pages/Tasks').then(m => m.TasksPage));
+const FindingsPage = lazyPage(() => import('./pages/Findings').then(m => m.FindingsPage));
+const KnowledgePage = lazyPage(() => import('./pages/Knowledge').then(m => m.KnowledgePage));
+const NodesPage = lazyPage(() => import('./pages/Nodes').then(m => m.NodesPage));
+const UsersPage = lazyPage(() => import('./pages/Users').then(m => m.UsersPage));
+const AuditPage = lazyPage(() => import('./pages/Audit').then(m => m.AuditPage));
+const ReportsPage = lazyPage(() => import('./pages/Reports').then(m => m.ReportsPage));
+const SettingsPage = lazyPage(() => import('./pages/Settings').then(m => m.SettingsPage));
+const NotificationsPage = lazyPage(() => import('./pages/Notifications').then(m => m.NotificationsPage));
 
 const AuthenticatedRoutes: React.FC = () => {
   const {user} = useAuth();

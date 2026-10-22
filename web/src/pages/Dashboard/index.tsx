@@ -144,7 +144,7 @@ export const DashboardPage: React.FC = () => {
           {tasks.map(task => {
             const target = taskTargetSummary(task);
             const auto = task.engines?.[0] === 'auto';
-            const system = systemCoverage(task.systemScanStatus);
+            const system = systemCoverage(task.systemScanStatus, task.systemScanCode);
             const app = applicationCoverage(task.applicationScanStatus);
             return <div key={task.id} style={{ display: 'grid', gridTemplateColumns: 'minmax(180px, 1.3fr) minmax(0, 2fr) 120px', gap: 16, alignItems: 'center', padding: '14px 20px', borderTop: rowBorder, fontSize: 13, minWidth: 640 }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}><Mono>{target.primary}</Mono><span style={{ ...muted, fontSize: 12 }}>{new Date(task.createdAt).toLocaleString()} · {target.detail}</span></div>

@@ -30,7 +30,9 @@ type FindingListQuery struct {
 	Package     string
 	Engine      string
 	FixableOnly bool
-	Sort        string
+	// TaskID limits the list to findings recorded by one scan task.
+	TaskID string
+	Sort   string
 }
 
 type FindingListCounts struct {
@@ -59,7 +61,8 @@ var ErrInvalidFindingListQuery = errors.New("invalid finding list query")
 
 func NormalizeFindingListQuery(in FindingListQuery) (FindingListQuery, error) {
 	if in.Page < 0 || in.PageSize < 0 || in.Page > MaxFindingPage || len(in.Search) > 160 || len(in.BusinessGroup) > 160 || len(in.AssetID) > 160 || strings.ContainsRune(in.Search, 0) || strings.ContainsRune(in.BusinessGroup, 0) || strings.ContainsRune(in.AssetID, 0) ||
-		len(in.CVE) > 160 || len(in.Package) > 160 || strings.ContainsRune(in.CVE, 0) || strings.ContainsRune(in.Package, 0) {
+		len(in.CVE) > 160 || len(in.Package) > 160 || strings.ContainsRune(in.CVE, 0) || strings.ContainsRune(in.Package, 0) ||
+		len(in.TaskID) > 160 || strings.ContainsRune(in.TaskID, 0) {
 		return FindingListQuery{}, ErrInvalidFindingListQuery
 	}
 	if in.Page == 0 {
@@ -246,6 +249,10 @@ func findingListWhere(query FindingListQuery) (string, []any) {
 	}
 	if query.FixableOnly {
 		where = append(where, "COALESCE(json_extract(data,'$.fixedVersion'),'')<>''")
+	}
+	if query.TaskID != "" {
+		where = append(where, "task_id=?")
+		args = append(args, query.TaskID)
 	}
 	if query.Search != "" {
 		pattern := "%" + escapeFindingLike(query.Search) + "%"

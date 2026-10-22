@@ -23,12 +23,13 @@ export const FindingFilterBar: React.FC<{
   const active = hasActiveFilters(filters) || query.trim() !== '';
   const clear = () => {
     onQuery('');
-    onChange({ severity: 'ALL', status: 'ALL', method: 'ALL', confidence: 'ALL', risk: 'ALL', engine: 'ALL', onlyVerified: false, fixable: false, businessGroup: '', assetId: '', cve: '', package: '' });
+    onChange({ severity: 'ALL', status: 'ALL', method: 'ALL', confidence: 'ALL', risk: 'ALL', engine: 'ALL', onlyVerified: false, fixable: false, businessGroup: '', assetId: '', cve: '', package: '', taskId: '' });
   };
   const drill = [
     filters.cve && { key: 'cve', label: `漏洞编号：${filters.cve}`, clear: { cve: '' } },
     filters.package && { key: 'package', label: `软件包：${filters.package}`, clear: { package: '' } },
     filters.assetId && { key: 'asset', label: `资产：${filters.assetId}`, clear: { assetId: '' } },
+    filters.taskId && { key: 'task', label: `扫描任务：${filters.taskId}`, clear: { taskId: '' } },
   ].filter(Boolean) as { key: string; label: string; clear: Partial<FindingFilters> }[];
   return (
     <div role="search" aria-label="漏洞筛选" style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 12, borderRadius: 12, background: palette.bgContainer, border: `1px solid ${palette.borderSubtle}` }}>

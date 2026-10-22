@@ -5,7 +5,7 @@ import ts from 'typescript';
 const source = await readFile(new URL('./filters.ts', import.meta.url), 'utf8');
 const js = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.ESNext } }).outputText;
 const { readFindingFilters: read, writeFindingFilters: write, hasActiveFilters } = await import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`);
-const defaults = { severity: 'ALL', status: 'ALL', method: 'ALL', confidence: 'ALL', risk: 'ALL', engine: 'ALL', view: 'flat', sort: '-severity', onlyVerified: false, fixable: false, businessGroup: '', assetId: '', cve: '', package: '' };
+const defaults = { severity: 'ALL', status: 'ALL', method: 'ALL', confidence: 'ALL', risk: 'ALL', engine: 'ALL', view: 'flat', sort: '-severity', onlyVerified: false, fixable: false, businessGroup: '', assetId: '', cve: '', package: '', taskId: '' };
 assert.deepEqual(read(new URLSearchParams()), defaults);
 const allowed = {
   severity: ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO'],
@@ -39,7 +39,7 @@ for (const value of ['', 'false', '1', 'TRUE', 'yes']) {
 }
 assert.equal(read(new URLSearchParams('onlyVerified=true')).onlyVerified, true);
 assert.equal(read(new URLSearchParams('onlyVerified=true&onlyVerified=true')).onlyVerified, false);
-const combined = { severity: 'HIGH', status: 'OPEN', method: 'version', confidence: 'high', risk: 'system', engine: 'trivy', view: 'package', sort: '-last_seen', onlyVerified: true, fixable: true, businessGroup: '支付', assetId: 'asset-1', cve: 'CVE-2099-0001', package: 'libexample1' };
+const combined = { severity: 'HIGH', status: 'OPEN', method: 'version', confidence: 'high', risk: 'system', engine: 'trivy', view: 'package', sort: '-last_seen', onlyVerified: true, fixable: true, businessGroup: '支付', assetId: 'asset-1', cve: 'CVE-2099-0001', package: 'libexample1', taskId: 'task-1' };
 const params = new URLSearchParams('tab=review&tab=other&q=192.0.2.10&severity=ALL&status=bad');
 const canonical = write(params, combined);
 assert.deepEqual(read(canonical), combined, 'combined filters survive reload by parsing the same URL');

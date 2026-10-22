@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { DataTable } from '../../components/DataState';
 import { ScheduleStatusTag, TaskStatusTag, taskStatusMeta } from '../../components/Semantic';
 import { Alert, Button, Card, Checkbox, Collapse, Descriptions, Drawer, Form, Input, InputNumber, message, Modal, Progress, Select, Space, Spin, Steps, Tag, Typography, theme } from 'antd';
@@ -15,6 +15,8 @@ import { parsePortRanges, showRanges, coversAllPorts, presetLabels, summarizePor
 import { progressPercent, progressPhases } from './progress';
 import { taskTargetSummary } from './targets';
 import { applicationStatuses } from './coverage';
+import { isTerminalTask } from './phases';
+import { TaskDetail } from './TaskDetail';
 import { assertTaskSubmission, isAutoTaskWizard, wizardStepFields } from './wizard';
 const dayOptions=['周日','周一','周二','周三','周四','周五','周六'].map((label,value)=>({label,value}));
 const ApplicationCoverage:React.FC<{task:ScanTask}>=({task})=><>
@@ -92,15 +94,27 @@ export const TasksPage:React.FC=()=>{
     fetchScheduleRuns(historySchedule.id,scheduleRunPage,controller.signal).then(response=>{if(!controller.signal.aborted){setScheduleRuns(response.items);setScheduleRunTotal(response.total);}}).catch(cause=>{if(!controller.signal.aborted)setScheduleRunError(cause instanceof Error?cause.message:'历史运行记录加载失败');}).finally(()=>{if(!controller.signal.aborted)setScheduleRunLoading(false);});
     return()=>controller.abort();
   },[historySchedule,scheduleRunPage]);
+  // Running tasks refresh every 3 seconds while the detail is open; finished ones load once.
+  const detailTerminal=detailTask?isTerminalTask(detailTask.status):true;
+  const [detailRefreshing,setDetailRefreshing]=useState(false);
+  const detailLoadedId=useRef('');
   useEffect(()=>{
     if(!detailTask)return;
-    const controller=new AbortController();
-    setDetailLoading(true);setDetailError('');
-    Promise.all([fetchTask(detailTask.id,controller.signal),fetchTaskLogs(detailTask.id,controller.signal)]).then(([task,logs])=>{
-      if(!controller.signal.aborted){setDetailTask(task);setDetailLogs(logs.items);}
-    }).catch(cause=>{if(!controller.signal.aborted)setDetailError(cause instanceof Error?cause.message:'任务详情加载失败');}).finally(()=>{if(!controller.signal.aborted)setDetailLoading(false);});
-    return()=>controller.abort();
-  },[detailTask?.id]);
+    const id=detailTask.id;
+    const controller=new AbortController();let inFlight=false;
+    const load=()=>{
+      if(inFlight)return;
+      inFlight=true;
+      const initial=detailLoadedId.current!==id;
+      if(initial){setDetailLoading(true);setDetailError('');}else setDetailRefreshing(true);
+      Promise.all([fetchTask(id,controller.signal),fetchTaskLogs(id,controller.signal)]).then(([task,logs])=>{
+        if(!controller.signal.aborted){detailLoadedId.current=id;setDetailTask(task);setDetailLogs(logs.items);setDetailError('');}
+      }).catch(cause=>{if(!controller.signal.aborted)setDetailError(cause instanceof Error?cause.message:'任务详情加载失败');}).finally(()=>{inFlight=false;if(!controller.signal.aborted){setDetailLoading(false);setDetailRefreshing(false);}});
+    };
+    load();
+    const stopPolling=detailTerminal?undefined:pollWhileVisible(load,pollIntervals.activeTask);
+    return()=>{controller.abort();stopPolling?.();};
+  },[detailTask?.id,detailTerminal]);
   const confirmFull=()=>new Promise<boolean>(resolve=>Modal.confirm({title:'确认全端口探测',content:'将对这台主机的 TCP 1–65535 端口发起连接（排除项会跳过）。按每次连接超时 1 秒、并发 16 粗略估算约 69 分钟；实际时间取决于速率、超时和响应，服务识别与漏洞检测会额外耗时。可能增加目标连接数及日志量，请确认维护窗口和授权范围。',okText:'确认全端口范围',cancelText:'返回修改',onOk:()=>resolve(true),onCancel:()=>resolve(false)}));
   const choosePlan=(plan:ScanPlan)=>{form.setFieldsValue({scanPlan:plan.id,...plan.defaults});};
   const openPlanEditor=(plan:ScanPlan,copy:boolean)=>{
@@ -218,54 +232,9 @@ export const TasksPage:React.FC=()=>{
           {title:'操作',width:470,render:(_,t)=>{const terminal=['COMPLETED','CANCELED','FAILED'].includes(t.status);return <Space wrap><Button size="small" onClick={()=>openTaskDetail(t)}>详情</Button>{!terminal&&t.status!=='PAUSED'&&<Button size="small" disabled={!canWrite} onClick={()=>void pause(t)}>暂停</Button>}{t.status==='PAUSED'&&<Button size="small" type="primary" disabled={!canWrite} onClick={()=>void resume(t)}>恢复</Button>}{!terminal&&<Button size="small" danger disabled={!canWrite} onClick={()=>void stop(t.id)}>取消</Button>}{terminal&&<Button size="small" disabled={!canWrite} onClick={()=>void setArchived(t.id,!t.archived)}>{t.archived?'恢复':'归档'}</Button>}{terminal&&<Button size="small" disabled={!canWrite} onClick={()=>copyTask(t)}>按此配置新建</Button>}{terminal&&canDelete&&t.findingCount===0&&<Button size="small" danger onClick={()=>removeTask(t)}>彻底删除</Button>}{terminal&&canDelete&&t.findingCount>0&&<Tag>有关联发现，仅可归档</Tag>}</Space>}},
         ]}/>
     </Card>
-    <Drawer title={detailTask?`任务详情：${detailTask.id}`:'任务详情'} open={Boolean(detailTask)} width={760} onClose={()=>setDetailTask(null)} destroyOnClose>
-      {detailLoading&&<Spin tip="正在加载任务最新状态"/>}
-      {detailError&&<Alert type="error" showIcon message="任务详情加载失败" description={detailError} style={{marginBottom:16}}/>}
-      {detailTask&&<Space direction="vertical" size={16} style={{width:'100%'}}>
-        <Descriptions bordered size="small" column={2}>
-          <Descriptions.Item label="状态"><TaskStatusTag value={detailTask.status}/></Descriptions.Item>
-          <Descriptions.Item label="发现项">{detailTask.findingCount}</Descriptions.Item>
-          <Descriptions.Item label="目标数">{detailTask.targetCount}</Descriptions.Item>
-          <Descriptions.Item label="执行方式">{detailTask.synthetic?'模拟 Worker':detailTask.engines?.join('、')||'—'}</Descriptions.Item>
-          <Descriptions.Item label="创建时间">{new Date(detailTask.createdAt).toLocaleString()}</Descriptions.Item>
-          <Descriptions.Item label="本地截止时间">{detailTask.hardDeadline?new Date(detailTask.hardDeadline).toLocaleString():'—'}</Descriptions.Item>
-        </Descriptions>
-        <Card size="small" title="执行进度">{renderProgress(detailTask)}</Card>
-        <Card size="small" title="目标级状态">
-          <DataTable<ScanTask['chunks'][number]> size="small" rowKey="id" pagination={false} dataSource={detailTask.chunks??[]} columns={[
-            {title:'目标',dataIndex:'targets',render:(targets:string[])=>targets?.join('、')||'—'},
-            {title:'状态',dataIndex:'status',width:120,render:(value:string)=><TaskStatusTag value={value}/>},
-            {title:'Worker',dataIndex:'workerNodeId',render:(value:string)=>value||'尚未领取'},
-          ]}/>
-        </Card>
-        <Card size="small" title="扫描结果">
-          <Space wrap>
-            <Tag color="blue">开放端口 {detailTask.portProbeResults?.length??0}</Tag>
-            <Tag color="purple">服务 {detailTask.serviceResults?.length??0}</Tag>
-            <Tag color="red">发现项 {detailTask.findingCount}</Tag>
-            {detailTask.systemScanStatus&&<Tag>系统包：{detailTask.systemScanStatus}</Tag>}
-            {detailTask.fenceStatus&&<Tag color={detailTask.dropCount?'warning':'green'}>网络围栏：{detailTask.fenceStatus}</Tag>}
-            {detailTask.dropCount?<Tag color="warning">拦截范围外连接 {detailTask.dropCount} 次</Tag>:null}
-          </Space>
-          {detailTask.dropCount?<Alert type="warning" showIcon message="检测到范围外连接尝试，已被网络围栏拦截" description="请检查 Worker 日志和授权范围；平台不会展示原始地址或请求内容。" style={{marginTop:12}}/>:null}
-          {detailTask.error&&<Alert type="error" showIcon message={detailTask.error} style={{marginTop:12}}/>}
-        </Card>
-        <Card size="small" title="只读任务日志" extra={<Typography.Text type="secondary">不显示原始引擎输出、凭据或请求响应</Typography.Text>}>
-          <DataTable<TaskLog> size="small" rowKey="id" loading={detailLoading} dataSource={detailLogs} pagination={{pageSize:8,hideOnSinglePage:true}} locale={{emptyText:'暂无任务日志'}} columns={[
-            {title:'时间',dataIndex:'createdAt',width:190,render:(value:string)=>new Date(value).toLocaleString()},
-            {title:'事件',dataIndex:'message'},
-            {title:'操作者',dataIndex:'actor',width:150},
-          ]}/>
-        </Card>
-        <Space wrap>
-          {!['COMPLETED','CANCELED','FAILED'].includes(detailTask.status)&&detailTask.status!=='PAUSED'&&<Button disabled={!canWrite} onClick={()=>void pause(detailTask)}>暂停任务</Button>}
-          {detailTask.status==='PAUSED'&&<Button type="primary" disabled={!canWrite} onClick={()=>void resume(detailTask)}>恢复任务</Button>}
-          {!['COMPLETED','CANCELED','FAILED'].includes(detailTask.status)&&<Button danger disabled={!canWrite} onClick={()=>void stop(detailTask.id)}>取消任务</Button>}
-          <Button icon={<DownloadOutlined/>} loading={detailExporting==='json'} onClick={()=>void downloadTaskResult('json')}>导出 JSON 结果</Button>
-          <Button icon={<DownloadOutlined/>} loading={detailExporting==='csv'} onClick={()=>void downloadTaskResult('csv')}>导出 CSV 结果</Button>
-          <Typography.Text type="secondary">导出包含稳定的任务与发现字段，不包含证据、凭据和原始引擎输出。</Typography.Text>
-        </Space>
-      </Space>}
+    <Drawer title={detailTask?`任务详情：${detailTask.id}`:'任务详情'} open={Boolean(detailTask)} width="min(1040px, 100vw)" onClose={()=>{setDetailTask(null);detailLoadedId.current='';}} destroyOnClose>
+      {detailTask&&<TaskDetail task={detailTask} logs={detailLogs} loading={detailLoading} refreshing={detailRefreshing} error={detailError} canWrite={canWrite} exporting={detailExporting} progress={renderProgress(detailTask)}
+        onPause={()=>void pause(detailTask)} onResume={()=>void resume(detailTask)} onStop={()=>void stop(detailTask.id)} onExport={format=>void downloadTaskResult(format)}/>}
     </Drawer>
     <Card title="定时任务" extra={<Typography.Text type="secondary">间隔 0 表示仅运行一次；错过的重复任务不会集中补跑</Typography.Text>}>
       <DataTable<Schedule> dataSource={schedules} rowKey="id" loading={scheduleLoading} tableLayout="fixed" scroll={{x:1050}} locale={{emptyText:'暂无定时任务。创建时填写首次运行时间；间隔 0 表示只运行一次。'}} columns={[

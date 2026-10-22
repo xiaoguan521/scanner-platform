@@ -21,9 +21,9 @@ export type FindingView = (typeof presentationValues)['view'][number];
 export type FindingSort = (typeof presentationValues)['sort'][number];
 export type FindingFilters = { [K in ClassificationKey]: (typeof filterValues)[K][number] }
   & { [K in PresentationKey]: (typeof presentationValues)[K][number] }
-  & { onlyVerified: boolean; fixable: boolean; businessGroup: string; assetId: string; cve: string; package: string };
+  & { onlyVerified: boolean; fixable: boolean; businessGroup: string; assetId: string; cve: string; package: string; taskId: string };
 
-const textKeys = ['businessGroup', 'assetId', 'cve', 'package'] as const;
+const textKeys = ['businessGroup', 'assetId', 'cve', 'package', 'taskId'] as const;
 const flagKeys = ['onlyVerified', 'fixable'] as const;
 
 export function readFindingFilters(params: URLSearchParams): FindingFilters {

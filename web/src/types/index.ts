@@ -240,6 +240,8 @@ export interface ScanTask {
   vulnerabilityPorts?: number[];
   serviceResults?: ServiceResult[];
   systemScanStatus?: string;
+  /** Stable code derived by the Server from systemScanStatus. */
+  systemScanCode?: string;
   applicationScanStatus?: string;
   applicationResults?: ApplicationResult[];
   fenceStatus?: 'ENFORCED' | 'NOT_SUPPORTED' | 'NOT_VERIFIED';

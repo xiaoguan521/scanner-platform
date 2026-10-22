@@ -65,7 +65,7 @@ export const FindingsPage: React.FC = () => {
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
   useEffect(() => { const timer = window.setTimeout(() => setDebouncedQuery(query.trim()), 300); return () => window.clearTimeout(timer); }, [query]);
-  const queryOptions: FindingQueryOptions = { search: debouncedQuery, severity: severityFilter, status: statusFilter, method: methodFilter, confidence: confidenceFilter, risk: riskFilter, engine: filters.engine, onlyVerified, fixable: filters.fixable, businessGroup, assetId, cve: filters.cve, package: filters.package };
+  const queryOptions: FindingQueryOptions = { search: debouncedQuery, severity: severityFilter, status: statusFilter, method: methodFilter, confidence: confidenceFilter, risk: riskFilter, engine: filters.engine, onlyVerified, fixable: filters.fixable, businessGroup, assetId, cve: filters.cve, package: filters.package, taskId: filters.taskId };
   const optionsKey = JSON.stringify(queryOptions);
   const view = filters.view;
   const sort = filters.sort;

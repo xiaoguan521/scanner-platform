@@ -18,7 +18,7 @@ func parseFindingListValues(values url.Values) (repo.FindingListQuery, bool, boo
 	}
 	for key := range values {
 		switch key {
-		case "page", "page_size", "q", "severity", "status", "method", "confidence", "risk", "onlyVerified", "businessGroup", "assetId", "cve", "package", "engine", "fixable", "sort":
+		case "page", "page_size", "q", "severity", "status", "method", "confidence", "risk", "onlyVerified", "businessGroup", "assetId", "cve", "package", "engine", "fixable", "taskId", "sort":
 		default:
 			return repo.FindingListQuery{}, true, false
 		}
@@ -48,8 +48,9 @@ func parseFindingListValues(values url.Values) (repo.FindingListQuery, bool, boo
 	packageName, packageOK := single("package")
 	engine, engineOK := single("engine")
 	fixableText, fixableOK := single("fixable")
+	taskID, taskIDOK := single("taskId")
 	sort, sortOK := single("sort")
-	if !pageOK || !pageSizeOK || !searchOK || !severityOK || !statusOK || !methodOK || !confidenceOK || !riskOK || !onlyVerifiedOK || !businessGroupOK || !assetIDOK || !cveOK || !packageOK || !engineOK || !fixableOK || !sortOK {
+	if !pageOK || !pageSizeOK || !searchOK || !severityOK || !statusOK || !methodOK || !confidenceOK || !riskOK || !onlyVerifiedOK || !businessGroupOK || !assetIDOK || !cveOK || !packageOK || !engineOK || !fixableOK || !taskIDOK || !sortOK {
 		return repo.FindingListQuery{}, true, false
 	}
 	normalizeAll := func(value string) string {
@@ -58,7 +59,7 @@ func parseFindingListValues(values url.Values) (repo.FindingListQuery, bool, boo
 		}
 		return value
 	}
-	query := repo.FindingListQuery{Page: 1, Search: search, Severity: normalizeAll(severity), Status: normalizeAll(status), Method: normalizeAll(method), Confidence: normalizeAll(confidence), Risk: normalizeAll(risk), BusinessGroup: businessGroup, AssetID: assetID, CVE: cve, Package: packageName, Engine: normalizeAll(engine), Sort: sort}
+	query := repo.FindingListQuery{Page: 1, Search: search, Severity: normalizeAll(severity), Status: normalizeAll(status), Method: normalizeAll(method), Confidence: normalizeAll(confidence), Risk: normalizeAll(risk), BusinessGroup: businessGroup, AssetID: assetID, CVE: cve, Package: packageName, Engine: normalizeAll(engine), TaskID: taskID, Sort: sort}
 	if onlyVerifiedText != "" {
 		if onlyVerifiedText != "true" && onlyVerifiedText != "false" {
 			return repo.FindingListQuery{}, true, false

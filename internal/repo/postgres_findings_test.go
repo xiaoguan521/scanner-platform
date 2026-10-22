@@ -52,11 +52,11 @@ func TestPostgresFindingWhereUsesBoundValues(t *testing.T) {
 }
 
 func TestPostgresFindingWhereBindsExactGroupFilters(t *testing.T) {
-	where, args := postgresFindingWhere(FindingListQuery{CVE: "CVE-2099-0001", Package: "openssl", Engine: "trivy", FixableOnly: true})
-	if len(args) != 3 || args[0] != "CVE-2099-0001" || args[1] != "openssl" || args[2] != "trivy" {
+	where, args := postgresFindingWhere(FindingListQuery{CVE: "CVE-2099-0001", Package: "openssl", Engine: "trivy", FixableOnly: true, TaskID: "task-1"})
+	if len(args) != 4 || args[0] != "CVE-2099-0001" || args[1] != "openssl" || args[2] != "trivy" || args[3] != "task-1" {
 		t.Fatalf("unexpected args %v", args)
 	}
-	for _, fragment := range []string{"'templateOrCve','')=$1", "'package','')=$2", "sf.engine_name=$3", "'fixedVersion','')<>''"} {
+	for _, fragment := range []string{"'templateOrCve','')=$1", "'package','')=$2", "sf.engine_name=$3", "'fixedVersion','')<>''", "fp.task_id=$4"} {
 		if !strings.Contains(where, fragment) {
 			t.Fatalf("missing %q in %q", fragment, where)
 		}

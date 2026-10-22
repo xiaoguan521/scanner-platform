@@ -70,6 +70,7 @@ func TestRuntimeFindingListPageFiltersCountsAndSorts(t *testing.T) {
 		"exact package": {Page: 1, PageSize: 10, Package: "apache2"},
 		"engine":        {Page: 1, PageSize: 10, Engine: "trivy"},
 		"fixable":       {Page: 1, PageSize: 10, FixableOnly: true},
+		"task":          {Page: 1, PageSize: 10, TaskID: fixtures[0].TaskID},
 	} {
 		page, err = store.ListRuntimeFindingsPage(ctx, query)
 		if err != nil || page.Total != 1 || page.Items[0].ID != "finding-high" {

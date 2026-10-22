@@ -30,13 +30,13 @@ export interface AssetInsight {
   latestProbe?: { id: string; status: ScanTask['status']; createdAt: string; openPorts: number[] };
   recentTasks: { id: string; engines: string[]; status: ScanTask['status']; findingCount: number; createdAt: string; finishedAt?: string }[];
 }
-export interface FindingQueryOptions {search?:string;severity?:string;status?:string;method?:string;confidence?:string;risk?:string;engine?:string;onlyVerified?:boolean;fixable?:boolean;businessGroup?:string;assetId?:string;cve?:string;package?:string}
+export interface FindingQueryOptions {search?:string;severity?:string;status?:string;method?:string;confidence?:string;risk?:string;engine?:string;onlyVerified?:boolean;fixable?:boolean;businessGroup?:string;assetId?:string;cve?:string;package?:string;taskId?:string}
 function findingQueryParams(options:FindingQueryOptions):URLSearchParams {
   const params=new URLSearchParams();
   for(const key of ['severity','status','method','confidence','risk','engine'] as const){const value=options[key];if(value&&value!=='ALL')params.set(key,value);}
   if(options.onlyVerified)params.set('onlyVerified','true');
   if(options.fixable)params.set('fixable','true');
-  for(const key of ['businessGroup','assetId','cve','package'] as const){const value=options[key]?.trim();if(value)params.set(key,value);}
+  for(const key of ['businessGroup','assetId','cve','package','taskId'] as const){const value=options[key]?.trim();if(value)params.set(key,value);}
   if(options.search?.trim())params.set('q',options.search.trim());
   return params;
 }

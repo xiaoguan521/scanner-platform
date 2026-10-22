@@ -492,6 +492,9 @@ func postgresFindingWhere(query FindingListQuery) (string, []any) {
 	if query.FixableOnly {
 		clauses = append(clauses, `COALESCE(fp.data::jsonb ->> 'fixedVersion','')<>''`)
 	}
+	if query.TaskID != "" {
+		add(`fp.task_id=$%d`, query.TaskID)
+	}
 	return strings.Join(clauses, " AND "), args
 }
 
