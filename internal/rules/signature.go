@@ -13,22 +13,52 @@ import (
 
 const manifestName = "manifest.json"
 const signatureName = "manifest.json.sig"
+const maxTrustedKeys = 3
 
-// NewVerifiedManager loads the single deployment trust anchor from outside the
-// rule tree. The key is private immutable process state; archives cannot set it.
-// Restart with a newly provisioned file to change trust. Key rotation and a
-// multi-key transition protocol are not implemented.
+// NewVerifiedManager loads one deployment trust anchor from outside the rule
+// tree. It remains the compatibility entrypoint for callers that have not yet
+// adopted the repeatable key flag.
 func NewVerifiedManager(root, keyPath string) (*Manager, error) {
+	return NewVerifiedManagerWithKeys(root, []string{keyPath})
+}
+
+// NewVerifiedManagerWithKeys loads a bounded set of deployment trust anchors
+// from outside the rule tree. Keeping both the retiring and replacement key
+// during an explicit transition lets already published bundles continue to
+// verify without allowing a bundle to introduce or replace trust. Keys are
+// copied into private immutable process state; the files are never watched or
+// re-read during verification.
+func NewVerifiedManagerWithKeys(root string, keyPaths []string) (*Manager, error) {
 	root, err := canonicalRuleRoot(root)
 	if err != nil {
 		return nil, fmt.Errorf("resolve rule root: %w", err)
 	}
-	keyPath, err = filepath.Abs(keyPath)
+	if len(keyPaths) == 0 || len(keyPaths) > maxTrustedKeys {
+		return nil, fmt.Errorf("trusted public key count must be between 1 and %d", maxTrustedKeys)
+	}
+	keys := make([]ed25519.PublicKey, 0, len(keyPaths))
+	for _, keyPath := range keyPaths {
+		key, err := loadTrustedPublicKey(root, keyPath)
+		if err != nil {
+			return nil, err
+		}
+		for _, existing := range keys {
+			if bytes.Equal(existing, key) {
+				return nil, fmt.Errorf("trusted public keys must be unique")
+			}
+		}
+		keys = append(keys, key)
+	}
+	return &Manager{Root: root, trustedKeys: keys, trustedRoot: root}, nil
+}
+
+func loadTrustedPublicKey(root, keyPath string) (ed25519.PublicKey, error) {
+	keyPath, err := filepath.Abs(keyPath)
 	if err != nil {
 		return nil, fmt.Errorf("resolve trusted public key path: %w", err)
 	}
 	info, err := os.Lstat(keyPath)
-	if err != nil || !info.Mode().IsRegular() || info.Size() > 4096 {
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() > 4096 {
 		return nil, fmt.Errorf("trusted public key must be a regular non-symlink file of at most 4 KiB")
 	}
 	canonicalKey, err := filepath.EvalSymlinks(keyPath)
@@ -87,7 +117,7 @@ func NewVerifiedManager(root, keyPath string) (*Manager, error) {
 	if !ok || len(key) != ed25519.PublicKeySize {
 		return nil, fmt.Errorf("trusted public key must be Ed25519")
 	}
-	return &Manager{Root: root, trustedKey: append(ed25519.PublicKey(nil), key...), trustedRoot: root}, nil
+	return append(ed25519.PublicKey(nil), key...), nil
 }
 
 // canonicalRuleRoot handles a not-yet-created destination without creating it.
@@ -115,8 +145,8 @@ func canonicalRuleRoot(root string) (string, error) {
 }
 
 func (m *Manager) requireTrust() error {
-	if len(m.trustedKey) != ed25519.PublicKeySize {
-		return fmt.Errorf("规则导入和普通激活需要配置受信任的 Ed25519 公钥")
+	if len(m.trustedKeys) == 0 {
+		return fmt.Errorf("规则导入和普通激活需要配置至少一把受信任的 Ed25519 公钥")
 	}
 	root, err := canonicalRuleRoot(m.Root)
 	if err != nil || root != m.trustedRoot {
@@ -129,10 +159,15 @@ func (m *Manager) verifySignature(manifest, signature []byte) error {
 	if err := m.requireTrust(); err != nil {
 		return err
 	}
-	if len(signature) != ed25519.SignatureSize || !ed25519.Verify(m.trustedKey, manifest, signature) {
+	if len(signature) != ed25519.SignatureSize {
 		return fmt.Errorf("规则 manifest Ed25519 签名无效或缺失")
 	}
-	return nil
+	for _, key := range m.trustedKeys {
+		if ed25519.Verify(key, manifest, signature) {
+			return nil
+		}
+	}
+	return fmt.Errorf("规则 manifest Ed25519 签名无效或缺失")
 }
 
 // readRuleMetadata rejects symlinks and bounds reads of manifest/signature files.

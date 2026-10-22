@@ -10,7 +10,9 @@ SCANNER_LOG_DIR=${SCANNER_LOG_DIR:-runtime}
 SCANNER_BIN=${SCANNER_BIN:-bin}
 SCANNER_INPUTS=${SCANNER_INPUTS:-runtime/inputs}
 SCANNER_SSH_CONFIG=${SCANNER_SSH_CONFIG:-}
-SCANNER_RULE_PUBLIC_KEY_FILE=${SCANNER_RULE_PUBLIC_KEY_FILE:-}
+# Keep the old singular variable for compatibility; the plural form accepts a
+# comma-separated current/next trust set and is expanded into repeatable flags.
+SCANNER_RULE_PUBLIC_KEY_FILES=${SCANNER_RULE_PUBLIC_KEY_FILES:-${SCANNER_RULE_PUBLIC_KEY_FILE:-}}
 mkdir -p "$SCANNER_INPUTS"
 mkdir -p "$SCANNER_LOG_DIR" dist
 if [[ "$SCANNER_STORAGE" != sqlite && "$SCANNER_STORAGE" != postgres ]]; then
@@ -72,9 +74,21 @@ else
     --runtime-dir "$SCANNER_LOG_DIR/worker" >"$SCANNER_LOG_DIR/worker.log" 2>&1 &
 fi
 worker_pid=$!
-if [[ -n "$SCANNER_RULE_PUBLIC_KEY_FILE" ]]; then
-  ./dist/sec-updater --server "http://127.0.0.1:$SCANNER_PORT" --rules-dir "$SCANNER_RULES" \
-    --trusted-rule-public-key "$SCANNER_RULE_PUBLIC_KEY_FILE" >"$SCANNER_LOG_DIR/updater.log" 2>&1 &
+if [[ -n "$SCANNER_RULE_PUBLIC_KEY_FILES" ]]; then
+  updater_args=(--server "http://127.0.0.1:$SCANNER_PORT" --rules-dir "$SCANNER_RULES")
+  IFS=',' read -r -a trusted_key_files <<< "$SCANNER_RULE_PUBLIC_KEY_FILES"
+  if [[ "${#trusted_key_files[@]}" -eq 0 ]]; then
+    printf 'SCANNER_RULE_PUBLIC_KEY_FILES 不能为空。\n' >&2
+    exit 2
+  fi
+  for key_file in "${trusted_key_files[@]}"; do
+    if [[ -z "$key_file" ]]; then
+      printf 'SCANNER_RULE_PUBLIC_KEY_FILES 不能包含空路径。\n' >&2
+      exit 2
+    fi
+    updater_args+=(--trusted-rule-public-key "$key_file")
+  done
+  ./dist/sec-updater "${updater_args[@]}" >"$SCANNER_LOG_DIR/updater.log" 2>&1 &
 else
   ./dist/sec-updater --server "http://127.0.0.1:$SCANNER_PORT" --rules-dir "$SCANNER_RULES" \
     >"$SCANNER_LOG_DIR/updater.log" 2>&1 &

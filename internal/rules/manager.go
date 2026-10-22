@@ -85,7 +85,7 @@ type Report struct {
 type Manager struct {
 	Root        string
 	Client      *http.Client
-	trustedKey  ed25519.PublicKey
+	trustedKeys []ed25519.PublicKey
 	trustedRoot string
 	preparedMu  sync.Mutex
 	prepared    map[string]preparedRelease
@@ -491,7 +491,7 @@ func (m *Manager) inspectBundle(ctx context.Context, version string, requireSign
 		return Bundle{}, err
 	}
 	signatureVerified := false
-	if requireSignature || len(m.trustedKey) != 0 {
+	if requireSignature || len(m.trustedKeys) != 0 {
 		signature, sigErr := readRuleMetadata(dir, signatureName, ed25519.SignatureSize)
 		if sigErr == nil {
 			if err := m.verifySignature(data, signature); err != nil {

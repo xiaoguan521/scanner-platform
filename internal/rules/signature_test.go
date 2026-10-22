@@ -174,6 +174,33 @@ func TestPublicKeyTrustFileParsing(t *testing.T) {
 	}
 }
 
+func TestMultipleTrustedKeysSupportRotationOverlap(t *testing.T) {
+	oldPath, oldPrivate := signingKeyFixture(t)
+	newPath, newPrivate := signingKeyFixture(t)
+	root := t.TempDir()
+	m, err := NewVerifiedManagerWithKeys(root, []string{oldPath, newPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bundle, err := m.Import(context.Background(), packageZIP(t, oldPrivate, "20261016.01", "nuclei/old.json", false)); err != nil || !bundle.SignatureVerified {
+		t.Fatalf("retiring key package rejected: %#v %v", bundle, err)
+	}
+	if bundle, err := m.Import(context.Background(), packageZIP(t, newPrivate, "20261016.02", "nuclei/new.json", false)); err != nil || !bundle.SignatureVerified {
+		t.Fatalf("replacement key package rejected: %#v %v", bundle, err)
+	}
+	if _, err := NewVerifiedManagerWithKeys(t.TempDir(), []string{oldPath, oldPath}); err == nil {
+		t.Fatal("duplicate trusted key accepted")
+	}
+	tooMany := make([]string, 0, maxTrustedKeys+1)
+	for range maxTrustedKeys + 1 {
+		path, _ := signingKeyFixture(t)
+		tooMany = append(tooMany, path)
+	}
+	if _, err := NewVerifiedManagerWithKeys(t.TempDir(), tooMany); err == nil {
+		t.Fatal("more than the bounded trust set accepted")
+	}
+}
+
 func TestImportRequiresRawSignatureBeforeManifestOrExtraction(t *testing.T) {
 	for _, kind := range []string{"missing key", "missing signature", "wrong key", "whitespace", "short", "long", "base64", "hex", "invalid manifest", "extra file"} {
 		t.Run(kind, func(t *testing.T) {

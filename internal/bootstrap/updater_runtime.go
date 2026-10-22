@@ -11,12 +11,27 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
+	"syscall"
+	"time"
+
 	"scanner-platform/internal/api"
 	"scanner-platform/internal/executor"
 	"scanner-platform/internal/rules"
-	"syscall"
-	"time"
 )
+
+type repeatableStringFlag []string
+
+func (f *repeatableStringFlag) String() string { return strings.Join(*f, ",") }
+
+func (f *repeatableStringFlag) Set(value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return errors.New("value must not be blank")
+	}
+	*f = append(*f, value)
+	return nil
+}
 
 func RunUpdater(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("sec-updater", flag.ContinueOnError)
@@ -28,7 +43,8 @@ func RunUpdater(args []string, stdout, stderr io.Writer) int {
 	nodeClientKey := flags.String("node-client-key", "", "Owner-only PEM client private key for mTLS")
 	id := flags.String("id", "updater-local", "Updater identifier")
 	root := flags.String("rules-dir", "vuln-data", "Updater-owned rule directory")
-	trustedKey := flags.String("trusted-rule-public-key", "", "External Ed25519 PUBLIC KEY PEM file for rule import and activation")
+	var trustedKeys repeatableStringFlag
+	flags.Var(&trustedKeys, "trusted-rule-public-key", "External Ed25519 PUBLIC KEY PEM file; repeat for a key-rotation overlap")
 	importBundle := flags.String("import-bundle-file", "", "Import a signed ZIP directly from a local file (large offline artifacts supported)")
 	prepare := flags.Bool("prepare-engines", false, "Install and activate baseline templates and Trivy DB; no scans")
 	skipDownload := flags.Bool("skip-db-download", false, "Use the existing Trivy DB cache during preparation")
@@ -78,8 +94,8 @@ func RunUpdater(args []string, stdout, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	manager := &rules.Manager{Root: *root}
-	if *trustedKey != "" {
-		manager, err = rules.NewVerifiedManager(*root, *trustedKey)
+	if len(trustedKeys) > 0 {
+		manager, err = rules.NewVerifiedManagerWithKeys(*root, trustedKeys)
 		if err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1

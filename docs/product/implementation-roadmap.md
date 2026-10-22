@@ -21,6 +21,12 @@
 
 验证覆盖 SQLite 原子回滚、重复 ID/过期时间拒绝、HTTP 权限/CSRF/成功响应和 PostgreSQL 隔离夹具回归；OpenAPI 与前端构建同步更新。
 
+## 2026-10-22：漏洞库签名密钥轮换
+
+规则信任从单公钥扩展为最多 3 把受信 Ed25519 公钥的重叠窗口。Updater 只在启动时从规则根目录外加载并复制公钥，导入、下载和激活使用任一公钥验签；重复、超限、路径越界、符号链接和无效 PEM 均失败关闭。`sec-updater` 支持重复 `--trusted-rule-public-key`，本地 `make dev` 支持 `SCANNER_RULE_PUBLIC_KEY_FILES`，保留旧单数变量兼容；规则包不能注入或替换信任。轮换仍需运维先并行配置新旧公钥、确认新包可用后再移除旧公钥。
+
+验证覆盖两把轮换夹具、重复/上限拒绝和原有签名篡改路径；完整 Nuclei/Trivy 引擎兼容矩阵仍是后续工作。
+
 ## 本轮推进边界
 
 本轮补齐生产部署输入：`deploy/Dockerfile` 提供 Server、Worker、Updater
