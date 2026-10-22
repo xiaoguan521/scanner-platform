@@ -43,6 +43,14 @@ type ScopeInput struct {
 	TimeWindows []TimeWindow `json:"timeWindows"`
 	ExpiresAt   string       `json:"expiresAt"`
 }
+
+// ScopeRenewalInput renews existing approvals as a new pending request. It
+// never extends an active execution grant directly; every selected scope must
+// be reviewed again by an independent reviewer.
+type ScopeRenewalInput struct {
+	IDs       []string `json:"ids"`
+	ExpiresAt string   `json:"expiresAt"`
+}
 type Decision struct {
 	Decision       string `json:"decision"`
 	ApprovalTicket string `json:"approvalTicket"`
@@ -64,6 +72,7 @@ type PortRequest struct {
 type Repository interface {
 	ListScopes(context.Context) ([]Scope, error)
 	RequestScope(context.Context, string, ScopeInput) (Scope, error)
+	RenewScopes(context.Context, string, ScopeRenewalInput) ([]Scope, error)
 	UpdateScope(context.Context, string, string, ScopeInput) (Scope, error)
 	DeleteScope(context.Context, string, string) error
 	RevokeScope(context.Context, string, string) (Scope, error)
@@ -129,6 +138,33 @@ func normalizeScopeInput(in ScopeInput) (ScopeInput, error) {
 	}
 	in.ExpiresAt = expiry.UTC().Format(time.RFC3339)
 	return in, nil
+}
+
+const maxScopeRenewals = 100
+
+func normalizeScopeRenewalInput(in ScopeRenewalInput) (ScopeRenewalInput, time.Time, error) {
+	if len(in.IDs) == 0 || len(in.IDs) > maxScopeRenewals {
+		return ScopeRenewalInput{}, time.Time{}, ErrInvalid
+	}
+	seen := make(map[string]struct{}, len(in.IDs))
+	for index, id := range in.IDs {
+		id = strings.TrimSpace(id)
+		if id == "" || len(id) > 128 {
+			return ScopeRenewalInput{}, time.Time{}, ErrInvalid
+		}
+		if _, ok := seen[id]; ok {
+			return ScopeRenewalInput{}, time.Time{}, ErrInvalid
+		}
+		seen[id] = struct{}{}
+		in.IDs[index] = id
+	}
+	expiresAt, err := time.Parse(time.RFC3339, in.ExpiresAt)
+	now := time.Now().UTC()
+	if err != nil || !expiresAt.After(now.Add(time.Minute)) || expiresAt.After(now.Add(366*24*time.Hour)) {
+		return ScopeRenewalInput{}, time.Time{}, ErrInvalid
+	}
+	in.ExpiresAt = expiresAt.UTC().Format(time.RFC3339)
+	return in, expiresAt.UTC(), nil
 }
 func readScope(row interface{ Scan(...any) error }) (Scope, error) {
 	var a Scope

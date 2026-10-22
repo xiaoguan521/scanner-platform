@@ -821,6 +821,11 @@
 - 新增 SQLite/PostgreSQL 审计适配、旧令牌失效和审计失败回滚测试；轮换缺少既有令牌时返回明确的 `node_credential_not_found`，不隐式签发新令牌。远程部署、自动证书/令牌轮换和客户端自动注册仍未实现。
 - 验证：`make test`（Go race 与 Python 37 项）、`make lint`、`make build`、`node web/src/pages/Nodes/pagination.test.mjs`、`node --test $(find web/src -name '*.test.mjs' -print)`（37 项）、`npm --prefix web run build`、OpenAPI YAML 解析、`POSTGRES_DSN_FILE="$PWD/runtime/postgres/dsn" go test -tags lab -race ./internal/repo`、`git diff --check` 均通过；PostgreSQL lab 实际执行了轮换审计写入。测试使用临时数据库、隔离 PostgreSQL、文档保留地址和临时令牌，未写入真实凭据或资产。
 
+## 2026-10-22：授权范围批量续期
+
+- 授权范围页新增跨页选择和批量续期。一次最多 100 条；Server 在同一事务内要求所有记录当前为 `APPROVED`，保留原资产、数字 IP 和时间窗，统一写入新的未来截止时间并清空审批字段，将记录重置为 `PENDING`。任何 ID 缺失、重复或状态不符都会整批回滚；每条记录写入脱敏审计。
+- SQLite 单元/API 测试覆盖成功续期、重复 ID/无效截止时间和混合状态原子回滚；PostgreSQL lab 夹具覆盖续期后重新审批。未扩大扫描范围或直接授予执行权限。
+
 ## 2026-10-21：远程节点部署服务状态闭环
 
 - `sec-node-deploy` 的安装和轮换计划在 `systemctl restart` 成功后追加 `systemctl is-active --quiet`；服务未保持 active 时不报告成功，轮换会执行旧材料恢复、重启和恢复后的 active 检查。

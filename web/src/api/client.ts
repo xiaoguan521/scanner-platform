@@ -269,6 +269,9 @@ export const apiClient = {
   requestScope(input: {assetId:string; timeWindows:TimeWindow[]; expiresAt:string}) {
     return requestJSON<AuthorizedScope>('/api/v1/scopes', 'POST', input);
   },
+  renewScopes(ids:string[], expiresAt:string) {
+    return requestJSON<{items:AuthorizedScope[];status:string}>('/api/v1/scopes/renew', 'POST', {ids, expiresAt});
+  },
   updateScope(id:string,input:{assetId:string;timeWindows:TimeWindow[];expiresAt:string}) {
     return requestJSON<AuthorizedScope>('/api/v1/scopes/' + encodeURIComponent(id), 'PUT', input);
   },

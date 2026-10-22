@@ -77,6 +77,25 @@ func registerApprovalHandlers(mux *http.ServeMux, users account.Repository, repo
 		}
 		respond(w, 201, item)
 	}))
+	mux.HandleFunc("POST /api/v1/scopes/renew", auth(users, false, func(w http.ResponseWriter, r *http.Request, u account.User) {
+		if !mayRequest(u) {
+			bad(w, 403, "forbidden")
+			return
+		}
+		if !mutationGuard(w, r) {
+			return
+		}
+		var in approvals.ScopeRenewalInput
+		if !readJSON(w, r, &in) {
+			return
+		}
+		items, err := repo.RenewScopes(r.Context(), u.ID, in)
+		if err != nil {
+			handleError(w, err)
+			return
+		}
+		respond(w, 200, map[string]any{"items": items, "status": "PENDING"})
+	}))
 	mux.HandleFunc("PUT /api/v1/scopes/{id}", auth(users, false, func(w http.ResponseWriter, r *http.Request, u account.User) {
 		if !mayRequest(u) {
 			bad(w, 403, "forbidden")

@@ -18,4 +18,13 @@ test('approval ledgers use bounded server pagination and filters', () => {
   assert.match(page, /showSizeChanger: true/);
 });
 
+test('approval ledgers expose atomic approved-scope renewal', () => {
+  assert.match(client, /renewScopes\(ids:string\[\],\s*expiresAt:string\)/);
+  assert.match(client, /\/api\/v1\/scopes\/renew/);
+  assert.match(page, /批量续期/);
+  assert.match(page, /preserveSelectedRowKeys: true/);
+  assert.match(page, /scopeStatus\(scope\) !== 'APPROVED'/);
+  assert.match(page, /不会直接延长扫描执行权限/);
+});
+
 console.log('approval pagination UI contract passed');

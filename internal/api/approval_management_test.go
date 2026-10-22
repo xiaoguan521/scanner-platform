@@ -103,6 +103,13 @@ func TestScopeUpdateDeleteAndRevokeEndpoints(t *testing.T) {
 	if reviewed := send("POST", "/api/v1/scopes/"+scope.ID+"/review", decision, opsCookie); reviewed.Code != http.StatusOK {
 		t.Fatalf("approve scope: %d %s", reviewed.Code, reviewed.Body.String())
 	}
+	renewed := send("POST", "/api/v1/scopes/renew", `{"ids":["`+scope.ID+`"],"expiresAt":"`+time.Now().Add(4*time.Hour).UTC().Format(time.RFC3339)+`"}`, adminCookie)
+	if renewed.Code != http.StatusOK || !strings.Contains(renewed.Body.String(), `"status":"PENDING"`) {
+		t.Fatalf("renew scope: %d %s", renewed.Code, renewed.Body.String())
+	}
+	if reviewed := send("POST", "/api/v1/scopes/"+scope.ID+"/review", decision, opsCookie); reviewed.Code != http.StatusOK {
+		t.Fatalf("reapprove renewed scope: %d %s", reviewed.Code, reviewed.Body.String())
+	}
 	if deleted := send("DELETE", "/api/v1/scopes/"+scope.ID, "", adminCookie); deleted.Code != http.StatusConflict {
 		t.Fatalf("delete approved scope: %d %s", deleted.Code, deleted.Body.String())
 	}

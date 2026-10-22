@@ -96,6 +96,13 @@ func TestPostgresApprovalRepositoryLab(t *testing.T) {
 	if _, err := store.ReviewScope(ctx, requesterID, scope.ID, Decision{Decision: "APPROVE", ApprovalTicket: "PG-SCOPE-2"}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("second scope review error=%v, want conflict", err)
 	}
+	renewed, err := store.RenewScopes(ctx, requesterID, ScopeRenewalInput{IDs: []string{scope.ID}, ExpiresAt: time.Now().Add(3 * time.Hour).UTC().Format(time.RFC3339)})
+	if err != nil || len(renewed) != 1 || renewed[0].Status != "PENDING" || renewed[0].IsActive {
+		t.Fatalf("renewed scope=%+v err=%v", renewed, err)
+	}
+	if _, err := store.ReviewScope(ctx, reviewerID, scope.ID, Decision{Decision: "APPROVE", ApprovalTicket: "PG-SCOPE-3"}); err != nil {
+		t.Fatal(err)
+	}
 
 	ports, err := store.ListPortRequestsPage(ctx, PortRequestListQuery{Page: 1, PageSize: 10, Status: "PENDING", Search: "192.0.2.40"})
 	if err != nil || ports.Total != 2 || len(ports.Items) != 2 {

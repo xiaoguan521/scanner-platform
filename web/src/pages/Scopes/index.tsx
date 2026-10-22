@@ -36,6 +36,7 @@ export const ScopesPage: React.FC = () => {
   const [scopePage, setScopePage] = useState(1);
   const [scopePageSize, setScopePageSize] = useState(10);
   const [scopeTotal, setScopeTotal] = useState(0);
+  const [selectedScopeIDs, setSelectedScopeIDs] = useState<React.Key[]>([]);
   const [expiryCounts, setExpiryCounts] = useState({ expiring: 0, expired: 0 });
   const [ports, setPorts] = useState<PortRequest[]>([]);
   const [portPage, setPortPage] = useState(1);
@@ -50,6 +51,8 @@ export const ScopesPage: React.FC = () => {
   const [requestOpen, setRequestOpen] = useState(false);
   const [editingScope, setEditingScope] = useState<AuthorizedScope | null>(null);
   const [reviewTarget, setReviewTarget] = useState<ReviewTarget | null>(null);
+  const [renewOpen, setRenewOpen] = useState(false);
+  const [renewExpiry, setRenewExpiry] = useState('');
   const [busy, setBusy] = useState(false);
   const [requestForm] = Form.useForm<ScopeForm>();
   const [reviewForm] = Form.useForm<ApprovalDecision>();
@@ -148,6 +151,26 @@ export const ScopesPage: React.FC = () => {
       catch (cause) { message.error(cause instanceof Error ? cause.message : '撤销失败'); throw cause; }
     },
   });
+  const renewScopes = async () => {
+    if (!canRequest || selectedScopeIDs.length === 0) return;
+    const expiry = new Date(renewExpiry);
+    if (!Number.isFinite(expiry.getTime())) {
+      message.error('请选择有效的新的截止时间');
+      return;
+    }
+    setBusy(true);
+    try {
+      const result = await apiClient.renewScopes(selectedScopeIDs.map(String), expiry.toISOString());
+      setScopes(previous => previous.map(scope => result.items.find(item => item.id === scope.id) ?? scope));
+      setSelectedScopeIDs([]);
+      setRenewOpen(false);
+      setRenewExpiry('');
+      refresh();
+      message.success(`已提交 ${result.items.length} 条续期申请，等待重新审批`);
+    } catch (cause) {
+      message.error(cause instanceof Error ? cause.message : '批量续期失败，记录未改变');
+    } finally { setBusy(false); }
+  };
   const submitReview = async (decision: ApprovalDecision) => {
     if (!canReview || !reviewTarget) return;
     setBusy(true);
@@ -186,9 +209,16 @@ export const ScopesPage: React.FC = () => {
       <Text type="secondary">共 {scopeTotal} 条</Text>
       <Select aria-label="授权期限筛选" value={expiryFilter} onChange={setExpiryFilter} style={{ width: 150 }}
         options={[{ value: 'all', label: '全部期限' }, { value: 'expiring', label: '7 天内到期' }, { value: 'expired', label: '已过期' }]} />
+      <Button disabled={!canRequest || selectedScopeIDs.length === 0 || busy} onClick={() => setRenewOpen(true)}>批量续期{selectedScopeIDs.length ? `（${selectedScopeIDs.length}）` : ''}</Button>
       <Button type="primary" icon={<PlusOutlined />} disabled={!canRequest} onClick={() => setRequestOpen(true)}>申请范围授权</Button>
     </Space>}>
       <DataTable<AuthorizedScope> dataSource={scopes} rowKey="id" loading={loading} scroll={{ x: 1200 }}
+        rowSelection={{
+          selectedRowKeys: selectedScopeIDs,
+          preserveSelectedRowKeys: true,
+          getCheckboxProps: scope => ({ disabled: !canRequest || scopeStatus(scope) !== 'APPROVED' || busy }),
+          onChange: keys => setSelectedScopeIDs(keys),
+        }}
         pagination={{ current: scopePage, pageSize: scopePageSize, total: scopeTotal, showSizeChanger: true, pageSizeOptions: [10, 20, 50], showTotal: total => `共 ${total} 项`, onChange: (page, size) => { if (size !== scopePageSize) { setScopePageSize(size); setScopePage(1); } else setScopePage(page); } }}
         columns={[
           { title: '目标 IP', dataIndex: 'cidrOrHost', render: (v: string) => <Tag>{v}</Tag> },
@@ -213,6 +243,11 @@ export const ScopesPage: React.FC = () => {
           { title: '审批单', dataIndex: 'approvalTicket', render: (v: string) => v || '—' }, { title: '审核人', dataIndex: 'reviewedBy', render: (v: string) => v || '—' }, { title: '备注', dataIndex: 'reviewNote' },
         ]} />
     </Card>
+    <Modal title="批量续期授权范围" open={renewOpen} onCancel={() => { setRenewOpen(false); setRenewExpiry(''); }} onOk={() => void renewScopes()} okButtonProps={{ loading: busy, disabled: selectedScopeIDs.length === 0 }}>
+      <Alert type="warning" showIcon message={`将续期 ${selectedScopeIDs.length} 条已批准授权`} description="续期会保留原目标和时间窗，但立即清除原审批并重置为待审核；不会直接延长扫描执行权限。" style={{ marginBottom: 14 }} />
+      <Typography.Text strong>新的授权截止时间</Typography.Text>
+      <Input style={{ marginTop: 8 }} type="datetime-local" value={renewExpiry} onChange={event => setRenewExpiry(event.target.value)} />
+    </Modal>
     <Modal title={editingScope ? '修改授权范围' : '申请扫描授权（单个主机 IP）'} open={requestOpen}
       onCancel={() => { setRequestOpen(false); setEditingScope(null); requestForm.resetFields(); }} onOk={() => requestForm.submit()} okButtonProps={{ loading: busy }}>
       {editingScope?.status === 'APPROVED' && <Alert type="warning" showIcon style={{ marginBottom: 14 }} message="保存修改会立即清除原审批，更新后的授权需要重新审核。" />}
