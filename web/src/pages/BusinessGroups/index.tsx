@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Alert, Button, Card, Empty, Form, Input, message, Modal, Space, Tag, Typography } from 'antd';
+import { TitleWithHelp } from '../../components/HelpTip';
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { DataTable } from '../../components/DataState';
 import { apiClient } from '../../api/client';
@@ -53,8 +54,7 @@ export const BusinessGroupsPage: React.FC = () => {
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
-      <Alert showIcon type="info" message="业务组是资产登记的归属维度" description="新建资产或导入 CSV 时可复用已有业务组。删除资产不会删除业务组，便于保留组织维度和审计记录。" />
-      <Card title="业务组" extra={<Space wrap><Input.Search aria-label="业务组搜索" placeholder="搜索业务组" allowClear value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} style={{ width: 220 }} /><Button icon={<ReloadOutlined />} onClick={() => void reload()} loading={loading}>刷新</Button><Button type="primary" icon={<PlusOutlined />} disabled={!canEdit} onClick={() => setOpen(true)}>新增业务组</Button></Space>}>
+      <Card title={<TitleWithHelp title="业务组" helpTitle="业务组是资产登记的归属维度" help="新建资产或导入 CSV 时可复用已有业务组。删除资产不会删除业务组，便于保留组织维度和审计记录。"/>} extra={<Space wrap><Input.Search aria-label="业务组搜索" placeholder="搜索业务组" allowClear value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} style={{ width: 220 }} /><Button icon={<ReloadOutlined />} onClick={() => void reload()} loading={loading}>刷新</Button><Button type="primary" icon={<PlusOutlined />} disabled={!canEdit} onClick={() => setOpen(true)}>新增业务组</Button></Space>}>
         {error && <Alert type="error" showIcon message={error} style={{ marginBottom: 16 }} />}
         <DataTable<BusinessGroup>
           rowKey="name"

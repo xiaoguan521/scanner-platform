@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Alert, Button, Card, Form, Input, InputNumber, message, Space, Tag, Typography } from 'antd';
 import { apiClient } from '../../api/client';
+import { TitleWithHelp } from '../../components/HelpTip';
 import { useCollection } from '../../api/hooks';
 import { useAuth } from '../../auth/AuthProvider';
 import { parsePortRanges, showRanges, compressPorts, expandPortRanges } from '../Tasks/policy';
@@ -21,8 +22,8 @@ export const ScanPolicySettings:React.FC=()=>{
   const validateRanges=(_:unknown,value:string)=>{try{parsePortRanges(value);return Promise.resolve();}catch(e){return Promise.reject(e);}};
   return <>
     <Card title="检测能力状态"><Space wrap>{capabilities.map(c=><Tag key={c.id} color={c.status==='enabled'?'green':'default'} title={c.message}>{c.name}：{c.status==='enabled'?'已启用':c.status==='disabled'?'未启用':'未提供'}</Tag>)}{!capabilities.some(c=>c.id==='weak_credential')&&<Tag>弱口令：本次未启用该检测项</Tag>}</Space>{capabilityError&&<Typography.Paragraph type="danger">{capabilityError}</Typography.Paragraph>}</Card>
-    <Card title="系统扫描策略" extra={<Tag>{canEdit?'管理员可编辑':'只读'}</Tag>}>
-      <Alert style={{marginBottom:16}} type={error?'error':'info'} showIcon message={error||'系统默认排除优先应用于所有新任务'} description="系统、资产与任务的排除端口取并集，并跳过活动隔离端口。保存策略不会改变已经创建任务的冻结配置。每端口识别最多 3 次。"/>
+    <Card title={<TitleWithHelp title="系统扫描策略" helpTitle="排除端口如何生效" help="系统默认排除优先应用于所有新任务。系统、资产与任务的排除端口取并集，并跳过活动隔离端口。保存策略不会改变已经创建任务的冻结配置。每端口识别最多 3 次。"/>} extra={<Tag>{canEdit?'管理员可编辑':'只读'}</Tag>}>
+      {error&&<Alert style={{marginBottom:16}} type="error" showIcon message={error}/>}
       <Form form={form} layout="vertical" onFinish={save} disabled={!canEdit||!policy}>
         <Form.Item name="commonPortsText" label="常见 TCP 端口清单" rules={[{required:true,message:'至少填写一个常见端口'},{validator:validateRanges}]} extra="支持端口或范围，英文逗号分隔；任务页从此策略读取清单。"><Input.TextArea rows={3} placeholder="例如 22, 80, 443, 8000-8010"/></Form.Item>
         <Form.Item name="exclusionsText" label="系统默认排除端口" rules={[{validator:validateRanges}]} extra="初始为空。被排除的端口不会进行连接、服务识别或漏洞检测。"><Input placeholder="例如 3306, 9000-9100"/></Form.Item>

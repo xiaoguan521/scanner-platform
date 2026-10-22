@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { DataTable } from '../../components/DataState';
-import { Alert, Button, Card, Col, Descriptions, Drawer, Form, Input, InputNumber, message, Modal, Row, Select, Space, Tag, Typography } from 'antd';
+import { Button, Card, Col, Descriptions, Drawer, Form, Input, InputNumber, message, Modal, Row, Select, Space, Tag, Typography } from 'antd';
+import { TitleWithHelp } from '../../components/HelpTip';
 import { PlusOutlined, UploadOutlined } from '@ant-design/icons';
 import { useCollection } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
@@ -40,8 +41,7 @@ export const KnowledgePage:React.FC=()=>{
   };
   return <Space direction="vertical" size={16} style={{width:'100%'}}>
     <CollectionNotice loading={loading} error={error}/>
-    <Alert showIcon type="info" message="漏洞知识库与中文修复建议" description="支持本地 JSON 导入和自建中文内容。条目用于组件版本匹配与发现项内容补全；版本匹配结果标注为版本推断。CNNVD、CNVD 等数据源尚未接入，可人工填写外部编号。"/>
-    <Card title="漏洞知识库" extra={<Space wrap><input ref={fileRef} type="file" accept=".json,application/json" style={{display:'none'}} onChange={e=>void importFile(e.target.files?.[0])}/><Button icon={<UploadOutlined/>} disabled={!canWrite} loading={busy} onClick={()=>fileRef.current?.click()}>导入本地 JSON</Button><Button type="primary" icon={<PlusOutlined/>} disabled={!canWrite} onClick={()=>edit()}>新增条目</Button></Space>}>
+    <Card title={<TitleWithHelp title="漏洞知识库" helpTitle="漏洞知识库与中文修复建议" help="支持本地 JSON 导入和自建中文内容。条目用于组件版本匹配与发现项内容补全；版本匹配结果标注为版本推断。CNNVD、CNVD 等数据源尚未接入，可人工填写外部编号。"/>} extra={<Space wrap><input ref={fileRef} type="file" accept=".json,application/json" style={{display:'none'}} onChange={e=>void importFile(e.target.files?.[0])}/><Button icon={<UploadOutlined/>} disabled={!canWrite} loading={busy} onClick={()=>fileRef.current?.click()}>导入本地 JSON</Button><Button type="primary" icon={<PlusOutlined/>} disabled={!canWrite} onClick={()=>edit()}>新增条目</Button></Space>}>
       <Input.Search aria-label="搜索知识条目" value={query} onChange={e=>{setQuery(e.target.value);setPage(1);}} allowClear placeholder="搜索平台编号、标题、组件或外部编号" style={{maxWidth:480,marginBottom:16}}/>
       <DataTable<KnowledgeEntry> rowKey="id" dataSource={items} loading={loading} scroll={{x:1100}} pagination={{current:page,pageSize,total,showSizeChanger:true,pageSizeOptions:[15,30,60],showTotal:n=>`共 ${n} 条`,onChange:(nextPage,nextSize)=>{if(nextSize!==pageSize){setPageSize(nextSize);setPage(1);}else setPage(nextPage);}}} columns={[
         {title:'平台编号',dataIndex:'id',width:170},{title:'中文标题',dataIndex:'title',render:(v:string,r)=><Button type="link" style={{padding:0,whiteSpace:'normal',textAlign:'left'}} onClick={()=>setDetail(r)}>{v}</Button>},

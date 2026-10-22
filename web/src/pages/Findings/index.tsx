@@ -20,13 +20,13 @@ import {
   message,
   theme,
 } from 'antd';
-import { SafetyCertificateOutlined } from '@ant-design/icons';
 import { Finding, FindingAssignmentEvent, FindingEvent, FindingAssignee, FindingNote, FindingRetest, FindingSeverity, FindingStatus } from '../../types';
 import { FindingStatusTag, SeverityTag } from '../../components/Semantic';
 import { useAuth } from '../../auth/AuthProvider';
 import { batchAssignFindings, batchFindingDisposition, updateFinding, fetchFindingEvents, fetchFindingAssignees, fetchFindingAssignments, assignFinding, fetchFindingNotes, addFindingNote, createFindingRetest, fetchFindingRetests } from '../../api/runtime';
 import { apiClient } from '../../api/client';
 import { CollectionNotice } from '../../api/CollectionNotice';
+import { TitleWithHelp } from '../../components/HelpTip';
 import { pollWhileVisible } from '../../api/polling';
 
 import { riskLabels, methodLabels, confidenceLabels, isVerifiedFinding } from './presentation';
@@ -204,7 +204,7 @@ export const FindingsPage: React.FC = () => {
   const handleUpdateStatus = async (id: string, newStatus: FindingStatus, acceptance?:{reason:string;acceptedUntil:string}) => {
     // FIXED is a Server-only decision based on a complete verified scan.
     if (newStatus === 'FIXED') {
-      message.warning('FIXED 必须经 Server 确认完整扫描、规则执行和未检出阈值，目前不可操作');
+      message.warning('FIXED 必须经平台确认完整扫描、规则执行和未检出阈值，目前不可操作');
       return;
     }
     setSaving(true);try{const item=await updateFinding(id,newStatus,acceptance);setFindings(prev=>prev.map(f=>f.id===id?item:f));setFindingRevision(n=>n+1);setEventRevision(n=>n+1);message.success('状态已保存并记录审计');}catch(e){message.error(String(e));}finally{setSaving(false)}
@@ -213,15 +213,7 @@ export const FindingsPage: React.FC = () => {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       <CollectionNotice loading={findingLoading} error={findingError} />
-      <Alert
-        message="扫描引擎发现项"
-        description="Nuclei 基线和 ZAP 被动发现需结合服务用途判断；Trivy 展示漏洞编号、受影响组件和修复版本。未检出不自动标记已修复。"
-        type="warning"
-        showIcon
-        icon={<SafetyCertificateOutlined />}
-      />
-
-      <Card><Space wrap><Tag color="red">漏洞总数 {findingCountsSummary.vulnerabilities}</Tag><Tag color="blue">登录入口 {findingCountsSummary.loginEntries}</Tag><Tag>未核实类型 {findingCountsSummary.unknown}</Tag><Tag color="orange">版本推断 {findingCountsSummary.version}</Tag><Tag color="green">已验证 {findingCountsSummary.verified}</Tag><Tag>弱口令：本次未启用该检测项</Tag></Space></Card>
+      <Card><Space wrap><Tag color="red">漏洞总数 {findingCountsSummary.vulnerabilities}</Tag><Tag color="blue">登录入口 {findingCountsSummary.loginEntries}</Tag><Tag>未核实类型 {findingCountsSummary.unknown}</Tag><Tag color="orange">版本推断 {findingCountsSummary.version}</Tag><Tag color="green">已验证 {findingCountsSummary.verified}</Tag></Space></Card>
       <Space wrap>
         <Select aria-label="检测方式筛选" value={methodFilter} onChange={method => updateFilters({ method })} style={{width:210}} options={[{value:'ALL',label:'全部检测方式'},...Object.entries(methodLabels).map(([value,label])=>({value,label}))]}/>
         <Select aria-label="置信度筛选" value={confidenceFilter} onChange={confidence => updateFilters({ confidence })} style={{width:180}} options={[{value:'ALL',label:'全部置信度'},...Object.entries(confidenceLabels).map(([value,label])=>({value,label}))]}/>
@@ -230,7 +222,6 @@ export const FindingsPage: React.FC = () => {
         {businessGroup&&<Tag closable onClose={()=>updateFilters({businessGroup:''})}>业务组：{businessGroup}</Tag>}
         {assetId&&<Tag closable onClose={()=>updateFilters({assetId:''})}>资产：{assetId}</Tag>}
       </Space>
-      <Alert showIcon type="info" message="版本推断没有实际验证漏洞。未标注检测方式的历史结果显示为未核实；扫描完整性不等同于原理验证。"/>
       <Input aria-label="按目标、组件或 CVE 筛选" placeholder="按目标、服务器别名、组件或 CVE 筛选" allowClear value={query} onChange={event => setQuery(event.target.value)} style={{maxWidth:480}} />
 
       <Card
@@ -296,7 +287,7 @@ export const FindingsPage: React.FC = () => {
           pagination={{current:findingPage,pageSize:findingPageSize,total:findingTotal,showSizeChanger:true,pageSizeOptions:[10,20,50],showTotal:total=>`共 ${total} 项`,onChange:(page,size)=>{if(size!==findingPageSize){setFindingPageSize(size);setFindingPage(1)}else setFindingPage(page)}}}
           scroll={{x:1600}}
           columns={[
-            {title:'类型 / 检测依据',width:200,render:(_,r)=><Space direction="vertical" size={3}><Tag>{riskLabels[r.riskType??'unknown']}</Tag><Tag color={isVerifiedFinding(r)?'green':r.detectMethod==='version'?'orange':'default'}>{methodLabels[r.detectMethod??'unknown']}</Tag><Tag>{confidenceLabels[r.confidence??'unknown']}</Tag></Space>},
+            {title:<TitleWithHelp title="类型 / 检测依据" helpTitle="如何理解检测依据" help="Web 基线检查结果需结合服务用途判断；系统包结果展示漏洞编号、受影响组件和修复版本。版本推断没有实际验证漏洞；未标注检测方式的历史结果显示为未核实。未检出不会自动标记为已修复。"/>,width:200,render:(_,r)=><Space direction="vertical" size={3}><Tag>{riskLabels[r.riskType??'unknown']}</Tag><Tag color={isVerifiedFinding(r)?'green':r.detectMethod==='version'?'orange':'default'}>{methodLabels[r.detectMethod??'unknown']}</Tag><Tag>{confidenceLabels[r.confidence??'unknown']}</Tag></Space>},
             {
               title: '等级',
               dataIndex: 'severity',

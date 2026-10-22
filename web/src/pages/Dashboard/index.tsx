@@ -49,15 +49,7 @@ export const DashboardPage: React.FC = () => {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-      {/* 顶部安全合规与运行提示 */}
       <CollectionNotice loading={summaryLoading || tasksLoading} error={summaryError || tasksError} />
-      <Alert
-        message="本地业务与扫描任务"
-        description="业务数据来自 SQLite。支持 Nuclei 只读基线、ZAP 被动响应检查和 Trivy 离线输入；未检出不会自动标记已修复。"
-        type="info"
-        showIcon
-        icon={<SafetyOutlined />}
-      />
 
       {showQuickStart && <Card title="快速开始" extra={<Text type="secondary">完成后自动隐藏</Text>}>
         <Space direction="vertical" size={12} style={{ width: '100%' }}>

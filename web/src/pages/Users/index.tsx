@@ -6,14 +6,9 @@ import { apiClient } from '../../api/client';
 import { useCollection } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
 import { useAuth } from '../../auth/AuthProvider';
+import { roleNames } from '../../components/Semantic';
 import type { User, UserRole } from '../../types';
 
-const roleNames: Record<UserRole, string> = {
-  admin: '系统管理员',
-  security_engineer: '安全工程师',
-  ops_approver: '运维审批人',
-  viewer: '只读观察员',
-};
 const roleOptions = Object.entries(roleNames).map(([value,label])=>({value,label}));
 
 export const UsersPage: React.FC = () => {
@@ -35,7 +30,7 @@ export const UsersPage: React.FC = () => {
     try {
       const result=await apiClient.createUser(values.username,values.password,values.role);
       setUsers(prev=>[...prev,result]);createForm.resetFields();setCreating(false);
-      message.success('用户已创建并写入 SQLite');
+      message.success('用户已创建');
     }catch(e){message.error(e instanceof Error ? e.message:'创建失败');}
     finally{setBusy(false);}
   };
@@ -61,7 +56,6 @@ export const UsersPage: React.FC = () => {
   };
   return <div style={{display:'flex',flexDirection:'column',gap:20}}>
     <CollectionNotice loading={loading} error={error}/>
-    <Alert showIcon type="success" message="用户管理：已连接 SQLite" description="管理员可以创建、修改角色及启停用户。其余扫描业务仍未启用。"/>
     <Card title={<Space><UserOutlined/> 用户与角色管理</Space>}
       extra={<Space><Input.Search value={query} onChange={e=>setQuery(e.target.value)} allowClear placeholder="搜索用户名" style={{width:180}}/>
         <Button type="primary" icon={<PlusOutlined/>} disabled={!canManage} onClick={()=>setCreating(true)}>新建用户</Button>

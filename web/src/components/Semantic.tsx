@@ -2,7 +2,7 @@ import React from 'react';
 import { Card, Skeleton, Statistic, Tag, Typography } from 'antd';
 import type { CSSProperties, ReactNode } from 'react';
 import type { StatisticProps, TagProps } from 'antd';
-import type { FindingSeverity, FindingStatus, NotificationSeverity, TaskStatus } from '../types';
+import type { FindingSeverity, FindingStatus, NotificationSeverity, TaskStatus, UserRole } from '../types';
 
 type TagColor = TagProps['color'];
 
@@ -42,6 +42,13 @@ export const taskStatusMeta: Record<TaskStatus, SemanticMeta> = {
 export const scheduleStatusMeta: Record<string, SemanticMeta> = {
   ...taskStatusMeta,
   DELETED: { color: 'default', label: '任务记录已删除' },
+};
+
+export const roleNames: Record<UserRole, string> = {
+  admin: '系统管理员',
+  security_engineer: '安全工程师',
+  ops_approver: '运维审批人',
+  viewer: '只读观察员',
 };
 
 export const notificationSeverityMeta: Record<NotificationSeverity, SemanticMeta> = {

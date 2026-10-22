@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
 import { apiClient } from './client';
 import { pollIntervals, pollWhileVisible } from './polling';
 import type { DashboardSummary, Resources, SystemStatus, Capabilities } from './client';
@@ -65,6 +65,14 @@ export function useDashboardSummary(days: 7 | 30 | 90) {
     return () => { controller.abort(); stop(); };
   }, [days]);
   return { data, loading, error };
+}
+
+export interface SystemStatusState { status: SystemStatus | null; capabilities: Capabilities | null; error: string | null }
+// AppLayout owns the single status poller and shares it with pages.
+export const SystemStatusContext = createContext<SystemStatusState>({ status: null, capabilities: null, error: null });
+export function useServerCapability(name: string): boolean {
+  const { status, capabilities } = useContext(SystemStatusContext);
+  return Boolean(status?.enabled.includes(name) || capabilities?.enabled.includes(name));
 }
 
 export function useSystemStatus() {

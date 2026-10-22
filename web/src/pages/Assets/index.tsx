@@ -10,6 +10,7 @@ import type { AssetInsight } from '../../api/client';
 import { pollIntervals, pollWhileVisible } from '../../api/polling';
 import { useCollection } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
+import { TitleWithHelp } from '../../components/HelpTip';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../auth/AuthProvider';
 import { FindingStatusTag, SeverityTag } from '../../components/Semantic';
@@ -217,10 +218,6 @@ export const AssetsPage: React.FC = () => {
 
   return <div style={{display:'flex',flexDirection:'column',gap:16}}>
     <CollectionNotice loading={assetLoading} error={assetError}/>
-    <Alert type="warning" showIcon
-      message="端口探测只针对已登记的单台主机"
-      description="在任务中心可选择常用 TCP 端口或输入范围（支持 1-65535），Worker 最多并发探测 64 个端口；也可填写排除端口。资产中已标记跳过或隔离的端口会自动排除。开放端口只作候选；提交申请并经运维审批后，才会出现在漏洞扫描目标中。"/>
-    <Alert type="info" showIcon message="资产可达性" description="新增或编辑表单可测试当前填写的数字 IP，不保存测试结果。Server 启动后立即探测清册中的主机，此后每轮完成后间隔 60 秒继续；清册每 10 秒自动刷新。无响应不等于主机离线，也不会跳过 TCP 探测。" />
 
     {quarantines.some(q=>q.status==='ACTIVE') && <Card title="疑似四层转发隔离区">
       <DataTable rowKey={q=>q.assetId+'-'+q.port} dataSource={quarantines.filter(q=>q.status==='ACTIVE')} size="small" pagination={false}
@@ -230,7 +227,7 @@ export const AssetsPage: React.FC = () => {
             onClick={()=>{setReleaseTarget({assetId:q.assetId,port:q.port});setReleaseReason('');}}>人工解除</Button>}
         ]}/>
     </Card>}
-    <Card title="资产登记台账" extra={<Space>
+    <Card title={<TitleWithHelp title="资产登记台账" helpTitle="端口探测只针对已登记的单台主机" help="在任务中心可选择常用 TCP 端口或输入范围（支持 1-65535），Worker 最多并发探测 64 个端口；也可填写排除端口。资产中已标记跳过或隔离的端口会自动排除。开放端口只作候选；提交申请并经运维审批后，才会出现在漏洞扫描目标中。"/>} extra={<Space>
       <Input.Search placeholder="搜索地址、组或负责人" allowClear value={filter} onChange={e=>setFilter(e.target.value)} style={{width:220}}/>
       <Button icon={<DownloadOutlined/>} loading={exporting} onClick={()=>void exportAssets()}>导出 CSV</Button>
       <AssetImport disabled={!canEdit} onImported={async()=>{setAssetRevision(value=>value+1)}}/>
@@ -265,7 +262,7 @@ export const AssetsPage: React.FC = () => {
             return <Space direction="vertical" size={2}><Tag color={latest.status==='COMPLETED'?'green':latest.status==='FAILED'?'error':latest.status==='CANCELED'?'default':'processing'}>{label}</Tag><Text type="secondary">{new Date(finished??latest.createdAt).toLocaleString()}</Text></Space>;
           }},
           {title:'当前风险数',width:110,render:(_:unknown,asset:Asset)=>{if(insightError)return <Text type="secondary">未知</Text>;const count=insights.get(asset.id)?.activeFindingCount??0;return <Tag color={count?'error':'green'}>{count}</Tag>}},
-          {title:'IP 可达性（ICMP）',width:170,render:(_:unknown,asset:Asset)=>{
+          {title:<TitleWithHelp title="IP 可达性（ICMP）" helpTitle="资产可达性" help="新增或编辑表单可测试当前填写的数字 IP，不保存测试结果。平台启动后立即探测清册中的主机，此后每轮完成后间隔 60 秒继续；无响应不等于主机离线，也不会跳过 TCP 探测。"/>,width:170,render:(_:unknown,asset:Asset)=>{
             if(asset.kind!=='host')return <Text type="secondary">主机地址适用</Text>;
             const status=checkingAsset===asset.id?'CHECKING':asset.reachabilityStatus??'UNCHECKED';
             const labels:Record<string,string>={UNCHECKED:'未检测',CHECKING:'检测中',REACHABLE:'Ping 可达',NO_RESPONSE:'未收到响应',CHECK_FAILED:'检测不可用'};
@@ -297,10 +294,10 @@ export const AssetsPage: React.FC = () => {
         <Card title="SSH 运行态服务与容器" size="small"><DataTable dataSource={detailAsset.runtimeServices??[]} rowKey={r=>`${r.manager}-${r.runtime??''}-${r.name}`} size="small" pagination={false} locale={{emptyText:'本次 SSH 采集没有返回运行态服务或容器'}} columns={[
           {title:'名称',dataIndex:'name',width:220},{title:'管理方式',dataIndex:'manager',width:140,render:(v:string)=>v==='systemd'?'systemd':v==='init'?'init 脚本':v==='process'?'进程表':'容器运行时'},{title:'运行时 / 镜像',width:260,render:(_,r)=>r.manager==='container'?[r.runtime,r.image].filter(Boolean).join(' · ')||'未提供':'—'},{title:'状态',dataIndex:'state',render:(v:string)=>v==='running'?<Tag color="green">运行中</Tag>:v==='stopped'?<Tag color="orange">已停止</Tag>:<Tag>已安装</Tag>},
         ]}/><Typography.Paragraph type="secondary" style={{marginTop:10,marginBottom:0}}>仅展示明确授权主机通过 SSH 只读采集到的服务单元、进程名和本机 Docker/Podman 容器名、镜像引用与运行状态，不包含 PID、命令行、参数、容器内容、卷或集群工作负载。</Typography.Paragraph></Card>
-        <Card title="登录入口（单独统计）" size="small"><DataTable dataSource={detailAsset.loginEntries??[]} rowKey={r=>`${r.type}-${r.port}-${r.url??r.name}`} size="small" scroll={{x:750}} columns={[
+        <Card title={<TitleWithHelp title="登录入口（单独统计）" helpTitle="登录入口" help="发现登录入口不代表存在弱口令；平台不进行口令猜测。"/>} size="small"><DataTable dataSource={detailAsset.loginEntries??[]} rowKey={r=>`${r.type}-${r.port}-${r.url??r.name}`} size="small" scroll={{x:750}} columns={[
           {title:'名称 / 类型',render:(_,r)=>`${r.name} · ${r.type==='web'?'Web':'系统'}`},{title:'端口',dataIndex:'port'}, {title:'URL',dataIndex:'url',render:(v:string)=>v||'—'},
           {title:'安全属性',render:(_,r)=><Space direction="vertical" size={0}><Text>HTTPS：{boolLabel(r.https)}</Text><Text>验证码：{boolLabel(r.captcha)}</Text><Text>防爆破：{boolLabel(r.antiBruteForce)}</Text></Space>}, {title:'举证',dataIndex:'evidence'},
-        ]}/><Alert style={{marginTop:12}} showIcon type="info" message="弱口令：本次未启用该检测项。发现登录入口不代表存在弱口令。"/></Card>
+        ]}/></Card>
         <Card title="漏洞摘要" size="small" extra={detailInsight&&detailInsight.activeFindingCount>0&&<Link to={`/findings?assetId=${encodeURIComponent(detailAsset.id)}`}>{detailInsight.activeFindingCount>detailInsight.activeFindings.length?`共 ${detailInsight.activeFindingCount} 项，按严重度显示前 ${detailInsight.activeFindings.length} 项 · `:''}在漏洞页查看全部</Link>}><DataTable<AssetInsight['activeFindings'][number]> dataSource={detailInsight?.activeFindings??[]} rowKey="id" loading={insightLoading} locale={{emptyText:'当前没有活动漏洞记录'}} pagination={false} scroll={{x:900}} columns={[
           {title:'严重度',dataIndex:'severity',width:100,render:(value:string)=><SeverityTag value={value as Finding['severity']}/>},
           {title:'漏洞',dataIndex:'title',width:260,ellipsis:true},

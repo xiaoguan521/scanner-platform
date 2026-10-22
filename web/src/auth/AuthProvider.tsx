@@ -32,12 +32,12 @@ export const AuthProvider: React.FC<{children:React.ReactNode}> = ({children}) =
   if(!user) return (
     <div style={{minHeight:'100vh',display:'grid',placeItems:'center',background:token.colorBgLayout,padding:20}}>
       <Card title={setupRequired ? "首次使用 · 创建管理员" : "安全扫描平台 · 登录"} style={{width:'100%',maxWidth:430}}>
-        <Typography.Paragraph type="secondary">本地开发版：账号来自 SQLite；扫描仅在你明确创建真实引擎任务后执行。</Typography.Paragraph>
+        <Typography.Paragraph type="secondary">{setupRequired ? "首次使用请创建管理员账号。" : "企业资产漏洞扫描与风险管理。"}</Typography.Paragraph>
         {error && <Alert showIcon type="warning" message={error} style={{marginBottom:16}}/>}
         <Form layout="vertical" autoComplete="off" onFinish={async(values:{username:string,password:string})=>{
           setSubmitting(true);setError('');
           try{if(setupRequired){await apiClient.setup(values.username,values.password);setSetupRequired(false);} setUser(await apiClient.login(values.username,values.password));}
-          catch(cause){setError(cause instanceof ApiRequestError&&cause.status===429?'登录尝试过多，请稍后再试':setupRequired?'初始化失败：用户名需 3–40 位，密码需 12–72 字节，或管理员已存在':'账号或密码错误，或 Server 不可用');}
+          catch(cause){setError(cause instanceof ApiRequestError&&cause.status===429?'登录尝试过多，请稍后再试':setupRequired?'初始化失败：用户名需 3–40 位，密码需 12–72 字节，或管理员已存在':'账号或密码错误，或平台不可用');}
           finally{setSubmitting(false);}
         }}>
           <Form.Item name="username" label="用户名" rules={[{required:true}]}><Input autoComplete="username"/></Form.Item>
@@ -45,7 +45,7 @@ export const AuthProvider: React.FC<{children:React.ReactNode}> = ({children}) =
           <Button block type="primary" htmlType="submit" loading={submitting}>{setupRequired ? "创建管理员并登录" : "登录"}</Button>
         </Form>
         <Typography.Paragraph style={{marginTop:16}} type="secondary">
-          {setupRequired ? "设置自己的管理员账号和 12–72 字节密码；不会创建默认密码。" : "账号与会话由本机 Server 管理。"}
+          {setupRequired ? "设置自己的管理员账号和 12–72 字节密码；不会创建默认密码。" : "账号与会话由平台管理。"}
         </Typography.Paragraph>
       </Card>
     </div>);

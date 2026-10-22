@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { DataTable } from '../../components/DataState';
 import { Alert, Button, Card, Checkbox, DatePicker, Drawer, Dropdown, Empty, Form, Input, message, Progress, Select, Space, Tag, Typography, Upload } from 'antd';
+import { TitleWithHelp } from '../../components/HelpTip';
 import type { Dayjs } from 'dayjs';
 import { DownloadOutlined, FileTextOutlined, SettingOutlined, UploadOutlined } from '@ant-design/icons';
 import { useCollection } from '../../api/hooks';
@@ -102,8 +103,7 @@ export const ReportsPage: React.FC = () => {
   };
   return <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
     <CollectionNotice loading={assetsLoading || tasksLoading || reportLoading} error={assetsError || tasksError || error} />
-    <Alert showIcon type="info" message="后台生成与历史记录" description="每次生成冻结一份带版本的数据快照，HTML、Excel、Word、PDF、CSV 与 JSON 使用相同数据与统计规则。CSV 为漏洞明细平面文件，JSON 为完整快照。弱口令本次未启用，登录入口单独统计。报告上限 64 MiB，失败可用原快照重试。" />
-    <Card title={<Space><FileTextOutlined />生成安全报告</Space>} extra={<Button icon={<SettingOutlined />} disabled={!canWrite || !selectedTemplate} onClick={editTemplate}>配置模板</Button>}>
+    <Card title={<TitleWithHelp title={<Space><FileTextOutlined />生成安全报告</Space>} helpTitle="后台生成与历史记录" help="每次生成冻结一份带版本的数据快照，HTML、Excel、Word、PDF、CSV 与 JSON 使用相同数据与统计规则。CSV 为漏洞明细平面文件，JSON 为完整快照。登录入口单独统计。报告上限 64 MiB，失败可用原快照重试。"/>} extra={<Button icon={<SettingOutlined />} disabled={!canWrite || !selectedTemplate} onClick={editTemplate}>配置模板</Button>}>
       <Space wrap align="end">
         <div><Text type="secondary">报告模板</Text><Select aria-label="报告模板" value={templateId} onChange={setTemplateId} style={{ display: 'block', width: 190 }} options={templates.map(t => ({ value: t.id, label: t.name }))} /></div>
         <div><Text type="secondary">输出格式</Text><Select aria-label="输出格式" value={format} onChange={setFormat} style={{ display: 'block', width: 130 }} options={Object.entries(formatNames).map(([value, label]) => ({ value, label }))} /></div>

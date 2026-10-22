@@ -261,7 +261,7 @@ export const ScopesPage: React.FC = () => {
       </Form>
     </Modal>
     <Modal title="人工审批" open={!!reviewTarget} onCancel={() => setReviewTarget(null)} onOk={() => reviewForm.submit()} okButtonProps={{ loading: busy }}>
-      <Alert type="info" showIcon style={{ marginBottom: 14 }} message="不能审批自己提交的申请；审批需填写记录编号；本地验证请使用示例编号。" />
+      <Alert type="info" showIcon style={{ marginBottom: 14 }} message="不能审批自己提交的申请；审批需填写记录编号。" />
       <Form form={reviewForm} layout="vertical" onFinish={submitReview}>
         <Form.Item name="decision" label="处理意见" rules={[{ required: true }]}><Select options={[{ value: 'APPROVE', label: '批准' }, { value: 'REJECT', label: '驳回' }]} /></Form.Item>
         {pendingPortReview && <Form.Item name="kind" label="经人工确认的端口类型" rules={[{ required: true }]}><Select options={[{ value: 'WEB', label: 'WEB（明确确认是可扫描 Web 服务）' }, { value: 'NON_WEB', label: '非 Web（Web 扫描器不得扫描）' }]} /></Form.Item>}

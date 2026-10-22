@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { DataTable } from '../../components/DataState';
 import { Alert, Button, Card, DatePicker, Empty, Input, Space, Typography } from 'antd';
+import { TitleWithHelp } from '../../components/HelpTip';
 import type { Dayjs } from 'dayjs';
 import { ReloadOutlined, SearchOutlined } from '@ant-design/icons';
 import { requestJSON } from '../../api/client';
@@ -59,9 +60,8 @@ export const AuditPage: React.FC = () => {
   ], []);
 
   return <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-    <Alert showIcon type="info" message="只读审计查询" description="仅管理员可查看谁在何时执行了什么操作及关联对象。敏感详情、目标地址和凭据不会通过此查询接口返回。" />
     {error && <Alert showIcon type="error" message="审计日志加载失败" description={error} />}
-    <Card title="筛选审计记录" extra={<Space><Button onClick={clear}>清空</Button><Button icon={<SearchOutlined />} type="primary" onClick={apply}>查询</Button><Button icon={<ReloadOutlined />} onClick={() => void reload()} loading={loading}>刷新</Button></Space>}>
+    <Card title={<TitleWithHelp title="筛选审计记录" helpTitle="只读审计查询" help="仅管理员可查看谁在何时执行了什么操作及关联对象。敏感详情、目标地址和凭据不会通过此查询接口返回。"/>} extra={<Space><Button onClick={clear}>清空</Button><Button icon={<SearchOutlined />} type="primary" onClick={apply}>查询</Button><Button icon={<ReloadOutlined />} onClick={() => void reload()} loading={loading}>刷新</Button></Space>}>
       <Space wrap>
         <Input value={draft.actor} onChange={event => setDraft(current => ({ ...current, actor: event.target.value }))} placeholder="操作者" allowClear style={{ width: 180 }} />
         <Input value={draft.action} onChange={event => setDraft(current => ({ ...current, action: event.target.value }))} placeholder="动作，如 create_asset" allowClear style={{ width: 220 }} />

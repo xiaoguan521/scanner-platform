@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Alert, Button, Card, Empty, Input, Space, Tag } from 'antd';
+import { TitleWithHelp } from '../../components/HelpTip';
 import { ReloadOutlined } from '@ant-design/icons';
 import { DataTable } from '../../components/DataState';
 import { apiClient } from '../../api/client';
@@ -28,8 +29,7 @@ export const AssetImportHistoryPage: React.FC = () => {
   }, [page, pageSize, search]);
   useEffect(() => { void reload(); }, [reload]);
   return (
-    <Card title="资产导入记录" extra={<Space wrap><Input.Search aria-label="导入记录搜索" placeholder="搜索操作者" allowClear value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} style={{ width: 220 }} /><Button icon={<ReloadOutlined />} onClick={() => void reload()} loading={loading}>刷新</Button></Space>}>
-      <Alert showIcon type="info" message="仅保留审计摘要" description="记录包含操作者、导入数量和时间，不保存 CSV 原文、目标地址或资产清单。查询由 Server 分页返回。" style={{ marginBottom: 16 }} />
+    <Card title={<TitleWithHelp title="资产导入记录" helpTitle="仅保留审计摘要" help="记录包含操作者、导入数量和时间，不保存 CSV 原文、目标地址或资产清单。"/>} extra={<Space wrap><Input.Search aria-label="导入记录搜索" placeholder="搜索操作者" allowClear value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} style={{ width: 220 }} /><Button icon={<ReloadOutlined />} onClick={() => void reload()} loading={loading}>刷新</Button></Space>}>
       {error && <Alert type="error" showIcon message={error} style={{ marginBottom: 16 }} />}
       <DataTable<AssetImportHistory>
         rowKey="id"
