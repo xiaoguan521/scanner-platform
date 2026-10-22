@@ -14,7 +14,7 @@ import (
 
 func TestBuildPlanRequiresRoleScopedPackageAndPinnedSSHFiles(t *testing.T) {
 	root := t.TempDir()
-	now := time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC)
+	now := time.Now().UTC().Add(-time.Hour)
 	complete := filepath.Join(root, "complete")
 	if _, err := provision.Provision(provision.Options{
 		OutputDir: complete,
@@ -105,7 +105,7 @@ func TestPlanExecuteCleansStagingOnlyBeforePublish(t *testing.T) {
 
 func TestBuildRotationPlanHasExplicitBackupAndRecovery(t *testing.T) {
 	root := t.TempDir()
-	now := time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC)
+	now := time.Now().UTC().Add(-time.Hour)
 	complete := filepath.Join(root, "complete")
 	if _, err := provision.Provision(provision.Options{
 		OutputDir: complete, CADir: filepath.Join(root, "ca"), ServerIP: netip.MustParseAddr("192.0.2.10"),

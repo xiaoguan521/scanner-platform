@@ -210,6 +210,20 @@ func (c *TaskCgroup) Close(ctx context.Context) error {
 			}
 		}
 	}
+	// A cgroup v2 directory is removed with rmdir once it holds no
+	// processes; the kernel keeps its interface files but they do not block
+	// rmdir. On a plain filesystem (unit tests) those files are real and
+	// would block it, so clear the direct regular files first. On a real
+	// cgroupfs those removals return EPERM and are ignored, leaving
+	// behaviour unchanged. Child cgroup directories are left alone so a
+	// non-empty hierarchy still fails rmdir.
+	if entries, readErr := os.ReadDir(c.path); readErr == nil {
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				_ = os.Remove(filepath.Join(c.path, entry.Name()))
+			}
+		}
+	}
 	if err := os.Remove(c.path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove task cgroup: %w", err)
 	}
