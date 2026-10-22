@@ -51,6 +51,7 @@ func RunUpdater(args []string, stdout, stderr io.Writer) int {
 	withJava := flags.Bool("with-java-db", false, "Include Java artifact index in explicit engine preparation")
 	binDir := flags.String("bin-dir", "bin", "Pinned engine binaries")
 	dbCache := flags.String("db-cache", "runtime/engine-data/trivy", "Updater DB download cache")
+	templatesDir := flags.String("nuclei-templates-dir", "", "Directory of curated read-only JSON Nuclei templates to include in the prepared bundle")
 	once := flags.Bool("once", false, "Process at most one queued operation")
 	syncStateOnly := flags.Bool("sync-state-only", false, "Publish local rule catalog metadata, then exit")
 	status := flags.Bool("status", false, "Print updater mode")
@@ -151,7 +152,11 @@ func RunUpdater(args []string, stdout, stderr io.Writer) int {
 		}
 		version := time.Now().UTC().Format("20060102.150405")
 		fmt.Fprintln(stdout, "Packaging, hashing and installing local engine rules...")
-		bundle, err := manager.PrepareDefault(ctx, version, absolute(*dbCache), *withJava)
+		curatedTemplates := ""
+		if *templatesDir != "" {
+			curatedTemplates = absolute(*templatesDir)
+		}
+		bundle, err := manager.PrepareDefault(ctx, version, absolute(*dbCache), *withJava, curatedTemplates)
 		if err == nil {
 			err = manager.ActivatePreparedLocal(ctx, bundle.Version)
 		}

@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 type preparedRelease struct {
@@ -33,9 +34,55 @@ func BaselineTemplates() map[string][]byte {
 	return files
 }
 
+// addCuratedTemplates merges externally curated, read-only JSON Nuclei
+// templates (produced by scripts/curate_nuclei_templates.py in CI) into the
+// bundle. It applies structural safety checks here; the Worker re-validates
+// every template against the full read-only profile before executing it.
+func addCuratedTemplates(files map[string][]byte, dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("read curated templates: %w", err)
+	}
+	added := 0
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		full := filepath.Join(dir, entry.Name())
+		info, err := os.Lstat(full)
+		if err != nil || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > 64<<10 {
+			return fmt.Errorf("curated template %q is missing, a symlink, empty, or too large", entry.Name())
+		}
+		data, err := os.ReadFile(full)
+		if err != nil {
+			return err
+		}
+		var doc struct {
+			ID   string `json:"id"`
+			HTTP []any  `json:"http"`
+		}
+		if err := json.Unmarshal(data, &doc); err != nil {
+			return fmt.Errorf("curated template %q is not valid JSON: %w", entry.Name(), err)
+		}
+		if !customRuleID.MatchString(doc.ID) || len(doc.HTTP) != 1 {
+			return fmt.Errorf("curated template %q is not the supported baseline shape", entry.Name())
+		}
+		name := "nuclei/templates/" + doc.ID + ".json"
+		if _, exists := files[name]; exists {
+			return fmt.Errorf("curated template id %q duplicates an existing template", doc.ID)
+		}
+		files[name] = data
+		added++
+		if added > 5000 {
+			return fmt.Errorf("curated template set exceeds 5000 templates")
+		}
+	}
+	return nil
+}
+
 // PrepareDefault installs a bundle built by Updater from the original baseline
 // templates and the database downloaded using the pinned Trivy binary.
-func (m *Manager) PrepareDefault(ctx context.Context, version, trivyCache string, includeJava bool) (Bundle, error) {
+func (m *Manager) PrepareDefault(ctx context.Context, version, trivyCache string, includeJava bool, templatesDir ...string) (Bundle, error) {
 	m.preparedMu.Lock()
 	defer m.preparedMu.Unlock()
 	delete(m.prepared, version)
@@ -52,6 +99,11 @@ func (m *Manager) PrepareDefault(ctx context.Context, version, trivyCache string
 	}
 	manifest := Manifest{Version: version, Engines: []string{"nuclei"}, Files: map[string]string{}}
 	files := BaselineTemplates()
+	if len(templatesDir) > 0 && templatesDir[0] != "" {
+		if err := addCuratedTemplates(files, templatesDir[0]); err != nil {
+			return Bundle{}, err
+		}
+	}
 	sources := map[string]string{}
 	if trivyCache != "" {
 		info, err := os.Lstat(trivyCache)

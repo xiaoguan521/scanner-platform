@@ -53,8 +53,8 @@ func ValidateTemplate(data []byte) (Template, error) {
 		return t, fmt.Errorf("template must use the supported JSON root-GET baseline profile")
 	}
 	request := t.HTTP[0]
-	if request.Method != "GET" || len(request.Path) != 1 || request.Path[0] != "{{BaseURL}}" && request.Path[0] != "{{BaseURL}}/" || len(request.Matchers) == 0 || len(request.Matchers) > 8 {
-		return t, fmt.Errorf("only a single root GET is permitted")
+	if request.Method != "GET" || len(request.Path) != 1 || !rules.ValidReadOnlyTemplatePath(request.Path[0]) || len(request.Matchers) == 0 || len(request.Matchers) > 8 {
+		return t, fmt.Errorf("only a single read-only GET to a same-origin path is permitted")
 	}
 	for _, m := range request.Matchers {
 		if m.Condition != "" && m.Condition != "and" && m.Condition != "or" {
@@ -130,8 +130,8 @@ func (r *Runner) nuclei(ctx context.Context, task taskflow.Task, dir string) ([]
 			return nil, fmt.Errorf("duplicate template ID")
 		}
 		count++
-		if count > 100 {
-			return nil, fmt.Errorf("baseline profile allows at most 100 templates")
+		if count > 5000 {
+			return nil, fmt.Errorf("bundled rule profile allows at most 5000 templates")
 		}
 		if err := os.WriteFile(filepath.Join(destination, t.ID+".json"), data, 0600); err != nil {
 			return nil, err
@@ -150,8 +150,8 @@ func (r *Runner) nuclei(ctx context.Context, task taskflow.Task, dir string) ([]
 			return nil, fmt.Errorf("duplicate custom template ID")
 		}
 		count++
-		if count > 120 {
-			return nil, fmt.Errorf("baseline and custom template limit exceeded")
+		if count > 5200 {
+			return nil, fmt.Errorf("bundled and custom template limit exceeded")
 		}
 		if err := os.WriteFile(filepath.Join(destination, t.ID+".json"), data, 0600); err != nil {
 			return nil, err

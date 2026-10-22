@@ -420,6 +420,7 @@ export interface CustomRule {
   values?: string[];
   statusCodes?: number[];
   enabled: boolean;
+  path?: string;
   template?: string;
 }
 

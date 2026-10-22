@@ -38,3 +38,29 @@ func TestCompileCustomRuleRejectsInvalidDefinitions(t *testing.T) {
 		}
 	}
 }
+
+func TestCompileCustomRuleSupportsSameOriginGetPath(t *testing.T) {
+	rule, err := CompileCustomRule(CustomRule{ID: "internal-debug-open", Name: "Internal debug endpoint reachable", Severity: "high", MatchType: "status", StatusCodes: []int{200}, Path: "/internal/debug", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var template map[string]any
+	if err := json.Unmarshal([]byte(rule.Template), &template); err != nil {
+		t.Fatal(err)
+	}
+	http := template["http"].([]any)[0].(map[string]any)
+	if http["method"] != "GET" || http["path"].([]any)[0] != "{{BaseURL}}/internal/debug" {
+		t.Fatalf("custom rule path was not applied: %#v", http)
+	}
+}
+
+func TestCompileCustomRuleRejectsUnsafePaths(t *testing.T) {
+	base := func(p string) CustomRule {
+		return CustomRule{ID: "p", Name: "x", Severity: "high", MatchType: "status", StatusCodes: []int{200}, Path: p}
+	}
+	for _, p := range []string{"no-leading-slash", "/has space", "/inject{{interactsh-url}}", "/back\\slash", "/" + strings.Repeat("a", 300)} {
+		if _, err := CompileCustomRule(base(p)); err == nil {
+			t.Errorf("unsafe custom rule path accepted: %q", p)
+		}
+	}
+}

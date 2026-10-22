@@ -77,6 +77,7 @@ func (r *Runner) AutoScan(ctx context.Context, task taskflow.Task) (taskflow.Aut
 		taskflow.ReportProgress(ctx, "http_scan", 0, httpTotal)
 	}
 	httpCompleted := 0
+	httpScanFailed := false
 	for _, scheme := range []string{"http", "https"} {
 		targets := byScheme[scheme]
 		if len(targets) == 0 {
@@ -91,18 +92,30 @@ func (r *Runner) AutoScan(ctx context.Context, task taskflow.Task) (taskflow.Aut
 			subtask.Chunks[0].Targets = targets[start:end]
 			findings, err := r.Execute(ctx, subtask)
 			if err != nil {
-				return result, err
-			}
-			markEngine("nuclei")
-			result.Findings = append(result.Findings, findings...)
-			if r.zapReady() {
-				subtask.Engines = []string{"zap"}
-				findings, err = r.Execute(ctx, subtask)
-				if err != nil {
-					return result, err
+				if ctx.Err() != nil {
+					return result, ctx.Err()
 				}
-				markEngine("zap")
+				// A single HTTP candidate batch failed (for example a root
+				// request error). Record it and keep going so the remaining
+				// candidates and the SSH/Trivy phases still run; the partial
+				// HTTP coverage is reflected by CompletedFully below.
+				httpScanFailed = true
+			} else {
+				markEngine("nuclei")
 				result.Findings = append(result.Findings, findings...)
+				if r.zapReady() {
+					subtask.Engines = []string{"zap"}
+					zapFindings, zapErr := r.Execute(ctx, subtask)
+					if zapErr != nil {
+						if ctx.Err() != nil {
+							return result, ctx.Err()
+						}
+						httpScanFailed = true
+					} else {
+						markEngine("zap")
+						result.Findings = append(result.Findings, zapFindings...)
+					}
+				}
 			}
 			httpCompleted += end - start
 			taskflow.ReportProgress(ctx, "http_scan", httpCompleted, httpTotal)
@@ -167,7 +180,15 @@ func (r *Runner) AutoScan(ctx context.Context, task taskflow.Task) (taskflow.Aut
 	}
 	result.SystemStatus = boundedSystemStatus(result.SystemStatus)
 	if err := r.scanApplications(ctx, task, &result); err != nil {
-		return result, err
+		if ctx.Err() != nil {
+			return result, ctx.Err()
+		}
+		// Application (Java/Go) collection or analysis failed. scanApplications
+		// already recorded the failed ApplicationScanStatus on result, and
+		// autoScanCompleted rejects that status, so keep the completed
+		// port/HTTP/system results and finish the task with
+		// CompletedFully=false instead of discarding them and marking the
+		// whole task FAILED.
 	}
 	for _, app := range result.ApplicationResults {
 		if app.AnalyzedCount > 0 {
@@ -176,7 +197,7 @@ func (r *Runner) AutoScan(ctx context.Context, task taskflow.Task) (taskflow.Aut
 		}
 	}
 	result.RulesExecuted = len(result.ExecutedEngines) > 0
-	result.CompletedFully = autoScanCompleted(result)
+	result.CompletedFully = autoScanCompleted(result) && !httpScanFailed
 	return result, nil
 }
 

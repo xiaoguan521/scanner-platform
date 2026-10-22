@@ -20,10 +20,24 @@ type CustomRule struct {
 	Values      []string `json:"values,omitempty"`
 	StatusCodes []int    `json:"statusCodes,omitempty"`
 	Enabled     bool     `json:"enabled"`
+	Path        string   `json:"path,omitempty"`
 	Template    string   `json:"template,omitempty"`
 }
 
 var customRuleID = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,99}$`)
+
+// readOnlyGETPath permits {{BaseURL}} optionally followed by a same-origin
+// path and query. It forbids any second {{...}} expression, backslashes,
+// whitespace and control characters, so a template can only issue one
+// read-only GET to a fixed path on the explicitly authorized target.
+var readOnlyGETPath = regexp.MustCompile(`^\{\{BaseURL\}\}(/[A-Za-z0-9._~%:@!$&'()*+,;=/?-]*)?$`)
+
+// ValidReadOnlyTemplatePath reports whether a compiled Nuclei template path is
+// the supported read-only GET profile. The executor reuses it so the custom
+// rule compiler and the Worker runtime share one definition.
+func ValidReadOnlyTemplatePath(path string) bool {
+	return len(path) <= 256 && readOnlyGETPath.MatchString(path)
+}
 
 // CompileCustomRule turns a simple UI definition into the only Nuclei profile
 // accepted by the Worker: one GET to the explicitly scoped root URL and local
@@ -39,6 +53,15 @@ func CompileCustomRule(rule CustomRule) (CustomRule, error) {
 	case "info", "low", "medium", "high", "critical":
 	default:
 		return CustomRule{}, fmt.Errorf("invalid custom rule severity")
+	}
+	path := strings.TrimSpace(rule.Path)
+	if path == "" {
+		path = "/"
+	}
+	rule.Path = path
+	fullPath := "{{BaseURL}}" + path
+	if !ValidReadOnlyTemplatePath(fullPath) {
+		return CustomRule{}, fmt.Errorf("custom rule path must start with '/' and be a same-origin read-only GET path")
 	}
 	matcher := map[string]any{"type": rule.MatchType}
 	switch rule.MatchType {
@@ -84,7 +107,7 @@ func CompileCustomRule(rule CustomRule) (CustomRule, error) {
 	document := map[string]any{
 		"id":   rule.ID,
 		"info": map[string]any{"name": rule.Name, "author": "scanner-platform custom rule", "severity": rule.Severity, "description": rule.Description, "tags": "custom,read-only"},
-		"http": []any{map[string]any{"method": "GET", "path": []string{"{{BaseURL}}/"}, "matchers-condition": "or", "matchers": []any{matcher}}},
+		"http": []any{map[string]any{"method": "GET", "path": []string{fullPath}, "matchers-condition": "or", "matchers": []any{matcher}}},
 	}
 	encoded, err := json.Marshal(document)
 	if err != nil {
