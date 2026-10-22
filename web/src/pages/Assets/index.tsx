@@ -228,7 +228,7 @@ export const AssetsPage: React.FC = () => {
         ]}/>
     </Card>}
     <Card title={<TitleWithHelp title="资产登记台账" helpTitle="端口探测只针对已登记的单台主机" help="在任务中心可选择常用 TCP 端口或输入范围（支持 1-65535），Worker 最多并发探测 64 个端口；也可填写排除端口。资产中已标记跳过或隔离的端口会自动排除。开放端口只作候选；提交申请并经运维审批后，才会出现在漏洞扫描目标中。"/>} extra={<Space>
-      <Input.Search placeholder="搜索地址、组或负责人" allowClear value={filter} onChange={e=>setFilter(e.target.value)} style={{width:220}}/>
+      <Input.Search aria-label="资产搜索" placeholder="搜索地址、名称、业务组或负责人" allowClear value={filter} onChange={e=>setFilter(e.target.value)} style={{width:260}}/>
       <Button icon={<DownloadOutlined/>} loading={exporting} onClick={()=>void exportAssets()}>导出 CSV</Button>
       <AssetImport disabled={!canEdit} onImported={async()=>{setAssetRevision(value=>value+1)}}/>
       <Button type="primary" icon={<PlusOutlined/>} disabled={!canEdit} onClick={()=>setCreateOpen(true)}>登记资产</Button>

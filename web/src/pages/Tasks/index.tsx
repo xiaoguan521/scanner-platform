@@ -13,6 +13,7 @@ import type { CustomRule, PortProbeRange, ScanPlan, ScanPlanInput, ScanTask, Sch
 
 import { parsePortRanges, showRanges, coversAllPorts, presetLabels, summarizePorts, compressPorts, previewProbePorts } from './policy';
 import { progressPercent, progressPhases } from './progress';
+import { taskTargetSummary } from './targets';
 import { assertTaskSubmission, isAutoTaskWizard, wizardStepFields } from './wizard';
 const dayOptions=['周日','周一','周二','周三','周四','周五','周六'].map((label,value)=>({label,value}));
 const applicationStatuses:Record<string,string>={not_configured:'未配置部署目录',not_started:'尚未开始',port_out_of_scope:'未采集：SSH 端口不在本次范围',collecting:'采集中',collection_failed:'采集未完成',scanning:'分析中',analysis_failed:'分析未完成',completed:'已完成'};
@@ -45,7 +46,7 @@ export const TasksPage:React.FC=()=>{
   const [editingSchedule,setEditingSchedule]=useState<Schedule|null>(null);
   const [historySchedule,setHistorySchedule]=useState<Schedule|null>(null);const [scheduleRunPage,setScheduleRunPage]=useState(1);const [scheduleRuns,setScheduleRuns]=useState<ScheduleRun[]>([]);const [scheduleRunTotal,setScheduleRunTotal]=useState(0);const [scheduleRunLoading,setScheduleRunLoading]=useState(false);const [scheduleRunError,setScheduleRunError]=useState('');
   const [detailTask,setDetailTask]=useState<ScanTask|null>(null);const [detailLogs,setDetailLogs]=useState<TaskLog[]>([]);const [detailLoading,setDetailLoading]=useState(false);const [detailError,setDetailError]=useState('');const [detailExporting,setDetailExporting]=useState<'json'|'csv'|null>(null);
-  const [taskFilter,setTaskFilter]=useState('');const [statusFilter,setStatusFilter]=useState('all');const [engineFilter,setEngineFilter]=useState('all');
+  const [taskFilter,setTaskFilter]=useState('');const [statusFilter,setStatusFilter]=useState('all');const [engineFilter,setEngineFilter]=useState('all');const [taskSort,setTaskSort]=useState<'-created_at'|'created_at'>('-created_at');
   const engine=Form.useWatch('engine',form)??'auto';const mode=Form.useWatch('mode',form);const useWindow=Form.useWatch('window',form);const portPreset=Form.useWatch('portPreset',form)??'common';const selectedPlan=Form.useWatch('scanPlan',form)??'quick';
   const wizard=isAutoTaskWizard({engine,mode},Boolean(editingSchedule));
   const watchedValues=Form.useWatch([],form) as Partial<Values>|undefined;
@@ -59,14 +60,14 @@ export const TasksPage:React.FC=()=>{
     const load=(initial=false)=>{
       if(inFlight)return;
       inFlight=true;if(initial)setTaskLoading(true);
-      apiClient.tasksPage(taskPage,taskPageSize,{search:taskFilter,status:statusFilter,engine:engineFilter,archived:showArchived?'true':'false'},controller.signal).then(result=>{
+      apiClient.tasksPage(taskPage,taskPageSize,{search:taskFilter,status:statusFilter,engine:engineFilter,archived:showArchived?'true':'false',sort:taskSort},controller.signal).then(result=>{
         if(!controller.signal.aborted){setTasks(result.items);setTaskTotal(result.total);setTaskStatusCounts(result.statusCounts);setTaskError(null);}
       }).catch(cause=>{if(!controller.signal.aborted){setTasks([]);setTaskTotal(0);setTaskStatusCounts({});setTaskError(cause instanceof Error?cause.message:'扫描任务加载失败');}}).finally(()=>{inFlight=false;if(!controller.signal.aborted)setTaskLoading(false);});
     };
     load(true);const stop=pollWhileVisible(()=>load(),pollIntervals.activeTask);
     return()=>{controller.abort();stop();};
-  },[taskPage,taskPageSize,taskFilter,statusFilter,engineFilter,showArchived,taskRevision]);
-  useEffect(()=>{if(taskPage!==1)setTaskPage(1)},[taskFilter,statusFilter,engineFilter,showArchived]);
+  },[taskPage,taskPageSize,taskFilter,statusFilter,engineFilter,showArchived,taskSort,taskRevision]);
+  useEffect(()=>{if(taskPage!==1)setTaskPage(1)},[taskFilter,statusFilter,engineFilter,showArchived,taskSort]);
   useEffect(()=>{setWizardStep(0);},[engine,mode]);
   const nextWizardStep=async()=>{
     try{
@@ -204,14 +205,15 @@ export const TasksPage:React.FC=()=>{
         <Button onClick={()=>{setShowArchived(value=>!value);setEngineFilter('all');}}>{showArchived?'返回任务清册':'查看归档'}</Button>
         <Tag>{showArchived?'归档任务':'未归档任务'} {taskTotal}</Tag><Tag color="processing">执行中 {taskStatusCounts.RUNNING??0}</Tag><Tag color="gold">待执行 {(['PENDING','WAITING_WINDOW','PAUSED_WINDOW'] as const).reduce((sum,status)=>sum+(taskStatusCounts[status]??0),0)}</Tag><Tag color="default">已暂停 {taskStatusCounts.PAUSED??0}</Tag><Tag color="success">已完成 {taskStatusCounts.COMPLETED??0}</Tag>
       </Space>
-      <DataTable<ScanTask> dataSource={tasks} rowKey="id" loading={taskLoading} tableLayout="fixed" scroll={{x:1420}} locale={{emptyText:taskFilter||statusFilter!=='all'||engineFilter!=='all'?'没有符合筛选条件的任务':showArchived?'暂无归档任务':'暂无任务，请从右上角创建扫描任务或定时任务'}} pagination={{current:taskPage,pageSize:taskPageSize,total:taskTotal,showSizeChanger:true,pageSizeOptions:[10,20,50],showTotal:total=>`共 ${total} 个任务`,onChange:(page,size)=>{if(size!==taskPageSize){setTaskPageSize(size);setTaskPage(1)}else setTaskPage(page)}}}
+      <DataTable<ScanTask> dataSource={tasks} rowKey="id" loading={taskLoading} tableLayout="fixed" scroll={{x:1600}} onChange={(_pagination,_filters,sorter,extra)=>{if(extra.action!=='sort')return;const current=Array.isArray(sorter)?sorter[0]:sorter;setTaskSort(current?.order==='ascend'?'created_at':'-created_at');}} locale={{emptyText:taskFilter||statusFilter!=='all'||engineFilter!=='all'?'没有符合筛选条件的任务':showArchived?'暂无归档任务':'暂无任务，请从右上角创建扫描任务或定时任务'}} pagination={{current:taskPage,pageSize:taskPageSize,total:taskTotal,showSizeChanger:true,pageSizeOptions:[10,20,50],showTotal:total=>`共 ${total} 个任务`,onChange:(page,size)=>{if(size!==taskPageSize){setTaskPageSize(size);setTaskPage(1)}else setTaskPage(page)}}}
         expandable={{expandedRowRender:t=><Space direction="vertical"><Typography.Text>下发目标：{(()=>{const all=t.chunks?.flatMap(c=>c.targets)??[];return all.length>20?`${all.slice(0,20).join('、')} ……（共 ${all.length} 个）`:all.join('、')||'无';})()}</Typography.Text>{(t.engines?.[0]==='port-probe'||t.engines?.[0]==='auto')&&<><Typography.Text>探测配置：{presetLabels[t.portProbeConfig?.preset??'common']}；范围 {showRanges(t.portProbeConfig?.ranges)}；任务排除 {showRanges(t.portProbeConfig?.exclusions)}；合并排除 {showRanges(t.effectiveExclusions??t.portProbeConfig?.exclusions)}；隔离端口 {summarizePorts(t.quarantinedPorts)}；强度 {({gentle:'温和',standard:'标准',aggressive:'积极'})[t.portProbeConfig?.intensity??'gentle']}</Typography.Text><Typography.Text>实际探测：{t.portProbePorts?.length??0} 个 TCP 端口；发现开放候选：{t.portProbeResults?.length??0} 个{t.portProbeResults?.length?`（${t.portProbeResults.slice(0,20).map(p=>p.port).join(', ')}${t.portProbeResults.length>20?' …':''}）`:''}</Typography.Text>{t.engines[0]==='auto'&&<><Typography.Text>HTTP(S) 服务：{t.serviceResults?.filter(item=>item.kind==='HTTP').length??0} 个；自定义规则：{t.customRuleCount??0} 条</Typography.Text><Typography.Text>Linux 系统包：{t.systemScanStatus??'等待 Worker 回报'}</Typography.Text><ApplicationCoverage task={t}/><Typography.Text type="secondary">开放端口候选仅用于这次明确授权的范围，不会自动登记成长期授权端口。</Typography.Text></>}</>}{t.inputKind&&<Typography.Text>离线输入：{t.inputKind==='rootfs'?'Linux 系统包':t.inputKind==='image-archive'?'Docker / OCI 镜像':t.inputKind==='artifact'?'已部署 JAR / Go 文件':'应用依赖清单'} · {t.inputPath}</Typography.Text>}<Typography.Text>跳过目标：{t.skippedTargets?.join('、')||'无'}</Typography.Text><Typography.Text>规则版本：{t.ruleVersion||'无需外部规则包'}</Typography.Text>{t.error&&<Alert type="error" message={t.error}/>}</Space>}}
         columns={[
-          {title:'任务 ID',dataIndex:'id',width:230,ellipsis:true},
+          {title:'任务 ID',dataIndex:'id',width:200,ellipsis:true},
           {title:'执行方式',width:140,render:(_,t)=><Tag color={t.synthetic?'default':'blue'}>{t.synthetic?'模拟 Worker':t.engines[0]==='auto'?'自动综合扫描':t.engines[0]==='port-probe'?'历史 TCP 探测':t.engines.join('、').toUpperCase()}</Tag>},
-          {title:'目标 / 探测端口',width:165,render:(_,t)=>t.engines[0]==='port-probe'||t.engines[0]==='auto'?`${t.targetCount} 台主机 / ${t.portProbePorts?.length??0} 端口`:`${t.targetCount} / 跳过 ${t.skippedTargets?.length??0}`},
+          {title:'目标',width:220,render:(_,t)=>{const summary=taskTargetSummary(t);return <Space direction="vertical" size={0} style={{minWidth:0,maxWidth:'100%'}}><Typography.Text code ellipsis={{tooltip:summary.primary}}>{summary.primary}</Typography.Text><Typography.Text type="secondary" style={{fontSize:12}}>{summary.detail}</Typography.Text></Space>;}},
           {title:'进度',width:220,render:(_,t)=>renderProgress(t)},
           {title:'状态',dataIndex:'status',width:150,render:(s:string,t)=><Space wrap><TaskStatusTag value={s}/>{t.archived&&<Tag>已归档</Tag>}</Space>},
+          {title:'创建时间',dataIndex:'createdAt',width:180,sorter:true,sortDirections:['descend','ascend'],sortOrder:taskSort==='created_at'?'ascend':'descend',render:(v:string)=>v?new Date(v).toLocaleString():'—'},
           {title:'本地截止时间',dataIndex:'hardDeadline',width:190,render:(v:string)=>v?new Date(v).toLocaleString():'—'},
           {title:'操作',width:470,render:(_,t)=>{const terminal=['COMPLETED','CANCELED','FAILED'].includes(t.status);return <Space wrap><Button size="small" onClick={()=>openTaskDetail(t)}>详情</Button>{!terminal&&t.status!=='PAUSED'&&<Button size="small" disabled={!canWrite} onClick={()=>void pause(t)}>暂停</Button>}{t.status==='PAUSED'&&<Button size="small" type="primary" disabled={!canWrite} onClick={()=>void resume(t)}>恢复</Button>}{!terminal&&<Button size="small" danger disabled={!canWrite} onClick={()=>void stop(t.id)}>取消</Button>}{terminal&&<Button size="small" disabled={!canWrite} onClick={()=>void setArchived(t.id,!t.archived)}>{t.archived?'恢复':'归档'}</Button>}{terminal&&<Button size="small" disabled={!canWrite} onClick={()=>copyTask(t)}>按此配置新建</Button>}{terminal&&canDelete&&t.findingCount===0&&<Button size="small" danger onClick={()=>removeTask(t)}>彻底删除</Button>}{terminal&&canDelete&&t.findingCount>0&&<Tag>有关联发现，仅可归档</Tag>}</Space>}},
         ]}/>

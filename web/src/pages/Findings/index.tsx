@@ -222,7 +222,7 @@ export const FindingsPage: React.FC = () => {
         {businessGroup&&<Tag closable onClose={()=>updateFilters({businessGroup:''})}>业务组：{businessGroup}</Tag>}
         {assetId&&<Tag closable onClose={()=>updateFilters({assetId:''})}>资产：{assetId}</Tag>}
       </Space>
-      <Input aria-label="按目标、组件或 CVE 筛选" placeholder="按目标、服务器别名、组件或 CVE 筛选" allowClear value={query} onChange={event => setQuery(event.target.value)} style={{maxWidth:480}} />
+      <Input aria-label="按目标、软件包、CVE 或标题筛选" placeholder="按目标、软件包、CVE 或标题筛选" allowClear value={query} onChange={event => setQuery(event.target.value)} style={{maxWidth:480}} />
 
       <Card
         title="漏洞发现与生命周期闭环看板"

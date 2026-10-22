@@ -116,7 +116,7 @@ export const ReportsPage: React.FC = () => {
       <Typography.Paragraph type="secondary" style={{ marginTop: 14, marginBottom: 0 }}>任务范围使用该任务的历史观察记录；失败、取消或尚未完成的任务会保留状态说明。未知字段显示“未采集”或“未知”。</Typography.Paragraph>
     </Card>
     <Space wrap>
-      <Input aria-label="报告历史搜索" placeholder="搜索报告名称、创建人或快照" allowClear value={reportSearch} onChange={event => setReportSearch(event.target.value)} style={{ width: 280 }} />
+      <Input aria-label="报告历史搜索" placeholder="搜索报告 ID、名称、创建人或快照" allowClear value={reportSearch} onChange={event => setReportSearch(event.target.value)} style={{ width: 280 }} />
       <Select aria-label="报告状态筛选" value={reportStatus} onChange={setReportStatus} style={{ width: 150 }} options={[{ value: 'ALL', label: '全部状态' }, ...Object.entries(stateNames).map(([value, label]) => ({ value, label }))]} />
       <Select aria-label="报告格式筛选" value={reportFormat} onChange={setReportFormat} style={{ width: 190 }} options={[{ value: 'ALL', label: '全部格式' }, ...Object.entries(formatNames).map(([value, label]) => ({ value, label }))]} />
     </Space>
