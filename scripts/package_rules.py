@@ -9,6 +9,8 @@ import subprocess
 import tempfile
 import zipfile
 
+ENGINE_VERSIONS={'nuclei':'3.11.1','trivy':'0.76.0'}
+
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--version',required=True)
 parser.add_argument('--nuclei-dir',type=Path)
@@ -59,7 +61,31 @@ for engine,root in [('nuclei',args.nuclei_dir),('trivy',args.trivy_dir)]:
             files[name]=source
 if not files:parser.error('Provide at least one non-empty engine directory')
 if len(files)>50000:parser.error('At most 50000 files per package')
-manifest={'version':args.version,'engines':engines,'files':{}}
+compatibility={}
+for engine in engines:
+    entry={'min':ENGINE_VERSIONS[engine],'max':ENGINE_VERSIONS[engine]}
+    if engine=='trivy':
+        db_file=args.trivy_dir/'db'/'trivy.db'
+        if not db_file.is_file() or db_file.is_symlink():
+            parser.error('Trivy package requires db/trivy.db')
+        metadata=args.trivy_dir/'db'/'metadata.json'
+        if not metadata.is_file() or metadata.is_symlink():
+            parser.error('Trivy package requires db/metadata.json with a numeric Version')
+        try:
+            entry['db_schema']=int(json.loads(metadata.read_text(encoding='utf-8'))['Version'])
+        except (OSError,ValueError,KeyError,TypeError,json.JSONDecodeError):
+            parser.error('Trivy db/metadata.json must contain a numeric Version')
+        java_metadata=args.trivy_dir/'java-db'/'metadata.json'
+        java_db=args.trivy_dir/'java-db'/'trivy-java.db'
+        if java_metadata.exists() or java_db.exists():
+            if not java_metadata.is_file() or java_metadata.is_symlink() or not java_db.is_file() or java_db.is_symlink():
+                parser.error('Trivy Java DB requires java-db/trivy-java.db and metadata.json')
+            try:
+                entry['java_db_schema']=int(json.loads(java_metadata.read_text(encoding='utf-8'))['Version'])
+            except (OSError,ValueError,KeyError,TypeError,json.JSONDecodeError):
+                parser.error('Trivy java-db/metadata.json must contain a numeric Version')
+    compatibility[engine]=entry
+manifest={'version':args.version,'engines':engines,'engine_compatibility':compatibility,'files':{}}
 for name,source in files.items():
     with source.open('rb') as stream:manifest['files'][name]=file_hash(stream)
 manifest_data=json.dumps(manifest,ensure_ascii=False,sort_keys=True).encode('utf-8')

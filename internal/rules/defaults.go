@@ -77,6 +77,7 @@ func (m *Manager) PrepareDefault(ctx context.Context, version, trivyCache string
 	} else if includeJava {
 		return Bundle{}, fmt.Errorf("Java preparation requires a Trivy DB cache")
 	}
+	manifest.EngineCompatibility = PinnedEngineCompatibility(manifest.Engines, includeJava)
 	// Large Java indexes cannot fit in the web ZIP limit. Copy and hash them
 	// directly into a private staging directory, never into a byte slice or DB.
 	stage, err := os.MkdirTemp(m.Root, ".prepare-")
@@ -197,6 +198,9 @@ func (m *Manager) ActivatePreparedLocal(ctx context.Context, version string) err
 	}
 	if bundle.ManifestSHA256 != prepared.digest {
 		return fmt.Errorf("prepared manifest changed")
+	}
+	if !bundle.EngineValidated {
+		return fmt.Errorf("prepared rules do not match the current engine compatibility")
 	}
 	return m.activateCurrent(ctx, version, false)
 }

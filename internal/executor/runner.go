@@ -22,8 +22,8 @@ import (
 	"scanner-platform/internal/versionmgr"
 )
 
-const NucleiVersion = "3.11.1"
-const TrivyVersion = "0.76.0"
+const NucleiVersion = rules.NucleiVersion
+const TrivyVersion = rules.TrivyVersion
 const ZAPVersion = "2.17.0"
 
 type Runner struct {
@@ -130,6 +130,9 @@ func (r *Runner) ruleDirectory(ctx context.Context, version, engine string) (str
 	bundle, err := manager.Inspect(ctx, version)
 	if err != nil {
 		return "", fmt.Errorf("verify pinned rules: %w", err)
+	}
+	if !bundle.EngineValidated {
+		return "", fmt.Errorf("pinned rules do not declare compatible engine versions")
 	}
 	supported := false
 	for _, name := range bundle.Engines {

@@ -39,6 +39,8 @@ make dev       # 启动网页、Server、Worker、Updater
 
 Nuclei 当前默认四项基线：缺少 `X-Content-Type-Options`、缺少 CSP、缺少 `X-Frame-Options`、公开 Server 响应头。部分条目只具信息价值，需要结合应用用途判断。仅接受受限 JSON 模板：单次根路径 GET，以及字词/正则/状态匹配；不执行原始请求、请求体、动态载荷、代码、浏览器、DNS、网络协议或工作流。上游完整 YAML 漏洞模板库尚未接入，不能把本次结果解释为完整 CVE 覆盖。
 
+规则包的 `engine_compatibility` 以固定引擎版本为准：Nuclei `3.11.1`、Trivy `0.76.0`。Updater 激活前检查版本范围和 Trivy `metadata.json` 的 `Version`；带 Java 索引的包还检查 Java 数据库 schema。范围或 schema 不匹配的包只保留为未验证清单，不能激活，Worker 执行前也会拒绝。
+
 Nuclei 使用 `-fhr` 将重定向限制在同一主机，禁用 OAST、httpx 探测和更新，默认每秒 5 请求、并发 1。根请求与代理只接受明确的数字 IP:端口。3.11.1 中 `-fhr` 与 `-dr` 互斥，因此只传 `-fhr`，避免引擎拒绝启动；实测帮助与执行结果见验证记录。
 
 ZAP 由 Go 先读取指定根地址响应（不跟随重定向、单响应上限 2 MiB），随后以 HAR 导入，执行 passiveScan 和 JSON 报告。没有爬虫或主动扫描任务，插件只保留这条被动流水线及其依赖。使用 `-silent -notel` 关闭未请求的联网行为。实现依据：[HAR 导入](https://www.zaproxy.org/docs/desktop/addons/import-export/automation/)、[ZAP 命令行](https://www.zaproxy.org/docs/desktop/cmdline/)。固定分发包中的 exim 0.16.0 只支持导入记录响应，不支持新版文档中的 `sendRequests` 参数，代码未传该参数。

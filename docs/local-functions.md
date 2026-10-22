@@ -28,10 +28,10 @@ nuclei/...                  # 操作员提供的 Nuclei 模板
 trivy/...                   # 操作员提供的 Trivy 数据；可只带一个引擎
 ```
 
-manifest 必须且只包含 `version`、`engines`、`files`：
+manifest 必须包含 `version`、`engines`、`engine_compatibility`、`files`：
 
 ```json
-{"version":"20261016.01","engines":["nuclei"],"files":{"nuclei/templates/example.yaml":"文件内容的64位SHA-256"}}
+{"version":"20261016.01","engines":["nuclei"],"engine_compatibility":{"nuclei":{"min":"3.11.1","max":"3.11.1"}},"files":{"nuclei/templates/example.yaml":"文件内容的64位SHA-256"}}
 ```
 
 使用自带工具生成实际清单和哈希（不会下载或执行扫描）：
@@ -52,7 +52,7 @@ python3 scripts/package_rules.py --version 20261016.01 --nuclei-dir /路径/模�
 
 本机 `sec-updater --prepare-engines` 准备流程只允许同一 Manager 实例刚生成的版本经 `ActivatePreparedLocal` 一次性激活，重新检查 manifest 摘要、文件哈希和防回滚。记录绑定规范根目录和版本；尝试时消费，不跨实例或重启恢复，导入/下载不产生该记录。历史 unsigned 版本不能用普通激活启用。
 
-**完整 Nuclei/Trivy 引擎兼容矩阵仍未实现。** Updater 启动时最多固定加载 3 把包外公钥，激活只接受其中任一把签名；激活只切换本地数据版本，不启动扫描；真实服务器与完整模板库仍待验证。
+规则激活会校验清单中的 Nuclei/Trivy 版本范围；Trivy 还会读取包内 metadata 的主库 schema，带 Java 索引时校验 Java schema。当前固定版本为 Nuclei 3.11.1、Trivy 0.76.0，缺少或不匹配的矩阵不能激活，Worker 也会在执行前拒绝。Updater 启动时最多固定加载 3 把包外公钥，激活只接受其中任一把签名；激活只切换本地数据版本，不启动扫描；真实服务器与完整模板库仍待验证。
 
 ## 自动检查
 

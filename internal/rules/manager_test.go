@@ -20,7 +20,7 @@ func packageZIP(t *testing.T, key ed25519.PrivateKey, version, name string, badH
 	if badHash {
 		hash = hashBytes([]byte("other"))
 	}
-	manifest := Manifest{Version: version, Engines: []string{"nuclei"}, Files: map[string]string{name: hash}}
+	manifest := Manifest{Version: version, Engines: []string{"nuclei"}, EngineCompatibility: PinnedEngineCompatibility([]string{"nuclei"}, false), Files: map[string]string{name: hash}}
 	data, _ := json.Marshal(manifest)
 	var out bytes.Buffer
 	writer := zip.NewWriter(&out)
@@ -72,6 +72,30 @@ func TestImportHashFailureTraversalAndExplicitRollback(t *testing.T) {
 		t.Fatal("tampered installed bundle activated")
 	}
 }
+
+func TestActivationRejectsLegacyManifestWithoutCompatibility(t *testing.T) {
+	manager, key := verifiedFixture(t)
+	files := zipFiles(t, packageZIP(t, key, "20261022.02", "nuclei/templates/example.yaml", false))
+	var manifest Manifest
+	if err := json.Unmarshal(files[manifestName], &manifest); err != nil {
+		t.Fatal(err)
+	}
+	manifest.EngineCompatibility = nil
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files[manifestName] = data
+	files[signatureName] = ed25519.Sign(key, data)
+	bundle, err := manager.Import(context.Background(), zipFixture(t, files))
+	if err != nil || bundle.EngineValidated {
+		t.Fatalf("legacy manifest should remain unvalidated: %#v %v", bundle, err)
+	}
+	if err := manager.Activate(context.Background(), bundle.Version, false); err == nil {
+		t.Fatal("legacy manifest activated without compatibility")
+	}
+}
+
 func TestHTTPSUpdateAndArchiveChecksum(t *testing.T) {
 	manager, key := verifiedFixture(t)
 	data := packageZIP(t, key, "20261016.01", "nuclei/templates/example.yaml", false)

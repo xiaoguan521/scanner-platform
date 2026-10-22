@@ -43,9 +43,10 @@ const MaxExpanded = 8 << 30
 var versionPattern = regexp.MustCompile(`^[0-9]{8}\.[0-9]{2,8}$`)
 
 type Manifest struct {
-	Version string            `json:"version"`
-	Engines []string          `json:"engines"`
-	Files   map[string]string `json:"files"`
+	Version             string                         `json:"version"`
+	Engines             []string                       `json:"engines"`
+	EngineCompatibility map[string]EngineCompatibility `json:"engine_compatibility,omitempty"`
+	Files               map[string]string              `json:"files"`
 }
 type Bundle struct {
 	Version           string   `json:"version"`
@@ -534,7 +535,11 @@ func (m *Manager) inspectBundle(ctx context.Context, version string, requireSign
 		}
 
 	}
-	return Bundle{Version: version, Engines: manifest.Engines, Channel: "local", ManifestSHA256: hashBytes(data), PublishedAt: info.ModTime().UTC().Format(time.RFC3339Nano), IntegrityVerified: true, SignatureVerified: signatureVerified}, nil
+	engineValidated, err := validateEngineCompatibility(manifest, dir)
+	if err != nil {
+		return Bundle{}, err
+	}
+	return Bundle{Version: version, Engines: manifest.Engines, Channel: "local", ManifestSHA256: hashBytes(data), PublishedAt: info.ModTime().UTC().Format(time.RFC3339Nano), IntegrityVerified: true, SignatureVerified: signatureVerified, EngineValidated: engineValidated}, nil
 }
 
 // Inspect verifies an already installed version without creating any directory.
@@ -565,6 +570,9 @@ func (m *Manager) Activate(ctx context.Context, version string, rollback bool) e
 	}
 	if !bundle.SignatureVerified {
 		return fmt.Errorf("普通激活要求有效的 manifest Ed25519 签名")
+	}
+	if !bundle.EngineValidated {
+		return fmt.Errorf("普通激活要求规则包声明并通过当前引擎兼容性校验")
 	}
 	return m.activateCurrent(ctx, version, rollback)
 }

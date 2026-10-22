@@ -1,5 +1,12 @@
 # Verification log
 
+## 2026-10-22：规则包引擎兼容矩阵
+
+- manifest 新增 `engine_compatibility`。本地 `package_rules.py` 和 `--prepare-engines` 写入 Nuclei 3.11.1、Trivy 0.76.0 的精确版本范围；Trivy 同时写入主库 schema，包含 Java 数据库时写入 Java schema。
+- Updater 导入后对清单结构、版本范围和 metadata schema 做只读校验，`engineValidated` 只有全部通过才为 true；普通激活和 Worker 执行都拒绝缺少/不匹配矩阵的版本。历史包仍可展示但不能启用。
+- 新增精确版本、越界、主库 schema、Java schema 和格式失败测试；待在包含实际 Trivy/Java 数据库的隔离包上运行引擎回归。
+- 已运行 `make test`（Go race 与 37 个 Python 测试）、`make lint`、`make build`、`make test-local`、`make verify-flags`、前端 38 项契约测试、前端生产构建、OpenAPI/Workflow YAML 解析和 `git diff --check`；本次兼容夹具使用临时 Trivy/Java metadata 与数据库文件，不包含真实漏洞数据。
+
 ## 2026-10-21：PostgreSQL 隔离仓储回归
 
 - 使用当前运行时的时间基准修正 `postgres_queue_lab_test.go` 的租约夹具，避免固定日期被数据库当前时间判定为过期。
@@ -304,7 +311,7 @@
 | PoC #1 Linux 围栏与受限启动预备代码（2026-10-16，历史记录） | 本地模拟通过，实验待验证 | 当时记录为尚未接入 cmd/worker；当前接入状态见本文件顶部 2026-10-21 条目。Linux nft/setpriv、namespace 隔离、实际无外联和 DROP 统计仍必须人工核对。 |
 | 引擎受限启动硬闸（2026-10-16） | Worker 围栏子进程隔离联调通过；生产引擎全链路待验收 | Linux arm64 隔离实验实际核对 Worker 子进程 UID/GID 10001、NoNewPrivs 和全部 capability 清零；`internal/executor` 仍通过锁定版本的参数白名单启动引擎。独立 `RestrictedExec.Launch` 继续 fail-closed，生产环境的范围抓包、cgroup 后代回收和 Nuclei/Trivy 围栏内全链路仍待验证。 |
 | GitHub Actions 六平台 CI / Release（2026-10-16） | 本地检查及 GitHub 云端 CI 通过；Release 未发布 | 提交 `798f832` 的 CI 已通过前端、race 测试、lint 和 Linux/macOS/Windows 六平台构建。标签构建只有完整 CI 通过才打包；发布权限仅 Release Job，标签仅创建 Draft + Pre-release。漏洞库手工工作流需另看当前签名步骤结果。 |
-| 漏洞库 Ed25519 签名与平台验签 | 本地平台实现、隔离测试和当前主分支 GitHub Actions 均通过 | 当前工作流使用 `vulnerability-data-signing` 环境、`BUNDLE_SIGNING_PRIVATE_KEY_PEM` 密钥和 `BUNDLE_SIGNING_PUBLIC_KEY_PEM` 变量；云端已完成 8 个文件完整性校验、Ed25519 签名/验签和 `vulnerability-data` 制品上传。Updater 支持 2 GiB 以内的已签名本地/HTTPS 流式导入，网页 multipart 仍为 256 MiB；现已支持最多 3 把包外公钥的轮换重叠窗口，完整引擎兼容矩阵仍未完成。 |
+| 漏洞库 Ed25519 签名与平台验签 | 本地平台实现、隔离测试和当前主分支 GitHub Actions 均通过 | 当前工作流使用 `vulnerability-data-signing` 环境、`BUNDLE_SIGNING_PRIVATE_KEY_PEM` 密钥和 `BUNDLE_SIGNING_PUBLIC_KEY_PEM` 变量；云端已完成 8 个文件完整性校验、Ed25519 签名/验签和 `vulnerability-data` 制品上传。Updater 支持 2 GiB 以内的已签名本地/HTTPS 流式导入，网页 multipart 仍为 256 MiB；现已支持最多 3 把包外公钥的轮换重叠窗口和固定版本/Trivy schema 兼容性校验，跨版本扩大兼容范围仍未完成。 |
 | SSH 指定目录 Java/Go 应用 | Go 与含 class 的 Java 合成 JAR 隔离路径通过；活动规则已切换到含 Java DB 的版本 | Go ELF 与 Java JAR 均完成 SSH 采集、快照校验、Trivy 类型确认和覆盖计数；缺少 Java 索引时仍明确为 `analysis_failed`，带 Java DB 的规则版本已验证 Java 选中/已分析均为 1。当前活动版本通过 Updater 本地显式准备，`signatureVerified=false`；仅覆盖合成输入，独立挂载目录和真实业务应用仍待验收。 |
 | 自动综合扫描 HTTP 失败状态回报 | Worker/Server 回归与 V4 排除端口验证通过；最新 V5 任务界面显示已完成，结果仍待逐项复核 | HTTP 错误保持 FAILED 并保存明确的系统包阶段状态。此前路由阻塞记录为历史状态；本轮开发期间未重启原测试实例，新应用能力不属于该次实扫验收范围。 |
 | 正式客户端签名/公证和供应链证明 | 未实施 | Phase 0 归档仅是占位骨架。缺少 Windows 代码签名、macOS 签名/公证及 Artifact Attestation；不能直接当作受信任的可部署产品发布。 |
@@ -830,7 +837,7 @@
 
 - `internal/rules` 支持 1–3 把规则根目录外的 Ed25519 公钥。Updater 可重复接收 `--trusted-rule-public-key`，本地 `scripts/dev.sh` 支持 `SCANNER_RULE_PUBLIC_KEY_FILES` 的逗号分隔当前/下一把公钥；旧单数环境变量仍兼容。
 - 导入、HTTPS Fetch、普通激活和只读目录验签都会尝试全部受信公钥；重复公钥、超过 3 把、无效/符号链接/规则根目录内公钥均在加载阶段拒绝。公钥复制到进程内，规则包不能注入信任，运维需在确认新包后显式移除旧公钥。
-- 新增轮换重叠、重复和上限测试；后续仍需补完整 Nuclei/Trivy 引擎兼容矩阵和生产密钥轮换演练。
+- 新增轮换重叠、重复和上限测试；跨版本扩大兼容范围和生产密钥轮换演练仍待后续执行。
 
 ## 2026-10-21：远程节点部署服务状态闭环
 

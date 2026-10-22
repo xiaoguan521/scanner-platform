@@ -58,8 +58,13 @@ def fixture_openssl(arguments):
         raise RuntimeError('Disposable rule fixture signing requires OpenSSL Ed25519 support') from None
 
 def archive(version, private_key, corrupt=False):
-    files={'nuclei/templates/local.yaml':b'id: local-metadata-fixture\n', 'trivy/db/metadata.json':b'{"localTest":true}\n'}
-    manifest={'version':version,'engines':['nuclei','trivy'],'files':{name:hashlib.sha256(data).hexdigest() for name,data in files.items()}}
+    files={'nuclei/templates/local.yaml':b'id: local-metadata-fixture\n',
+           'trivy/db/metadata.json':b'{"Version":2}\n',
+           'trivy/db/trivy.db':b'local database fixture\n'}
+    manifest={'version':version,'engines':['nuclei','trivy'],
+              'engine_compatibility':{'nuclei':{'min':'3.11.1','max':'3.11.1'},
+                                      'trivy':{'min':'0.76.0','max':'0.76.0','db_schema':2}},
+              'files':{name:hashlib.sha256(data).hexdigest() for name,data in files.items()}}
     if corrupt:
         manifest['files']['nuclei/templates/local.yaml']='0'*64
     manifest_data=json.dumps(manifest).encode('utf-8')
@@ -209,7 +214,7 @@ def main():
         expect_job(api.call('POST','/api/v1/rules/20261016.01/activate',{'rollback':True},expect=202))
         assert (directory/'rules/CURRENT').read_text()=='20261016.01\n'
         catalog=api.call('GET','/api/v1/rules')['items']
-        assert len(catalog)==2 and all(b['integrityVerified'] and b['signatureVerified'] and not b['engineValidated'] for b in catalog)
+        assert len(catalog)==2 and all(b['integrityVerified'] and b['signatureVerified'] and b['engineValidated'] for b in catalog)
         api.call('POST','/api/v1/rules/fetch',{'url':'http://rules.example.com/bundle.zip','expectedSha256':'0'*64},expect=400)
         viewer.call('POST','/api/v1/rules/20261016.01/activate',{'rollback':True},expect=403)
         checkpoint('offline ZIP import, Updater-only writes, activation, failed-hash rejection and explicit rollback')
