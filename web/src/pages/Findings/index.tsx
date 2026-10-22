@@ -72,6 +72,13 @@ export const FindingsPage: React.FC = () => {
   const [groupSummary, setGroupSummary] = useState<{ findings: number; counts: typeof findingCountsSummary } | null>(null);
   const [groupError, setGroupError] = useState<string | null>(null);
   const onGroupSummary = useCallback((summary: { findings: number; counts: typeof findingCountsSummary } | null, error: string | null) => { setGroupSummary(summary); setGroupError(error); }, []);
+  const [groupFindings, setGroupFindings] = useState<Finding[]>([]);
+  const onGroupFindingsLoaded = useCallback((items: Finding[]) => setGroupFindings(previous => {
+    const next = new Map(previous.map(item => [item.id, item]));
+    for (const item of items) next.set(item.id, item);
+    return [...next.values()];
+  }), []);
+  useEffect(() => { setGroupFindings([]); }, [view, optionsKey]);
   const [businessGroups, setBusinessGroups] = useState<string[]>([]);
   useEffect(() => { void apiClient.businessGroups().then(result => setBusinessGroups(result.items.map(item => item.name))).catch(() => setBusinessGroups([])); }, []);
   useEffect(()=>{
@@ -142,7 +149,7 @@ export const FindingsPage: React.FC = () => {
   },[canWrite]);
   const saveAssignment=async(id:string)=>{
     setWorkSaving(true);
-    try{const item=await assignFinding(id,assigneeId);setFindings(previous=>previous.map(f=>f.id===id?item:f));message.success('指派已保存并记录审计')}
+    try{const item=await assignFinding(id,assigneeId);setFindings(previous=>previous.map(f=>f.id===id?item:f));setGroupFindings(previous=>previous.map(f=>f.id===id?item:f));if(view!=='flat')setFindingRevision(n=>n+1);message.success('指派已保存并记录审计')}
     catch(e){message.error(String(e))}finally{setWorkSaving(false)}
   };
   const saveNote=async(id:string)=>{
@@ -202,7 +209,9 @@ export const FindingsPage: React.FC = () => {
   };
 
   const filteredFindings = findings;
-  const selectedFinding = selectedFindingForDrawer(findings, filteredFindings, selectedFindingId);
+  // Grouped views open the same drawer for findings loaded by expanded rows.
+  const drawerFindings = view === 'flat' ? findings : groupFindings;
+  const selectedFinding = selectedFindingForDrawer(drawerFindings, view === 'flat' ? filteredFindings : groupFindings, selectedFindingId);
   useEffect(() => {
     if (selectedFindingId && !selectedFinding) setSelectedFindingId(null);
   }, [selectedFindingId, selectedFinding]);
@@ -225,7 +234,7 @@ export const FindingsPage: React.FC = () => {
       message.warning('FIXED 必须经平台确认完整扫描、规则执行和未检出阈值，目前不可操作');
       return;
     }
-    setSaving(true);try{const item=await updateFinding(id,newStatus,acceptance);setFindings(prev=>prev.map(f=>f.id===id?item:f));setFindingRevision(n=>n+1);setEventRevision(n=>n+1);message.success('状态已保存并记录审计');}catch(e){message.error(String(e));}finally{setSaving(false)}
+    setSaving(true);try{const item=await updateFinding(id,newStatus,acceptance);setFindings(prev=>prev.map(f=>f.id===id?item:f));setGroupFindings(prev=>prev.map(f=>f.id===id?item:f));setFindingRevision(n=>n+1);setEventRevision(n=>n+1);message.success('状态已保存并记录审计');}catch(e){message.error(String(e));}finally{setSaving(false)}
   };
 
   const summaryCounts = view === 'flat' ? findingCountsSummary : groupSummary?.counts ?? findingCountsSummary;
@@ -252,8 +261,8 @@ export const FindingsPage: React.FC = () => {
         {summaryCounts.unknown > 0 && <span>未核实类型 <Mono style={{ color: palette.text }}>{summaryCounts.unknown.toLocaleString()}</Mono></span>}
       </div>
 
-      {view !== 'flat' && <Panel flush title={view === 'cve' ? '按漏洞编号聚合' : '按软件包聚合'} extra={<span style={muted}>按最高严重级别排序 · 点“查看明细”进入平铺视图处置</span>}>
-        <FindingGroups by={view} options={queryOptions} revision={findingRevision} onDrill={drill} onSummary={onGroupSummary} />
+      {view !== 'flat' && <Panel flush title={view === 'cve' ? '按漏洞编号聚合' : '按软件包聚合'} extra={<span style={muted}>按最高严重级别排序 · 点击行展开明细</span>}>
+        <FindingGroups by={view} options={queryOptions} revision={findingRevision} onDrill={drill} onOpen={openFindingDetails} onLoaded={onGroupFindingsLoaded} onSummary={onGroupSummary} />
       </Panel>}
 
       {view === 'flat' && <Panel flush title="漏洞发现与生命周期闭环看板" extra={<TitleWithHelp title={<span style={muted}>检测依据说明</span>} helpTitle="如何理解检测依据" help="Web 基线检查结果需结合服务用途判断；系统包结果展示漏洞编号、受影响组件和修复版本。版本推断没有实际验证漏洞；未标注检测方式的历史结果显示为未核实。未检出不会自动标记为已修复。"/>}>

@@ -23,6 +23,9 @@ assert.deepEqual(states({ ...base, status: 'FAILED', progress: { phase: 'ssh_col
 assert.deepEqual(states({ ...base, status: 'COMPLETED', systemScanCode: 'port_out_of_scope', systemScanStatus: '未采集：配置的 SSH 端口不在本次明确范围内', applicationScanStatus: 'completed' }),
   ['done', 'done', 'done', 'skipped', 'skipped', 'done']);
 assert.equal(taskPhases({ ...base, status: 'COMPLETED' })[0].detail, '2 / 3 个端口开放');
+const completed = taskPhases({ ...base, status: 'COMPLETED', systemScanCode: 'completed', systemScanStatus: '已通过' });
+assert.notEqual(completed[3].detail, '已完成', 'phase detail must not repeat the status pill');
+assert.notEqual(completed[3].detail, completed[4].detail);
 assert.equal(taskPhases({ ...base, status: 'RUNNING', progress: { phase: 'http_scan', completed: 1, total: 2 } })[4].detail, '等待执行');
 
 assert.equal(systemCoverage('已通过 SSH 临时采集并完成本地系统包检查').tone, 'ok', 'sentence fallback for older Servers');

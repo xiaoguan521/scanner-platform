@@ -24,8 +24,8 @@ export function taskPhases(task: PhaseTask): PhaseView[] {
     tcp_probe: `${task.portProbeResults?.length ?? 0} / ${task.portProbePorts?.length ?? 0} 个端口开放`,
     service_identification: `识别出 ${http} 个 HTTP(S) 服务`,
     http_scan: http ? `检查 ${http} 个服务` : '没有可检查的 HTTP(S) 服务',
-    ssh_collection: system.label,
-    trivy_scan: system.label,
+    ssh_collection: system.tone === 'ok' ? '已通过 SSH 采集软件包清单' : system.label,
+    trivy_scan: system.tone === 'ok' ? '已用本地漏洞库完成分析' : system.label,
     application_scan: app.label,
   };
   return autoPhases.map((key, index) => {

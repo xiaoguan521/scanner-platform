@@ -134,7 +134,7 @@ export const TaskDetail: React.FC<{
         <AutoGrid min={150} gap={12}>
           {[
             ['开放端口', openPorts.length, compressPorts(openPorts) || '无'],
-            ['HTTP(S) 服务', httpServices.length, `共识别服务 ${task.serviceResults?.length ?? 0} 个`],
+            ['HTTP(S) 服务', httpServices.length, (task.serviceResults?.length ?? 0) > httpServices.length ? `另有 ${(task.serviceResults?.length ?? 0) - httpServices.length} 个非 HTTP 服务` : '已执行只读基线检查'],
             ['发现项', task.findingCount, task.findingCount ? '可在漏洞列表中按任务筛选' : '本次没有发现项'],
           ].map(([label, value, note]) => (
             <div key={String(label)} style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: 12, borderRadius: 10, background: palette.bgSubtle }}>
@@ -146,7 +146,7 @@ export const TaskDetail: React.FC<{
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: 12, borderRadius: 10, background: palette.bgSubtle }}>
             <span style={{ fontSize: 12, ...muted }}>网络围栏</span>
             <span style={{ alignSelf: 'flex-start' }}><StatusPill tone={task.dropCount ? 'warning' : task.fenceStatus === 'ENFORCED' ? 'ok' : 'neutral'}>{task.fenceStatus ? fenceLabels[task.fenceStatus] ?? task.fenceStatus : '未上报'}</StatusPill></span>
-            <span style={{ fontSize: 12, color: palette.textTertiary }}>拦截范围外连接 {task.dropCount ?? 0} 次</span>
+            <span style={{ fontSize: 12, color: palette.textTertiary }}>{task.fenceStatus ? `拦截范围外连接 ${task.dropCount ?? 0} 次` : '该 Worker 未上报网络围栏状态'}</span>
           </div>
         </AutoGrid>
         {task.dropCount ? <Alert type="warning" showIcon message="检测到范围外连接尝试，已被网络围栏拦截" description="请检查 Worker 日志和授权范围；平台不会展示原始地址或请求内容。" style={{ marginTop: 12 }} /> : null}
