@@ -51,6 +51,18 @@ func TestPostgresFindingWhereUsesBoundValues(t *testing.T) {
 	}
 }
 
+func TestPostgresFindingWhereBindsExactGroupFilters(t *testing.T) {
+	where, args := postgresFindingWhere(FindingListQuery{CVE: "CVE-2099-0001", Package: "openssl", Engine: "trivy", FixableOnly: true})
+	if len(args) != 3 || args[0] != "CVE-2099-0001" || args[1] != "openssl" || args[2] != "trivy" {
+		t.Fatalf("unexpected args %v", args)
+	}
+	for _, fragment := range []string{"'templateOrCve','')=$1", "'package','')=$2", "sf.engine_name=$3", "'fixedVersion','')<>''"} {
+		if !strings.Contains(where, fragment) {
+			t.Fatalf("missing %q in %q", fragment, where)
+		}
+	}
+}
+
 func TestPostgresFindingSortIsFixed(t *testing.T) {
 	for _, value := range []string{"first_seen", "-severity", "title", "unknown"} {
 		expr, direction := postgresFindingSort(value)

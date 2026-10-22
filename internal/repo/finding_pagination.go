@@ -25,7 +25,12 @@ type FindingListQuery struct {
 	OnlyVerified  bool
 	BusinessGroup string
 	AssetID       string
-	Sort          string
+	// CVE and Package are exact matches used to drill into a grouped view.
+	CVE         string
+	Package     string
+	Engine      string
+	FixableOnly bool
+	Sort        string
 }
 
 type FindingListCounts struct {
@@ -53,7 +58,8 @@ const (
 var ErrInvalidFindingListQuery = errors.New("invalid finding list query")
 
 func NormalizeFindingListQuery(in FindingListQuery) (FindingListQuery, error) {
-	if in.Page < 0 || in.PageSize < 0 || in.Page > MaxFindingPage || len(in.Search) > 160 || len(in.BusinessGroup) > 160 || len(in.AssetID) > 160 || strings.ContainsRune(in.Search, 0) || strings.ContainsRune(in.BusinessGroup, 0) || strings.ContainsRune(in.AssetID, 0) {
+	if in.Page < 0 || in.PageSize < 0 || in.Page > MaxFindingPage || len(in.Search) > 160 || len(in.BusinessGroup) > 160 || len(in.AssetID) > 160 || strings.ContainsRune(in.Search, 0) || strings.ContainsRune(in.BusinessGroup, 0) || strings.ContainsRune(in.AssetID, 0) ||
+		len(in.CVE) > 160 || len(in.Package) > 160 || strings.ContainsRune(in.CVE, 0) || strings.ContainsRune(in.Package, 0) {
 		return FindingListQuery{}, ErrInvalidFindingListQuery
 	}
 	if in.Page == 0 {
@@ -66,6 +72,9 @@ func NormalizeFindingListQuery(in FindingListQuery) (FindingListQuery, error) {
 		return FindingListQuery{}, ErrInvalidFindingListQuery
 	}
 	if in.Status != "" && !oneOf(in.Status, "OPEN", "REOPENED", "IN_PROGRESS", "FIXED", "FALSE_POSITIVE", "ACCEPTED_RISK") {
+		return FindingListQuery{}, ErrInvalidFindingListQuery
+	}
+	if in.Engine != "" && !oneOf(in.Engine, "nuclei", "trivy", "zap", "knowledge", "synthetic") {
 		return FindingListQuery{}, ErrInvalidFindingListQuery
 	}
 	if in.Method != "" && !oneOf(in.Method, "principle", "version", "configuration", "unknown") {
@@ -222,6 +231,21 @@ func findingListWhere(query FindingListQuery) (string, []any) {
 	if query.AssetID != "" {
 		where = append(where, "COALESCE(json_extract(data,'$.assetId'),'')=?")
 		args = append(args, query.AssetID)
+	}
+	if query.CVE != "" {
+		where = append(where, "COALESCE(json_extract(data,'$.templateOrCve'),'')=?")
+		args = append(args, query.CVE)
+	}
+	if query.Package != "" {
+		where = append(where, "COALESCE(json_extract(data,'$.package'),'')=?")
+		args = append(args, query.Package)
+	}
+	if query.Engine != "" {
+		where = append(where, "COALESCE(json_extract(data,'$.engine'),'')=?")
+		args = append(args, query.Engine)
+	}
+	if query.FixableOnly {
+		where = append(where, "COALESCE(json_extract(data,'$.fixedVersion'),'')<>''")
 	}
 	if query.Search != "" {
 		pattern := "%" + escapeFindingLike(query.Search) + "%"

@@ -5,21 +5,41 @@ const filterValues = {
   method: ['ALL', 'principle', 'version', 'configuration', 'unknown'],
   confidence: ['ALL', 'high', 'medium', 'low', 'unknown'],
   risk: ['ALL', 'system', 'web', 'weak_credential', 'login_entry', 'unknown'],
+  engine: ['ALL', 'trivy', 'nuclei', 'zap'],
+} as const;
+
+// View and sort are presentation state; the first value is the default and is
+// left out of the URL.
+const presentationValues = {
+  view: ['flat', 'cve', 'package'],
+  sort: ['-severity', 'severity', '-last_seen', 'last_seen', 'target', '-target', 'title', '-title'],
 } as const;
 
 type ClassificationKey = keyof typeof filterValues;
-export type FindingFilters = { [K in ClassificationKey]: (typeof filterValues)[K][number] } & { onlyVerified: boolean; businessGroup: string; assetId: string };
+type PresentationKey = keyof typeof presentationValues;
+export type FindingView = (typeof presentationValues)['view'][number];
+export type FindingSort = (typeof presentationValues)['sort'][number];
+export type FindingFilters = { [K in ClassificationKey]: (typeof filterValues)[K][number] }
+  & { [K in PresentationKey]: (typeof presentationValues)[K][number] }
+  & { onlyVerified: boolean; fixable: boolean; businessGroup: string; assetId: string; cve: string; package: string };
+
+const textKeys = ['businessGroup', 'assetId', 'cve', 'package'] as const;
+const flagKeys = ['onlyVerified', 'fixable'] as const;
 
 export function readFindingFilters(params: URLSearchParams): FindingFilters {
-  const classification = Object.fromEntries(Object.entries(filterValues).map(([key, allowed]) => {
+  const pick = (key: string, allowed: readonly string[], fallback: string) => {
     const values = params.getAll(key);
-    return [key, values.length === 1 && (allowed as readonly string[]).includes(values[0]) ? values[0] : 'ALL'];
-  })) as Pick<FindingFilters, ClassificationKey>;
-  const verified = params.getAll('onlyVerified');
-  const businessGroups = params.getAll('businessGroup');
-  const assets = params.getAll('assetId');
+    return values.length === 1 && allowed.includes(values[0]) ? values[0] : fallback;
+  };
+  const classification = Object.fromEntries(Object.entries(filterValues).map(([key, allowed]) => [key, pick(key, allowed, 'ALL')]));
+  const presentation = Object.fromEntries(Object.entries(presentationValues).map(([key, allowed]) => [key, pick(key, allowed, allowed[0])]));
   const readText = (values: string[]) => values.length === 1 && values[0].trim().length <= 160 ? values[0].trim() : '';
-  return { ...classification, onlyVerified: verified.length === 1 && verified[0] === 'true', businessGroup: readText(businessGroups), assetId: readText(assets) };
+  const text = Object.fromEntries(textKeys.map(key => [key, readText(params.getAll(key))]));
+  const flags = Object.fromEntries(flagKeys.map(key => {
+    const values = params.getAll(key);
+    return [key, values.length === 1 && values[0] === 'true'];
+  }));
+  return { ...classification, ...presentation, ...text, ...flags } as FindingFilters;
 }
 
 // Preserve route parameters owned by other features, but never persist free text.
@@ -30,12 +50,26 @@ export function writeFindingFilters(params: URLSearchParams, filters: FindingFil
     next.delete(key);
     if ((filterValues[key] as readonly string[]).includes(filters[key]) && filters[key] !== 'ALL') next.set(key, filters[key]);
   }
-  next.delete('onlyVerified');
-  if (filters.onlyVerified === true) next.set('onlyVerified', 'true');
-  next.delete('businessGroup');
-  if (filters.businessGroup.trim()) next.set('businessGroup', filters.businessGroup.trim());
-  next.delete('assetId');
-  if (filters.assetId.trim()) next.set('assetId', filters.assetId.trim());
+  for (const key of Object.keys(presentationValues) as PresentationKey[]) {
+    const allowed = presentationValues[key] as readonly string[];
+    next.delete(key);
+    if (allowed.includes(filters[key]) && filters[key] !== allowed[0]) next.set(key, filters[key]);
+  }
+  for (const key of flagKeys) {
+    next.delete(key);
+    if (filters[key] === true) next.set(key, 'true');
+  }
+  for (const key of textKeys) {
+    next.delete(key);
+    const value = filters[key].trim();
+    if (value && value.length <= 160) next.set(key, value);
+  }
   next.delete('q');
   return next;
+}
+
+/** True when any server-side filter is narrower than the defaults. */
+export function hasActiveFilters(filters: FindingFilters): boolean {
+  return (Object.keys(filterValues) as ClassificationKey[]).some(key => filters[key] !== 'ALL')
+    || flagKeys.some(key => filters[key]) || textKeys.some(key => filters[key] !== '');
 }

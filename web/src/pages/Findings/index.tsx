@@ -1,9 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { DataTable } from '../../components/DataState';
 import { useSearchParams } from 'react-router-dom';
 import {
-  Card,
-  Table,
   Tag,
   Button,
   Space,
@@ -12,25 +10,30 @@ import {
   Typography,
   Alert,
   Tooltip,
-  Checkbox,
   Descriptions,
   Drawer,
   Timeline,
   Modal,
+  Segmented,
   message,
   theme,
 } from 'antd';
 import { Finding, FindingAssignmentEvent, FindingEvent, FindingAssignee, FindingNote, FindingRetest, FindingSeverity, FindingStatus } from '../../types';
-import { FindingStatusTag, SeverityTag } from '../../components/Semantic';
+import { FindingStatusTag, Mono, SeverityTag } from '../../components/Semantic';
+import { PageHeader, Panel } from '../../components/Page';
+import { useAppTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../auth/AuthProvider';
 import { batchAssignFindings, batchFindingDisposition, updateFinding, fetchFindingEvents, fetchFindingAssignees, fetchFindingAssignments, assignFinding, fetchFindingNotes, addFindingNote, createFindingRetest, fetchFindingRetests } from '../../api/runtime';
 import { apiClient } from '../../api/client';
+import type { FindingQueryOptions } from '../../api/client';
 import { CollectionNotice } from '../../api/CollectionNotice';
 import { TitleWithHelp } from '../../components/HelpTip';
 import { pollWhileVisible } from '../../api/polling';
 
 import { riskLabels, methodLabels, confidenceLabels, isVerifiedFinding } from './presentation';
-import { FindingFilters, readFindingFilters, writeFindingFilters } from './filters';
+import { FindingFilters, FindingSort, FindingView, readFindingFilters, writeFindingFilters } from './filters';
+import { FindingFilterBar } from './FilterBar';
+import { FindingGroups } from './FindingGroups';
 import { detailText, detailList, detailIdentifiers, selectedFindingForDrawer } from './drawer';
 import { canAcceptRisk, acceptanceInput } from './disposition';
 import { findingNoteInput } from './work';
@@ -41,6 +44,7 @@ const { Text } = Typography;
 export const FindingsPage: React.FC = () => {
   const {user}=useAuth();
   const {token}=theme.useToken();
+  const {palette}=useAppTheme();
   const canWrite=user?.role==='admin'||user?.role==='security_engineer';
   const [findings,setFindings]=useState<Finding[]>([]);const [findingLoading,setFindingLoading]=useState(true);const [findingError,setFindingError]=useState<string|null>(null);const [findingPage,setFindingPage]=useState(1);const [findingPageSize,setFindingPageSize]=useState(10);const [findingTotal,setFindingTotal]=useState(0);const [findingCountsSummary,setFindingCountsSummary]=useState({vulnerabilities:0,loginEntries:0,unknown:0,version:0,verified:0});const [findingRevision,setFindingRevision]=useState(0);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -57,16 +61,30 @@ export const FindingsPage: React.FC = () => {
   const updateFilters = (patch: Partial<FindingFilters>) => {
     setSearchParams(current => writeFindingFilters(current, { ...readFindingFilters(current), ...patch }), { replace: true });
   };
+  // Free text stays local (it often holds target addresses) and is debounced.
   const [query, setQuery] = useState('');
+  const [debouncedQuery, setDebouncedQuery] = useState('');
+  useEffect(() => { const timer = window.setTimeout(() => setDebouncedQuery(query.trim()), 300); return () => window.clearTimeout(timer); }, [query]);
+  const queryOptions: FindingQueryOptions = { search: debouncedQuery, severity: severityFilter, status: statusFilter, method: methodFilter, confidence: confidenceFilter, risk: riskFilter, engine: filters.engine, onlyVerified, fixable: filters.fixable, businessGroup, assetId, cve: filters.cve, package: filters.package };
+  const optionsKey = JSON.stringify(queryOptions);
+  const view = filters.view;
+  const sort = filters.sort;
+  const [groupSummary, setGroupSummary] = useState<{ findings: number; counts: typeof findingCountsSummary } | null>(null);
+  const [groupError, setGroupError] = useState<string | null>(null);
+  const onGroupSummary = useCallback((summary: { findings: number; counts: typeof findingCountsSummary } | null, error: string | null) => { setGroupSummary(summary); setGroupError(error); }, []);
+  const [businessGroups, setBusinessGroups] = useState<string[]>([]);
+  useEffect(() => { void apiClient.businessGroups().then(result => setBusinessGroups(result.items.map(item => item.name))).catch(() => setBusinessGroups([])); }, []);
   useEffect(()=>{
+    if(view!=='flat')return;
     const controller=new AbortController();
     setFindingLoading(true);
-    apiClient.findingsPage(findingPage,findingPageSize,{search:query,severity:severityFilter,status:statusFilter,method:methodFilter,confidence:confidenceFilter,risk:riskFilter,onlyVerified,businessGroup,assetId},controller.signal).then(result=>{
+    apiClient.findingsPage(findingPage,findingPageSize,{...queryOptions,sort},controller.signal).then(result=>{
       if(!controller.signal.aborted){setFindings(result.items);setFindingTotal(result.total);setFindingCountsSummary(result.counts);setFindingError(null);}
     }).catch(cause=>{if(!controller.signal.aborted){setFindings([]);setFindingTotal(0);setFindingCountsSummary({vulnerabilities:0,loginEntries:0,unknown:0,version:0,verified:0});setFindingError(cause instanceof Error?cause.message:'漏洞清册加载失败');}}).finally(()=>{if(!controller.signal.aborted)setFindingLoading(false)});
     return()=>controller.abort();
-  },[findingPage,findingPageSize,query,severityFilter,statusFilter,methodFilter,confidenceFilter,riskFilter,onlyVerified,businessGroup,assetId,findingRevision]);
-  useEffect(()=>{if(findingPage!==1)setFindingPage(1)},[query,severityFilter,statusFilter,methodFilter,confidenceFilter,riskFilter,onlyVerified,businessGroup,assetId]);
+  // queryOptions is compared through optionsKey.
+  },[view,findingPage,findingPageSize,optionsKey,sort,findingRevision]);
+  useEffect(()=>{if(findingPage!==1)setFindingPage(1)},[optionsKey,sort]);
   const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
   const detailTrigger = useRef<HTMLElement | null>(null);
   const [acceptReason,setAcceptReason]=useState('');
@@ -210,71 +228,49 @@ export const FindingsPage: React.FC = () => {
     setSaving(true);try{const item=await updateFinding(id,newStatus,acceptance);setFindings(prev=>prev.map(f=>f.id===id?item:f));setFindingRevision(n=>n+1);setEventRevision(n=>n+1);message.success('状态已保存并记录审计');}catch(e){message.error(String(e));}finally{setSaving(false)}
   };
 
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-      <CollectionNotice loading={findingLoading} error={findingError} />
-      <Card><Space wrap><Tag color="red">漏洞总数 {findingCountsSummary.vulnerabilities}</Tag><Tag color="blue">登录入口 {findingCountsSummary.loginEntries}</Tag><Tag>未核实类型 {findingCountsSummary.unknown}</Tag><Tag color="orange">版本推断 {findingCountsSummary.version}</Tag><Tag color="green">已验证 {findingCountsSummary.verified}</Tag></Space></Card>
-      <Space wrap>
-        <Select aria-label="检测方式筛选" value={methodFilter} onChange={method => updateFilters({ method })} style={{width:210}} options={[{value:'ALL',label:'全部检测方式'},...Object.entries(methodLabels).map(([value,label])=>({value,label}))]}/>
-        <Select aria-label="置信度筛选" value={confidenceFilter} onChange={confidence => updateFilters({ confidence })} style={{width:180}} options={[{value:'ALL',label:'全部置信度'},...Object.entries(confidenceLabels).map(([value,label])=>({value,label}))]}/>
-        <Select aria-label="风险类型筛选" value={riskFilter} onChange={risk => updateFilters({ risk })} style={{width:190}} options={[{value:'ALL',label:'全部类型'},...Object.entries(riskLabels).map(([value,label])=>({value,label}))]}/>
-        <Checkbox checked={onlyVerified} onChange={e=>updateFilters({ onlyVerified: e.target.checked })}>仅已验证（原理验证 / 配置检查）</Checkbox>
-        {businessGroup&&<Tag closable onClose={()=>updateFilters({businessGroup:''})}>业务组：{businessGroup}</Tag>}
-        {assetId&&<Tag closable onClose={()=>updateFilters({assetId:''})}>资产：{assetId}</Tag>}
-      </Space>
-      <Input aria-label="按目标、软件包、CVE 或标题筛选" placeholder="按目标、软件包、CVE 或标题筛选" allowClear value={query} onChange={event => setQuery(event.target.value)} style={{maxWidth:480}} />
+  const summaryCounts = view === 'flat' ? findingCountsSummary : groupSummary?.counts ?? findingCountsSummary;
+  const summaryTotal = view === 'flat' ? findingTotal : groupSummary?.findings ?? 0;
+  const sortOrder = (key: string) => sort === key ? 'ascend' as const : sort === '-' + key ? 'descend' as const : null;
+  const muted = { color: palette.textSecondary };
+  const drill = (key: string) => updateFilters(view === 'cve' ? { view: 'flat', cve: key, package: '' } : { view: 'flat', package: key, cve: '' });
 
-      <Card
-        title="漏洞发现与生命周期闭环看板"
-        bordered={false}
-        extra={
-          <Space>
-            <Select
-              aria-label="严重度筛选"
-              value={severityFilter}
-              onChange={severity => updateFilters({ severity })}
-              style={{ width: 140 }}
-              options={[
-                { value: 'ALL', label: '全部等级' },
-                { value: 'CRITICAL', label: '严重 (Critical)' },
-                { value: 'HIGH', label: '高危 (High)' },
-                { value: 'MEDIUM', label: '中危 (Medium)' },
-                { value: 'LOW', label: '低危 (Low)' },
-                { value: 'INFO', label: '信息 (Info)' },
-              ]}
-            />
-            <Select
-              aria-label="状态筛选"
-              value={statusFilter}
-              onChange={status => updateFilters({ status })}
-              style={{ width: 140 }}
-              options={[
-                { value: 'ALL', label: '全部状态' },
-                { value: 'OPEN', label: '待修复 (OPEN)' },
-                { value: 'REOPENED', label: '重新出现 (REOPENED)' },
-                { value: 'IN_PROGRESS', label: '修复中' },
-                { value: 'FIXED', label: '已修复 (FIXED)' },
-                { value: 'FALSE_POSITIVE', label: '误报' },
-                { value: 'ACCEPTED_RISK', label: '接受风险' },
-              ]}
-            />
-          </Space>
-        }
-      >
-        <Space wrap style={{marginBottom:16}}>
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <PageHeader
+        title="漏洞列表"
+        description={view === 'flat' ? '每条发现项单独一行；按 CVE 或软件包查看可以合并重复项' : view === 'cve' ? '按漏洞编号合并：同一 CVE 落在多个二进制包上时只算一组' : '按软件包合并：一次升级可以修复的漏洞放在一起'}
+        extra={<Segmented aria-label="漏洞视图" value={view} onChange={value => updateFilters({ view: value as FindingView })} options={[{ label: '平铺', value: 'flat' }, { label: '按 CVE', value: 'cve' }, { label: '按软件包', value: 'package' }]} />}
+      />
+      <CollectionNotice loading={view === 'flat' && findingLoading && findings.length === 0} error={view === 'flat' ? findingError : groupError} />
+      <FindingFilterBar filters={filters} query={query} businessGroups={businessGroups} onQuery={setQuery} onChange={updateFilters} />
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 20px', alignItems: 'baseline', fontSize: 13, ...muted }}>
+        <span>当前筛选结果 <Mono style={{ color: palette.text, fontWeight: 600 }}>{summaryTotal.toLocaleString()}</Mono> 项</span>
+        <span>其中漏洞 <Mono style={{ color: palette.text }}>{summaryCounts.vulnerabilities.toLocaleString()}</Mono></span>
+        <span>版本推断 <Mono style={{ color: palette.text }}>{summaryCounts.version.toLocaleString()}</Mono></span>
+        <span>已验证 <Mono style={{ color: palette.text }}>{summaryCounts.verified.toLocaleString()}</Mono></span>
+        <span>登录入口 <Mono style={{ color: palette.text }}>{summaryCounts.loginEntries.toLocaleString()}</Mono></span>
+        {summaryCounts.unknown > 0 && <span>未核实类型 <Mono style={{ color: palette.text }}>{summaryCounts.unknown.toLocaleString()}</Mono></span>}
+      </div>
+
+      {view !== 'flat' && <Panel flush title={view === 'cve' ? '按漏洞编号聚合' : '按软件包聚合'} extra={<span style={muted}>按最高严重级别排序 · 点“查看明细”进入平铺视图处置</span>}>
+        <FindingGroups by={view} options={queryOptions} revision={findingRevision} onDrill={drill} onSummary={onGroupSummary} />
+      </Panel>}
+
+      {view === 'flat' && <Panel flush title="漏洞发现与生命周期闭环看板" extra={<TitleWithHelp title={<span style={muted}>检测依据说明</span>} helpTitle="如何理解检测依据" help="Web 基线检查结果需结合服务用途判断；系统包结果展示漏洞编号、受影响组件和修复版本。版本推断没有实际验证漏洞；未标注检测方式的历史结果显示为未核实。未检出不会自动标记为已修复。"/>}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', padding: '12px 20px', borderTop: `1px solid ${palette.borderSubtle}`, borderBottom: `1px solid ${palette.borderSubtle}`, background: batchSelection.length ? palette.bgElevated : undefined }}>
           <Text>已选择 {batchSelection.length} 项（最多 100 项，包含其他分页和筛选中的已选项）</Text>
-          <Select aria-label="批量处置状态" value={batchStatus} disabled={batchSaving} onChange={setBatchStatus} style={{width:180}} options={[
+          <Select aria-label="批量处置状态" value={batchStatus} disabled={batchSaving} onChange={setBatchStatus} style={{width:150}} options={[
             {value:'IN_PROGRESS',label:'标记修复中'}, {value:'FALSE_POSITIVE',label:'标记误报'}, {value:'ACCEPTED_RISK',label:'接受风险'}, {value:'OPEN',label:'恢复待处理'},
           ]}/>
           <Button type="primary" disabled={!canWrite||!batchAllowed||batchSaving} onClick={()=>{setBatchReason('');setBatchUntil('');setBatchOpen(true)}}>批量处置</Button>
-          <Select aria-label="批量指派对象" allowClear placeholder="批量指派给" value={batchAssigneeId||undefined} onChange={value=>setBatchAssigneeId(value??'')} disabled={!canWrite||batchAssignSaving||Boolean(batchAssigneeError)} style={{width:180}} options={batchAssignees.map(item=>({value:item.id,label:item.name}))}/>
+          <Select aria-label="批量指派对象" allowClear placeholder="批量指派给" value={batchAssigneeId||undefined} onChange={value=>setBatchAssigneeId(value??'')} disabled={!canWrite||batchAssignSaving||Boolean(batchAssigneeError)} style={{width:150}} options={batchAssignees.map(item=>({value:item.id,label:item.name}))}/>
           <Button disabled={!batchAssignmentAllowed||batchAssignSaving} onClick={()=>setBatchAssignOpen(true)}>批量指派</Button>
           <Button disabled={!batchSelection.length||batchSaving} onClick={()=>setBatchSelection([])}>清空选择</Button>
           {batchSelection.length>0&&!batchAllowed&&<Text type="warning">{selectionChanged?'已选记录状态已变化，请清空后重新选择':'选中记录包含不允许的状态流转，请调整选择或目标状态'}</Text>}
           {batchSelection.length>0&&assignmentSelectionChanged&&<Text type="warning">已选记录的指派状态已变化，请清空后重新选择</Text>}
           {batchAssigneeError&&<Text type="warning">{batchAssigneeError}</Text>}
-        </Space>
-        <DataTable
+        </div>
+        <DataTable<Finding>
           dataSource={filteredFindings}
           loading={findingLoading}
           rowKey="id"
@@ -284,74 +280,40 @@ export const FindingsPage: React.FC = () => {
             onChange:keys=>setBatchSelection(previous=>updateBatchSelection(previous,keys,findings)),
             getCheckboxProps:record=>({disabled:batchSaving||!canWrite||record.status==='FIXED'||(batchSelection.length>=100&&!batchSelection.some(item=>item.id===record.id))}),
           }}
-          pagination={{current:findingPage,pageSize:findingPageSize,total:findingTotal,showSizeChanger:true,pageSizeOptions:[10,20,50],showTotal:total=>`共 ${total} 项`,onChange:(page,size)=>{if(size!==findingPageSize){setFindingPageSize(size);setFindingPage(1)}else setFindingPage(page)}}}
-          scroll={{x:1600}}
+          onChange={(_pagination,_filters,sorter,extra)=>{
+            if(extra.action!=='sort')return;
+            const current=Array.isArray(sorter)?sorter[0]:sorter;
+            const key=String(current?.columnKey??'');
+            updateFilters({sort:(current?.order?(current.order==='ascend'?key:'-'+key):'-severity') as FindingSort});
+          }}
+          pagination={{current:findingPage,pageSize:findingPageSize,total:findingTotal,showSizeChanger:true,pageSizeOptions:[10,20,50,100],showTotal:total=>`共 ${total} 项`,onChange:(page,size)=>{if(size!==findingPageSize){setFindingPageSize(size);setFindingPage(1)}else setFindingPage(page)}}}
+          scroll={{x:1210}}
           columns={[
-            {title:<TitleWithHelp title="类型 / 检测依据" helpTitle="如何理解检测依据" help="Web 基线检查结果需结合服务用途判断；系统包结果展示漏洞编号、受影响组件和修复版本。版本推断没有实际验证漏洞；未标注检测方式的历史结果显示为未核实。未检出不会自动标记为已修复。"/>,width:200,render:(_,r)=><Space direction="vertical" size={3}><Tag>{riskLabels[r.riskType??'unknown']}</Tag><Tag color={isVerifiedFinding(r)?'green':r.detectMethod==='version'?'orange':'default'}>{methodLabels[r.detectMethod??'unknown']}</Tag><Tag>{confidenceLabels[r.confidence??'unknown']}</Tag></Space>},
+            {title:'等级',key:'severity',dataIndex:'severity',width:96,sorter:true,sortOrder:sortOrder('severity'),sortDirections:['descend','ascend'],render:(s: FindingSeverity)=><SeverityTag value={s} />},
+            {title:'漏洞',key:'title',width:340,sorter:true,sortOrder:sortOrder('title'),render:(_,record)=>(
+              <div style={{display:'flex',flexDirection:'column',gap:3,minWidth:0}}>
+                <Text strong style={{whiteSpace:'normal',wordBreak:'break-word'}}>{record.title}</Text>
+                <span style={{display:'flex',flexWrap:'wrap',gap:6,alignItems:'center',fontSize:12,...muted}}>
+                  <Mono style={{color:palette.text}}>{record.templateOrCve}</Mono>
+                  <span>{record.engine==='trivy'?'系统包 / 依赖':record.engine==='nuclei'?'Web 基线':record.engine}</span>
+                  <Tooltip title={`${riskLabels[record.riskType??'unknown']} · ${confidenceLabels[record.confidence??'unknown']}`}><span style={{color:isVerifiedFinding(record)?palette.success:record.detectMethod==='version'?palette.warning:palette.textTertiary}}>{methodLabels[record.detectMethod??'unknown']}</span></Tooltip>
+                  {record.synthetic&&<span style={{color:palette.primary}}>模拟结果</span>}
+                </span>
+              </div>
+            )},
+            {title:'软件包 / 版本',key:'package',width:250,render:(_,record)=>record.package?(
+              <div style={{display:'flex',flexDirection:'column',gap:2,minWidth:0}}>
+                <Mono>{record.package}</Mono>
+                <span style={{fontSize:12,display:'flex',flexWrap:'wrap',gap:4}}><Mono style={muted}>{record.installedVersion||'—'}</Mono><span style={{color:palette.textTertiary}}>→</span>{record.fixedVersion?<Mono style={{color:palette.success}}>{record.fixedVersion}</Mono>:<span style={{color:palette.textTertiary}}>暂无修复版本</span>}</span>
+              </div>
+            ):<span style={{color:palette.textTertiary}}>—</span>},
+            {title:'目标',key:'target',dataIndex:'target',width:190,sorter:true,sortOrder:sortOrder('target'),render:(t:string,record)=><div style={{display:'flex',flexDirection:'column',gap:2,minWidth:0}}><Mono>{t}</Mono><span style={{fontSize:12,...muted}}>{record.businessGroup}{record.owner?` · ${record.owner}`:''}</span></div>},
+            {title:'状态',key:'status',dataIndex:'status',width:130,render:(s: FindingStatus,record)=><div style={{display:'flex',flexDirection:'column',gap:4,alignItems:'flex-start'}}><FindingStatusTag value={s} />{(record.assigneeName||record.assigneeId)&&<span style={{fontSize:12,...muted}}>{record.assigneeName||record.assigneeId}</span>}</div>},
+            {title:'最近检出',key:'last_seen',width:150,sorter:true,sortOrder:sortOrder('last_seen'),sortDirections:['descend','ascend'],render:(_,r)=><div style={{display:'flex',flexDirection:'column',gap:2,fontSize:12}}><span>{r.lastSeen?new Date(r.lastSeen).toLocaleString():'—'}</span>{r.status==='FIXED'?<Text type="success" style={{fontSize:12}}>连续未检出 {r.consecutiveMisses} 次</Text>:<span style={muted}>首次 {r.firstSeen?new Date(r.firstSeen).toLocaleDateString():'—'}</span>}</div>},
             {
-              title: '等级',
-              dataIndex: 'severity',
-              width: 130,
-              render: (s: FindingSeverity) => <SeverityTag value={s} />,
-            },
-            {
-              title: '漏洞详情与稳定指纹',
-              width: 420,
-              render: (_, record) => (
-                <Space direction="vertical" size={2} style={{width:'100%'}}>
-                  <Text strong style={{whiteSpace:'normal',wordBreak:'break-word'}}>{record.title}</Text>
-                  {record.synthetic && <Tag color="blue">模拟结果</Tag>}
-                  <Space size={8} wrap>
-                    <Tag color={record.engine === 'nuclei' ? 'purple' : 'cyan'}>
-                      {record.engine.toUpperCase()}
-                    </Tag>
-                    <Text code style={{whiteSpace:'nowrap'}}>{record.templateOrCve}</Text>
-                  </Space>
-                  <Tooltip title={`稳定指纹：${record.fingerprint}`}><Text type="secondary" ellipsis style={{maxWidth:330,fontSize:11}}>{record.fingerprint}</Text></Tooltip>
-                </Space>
-              ),
-            },
-            {
-              title: '目标地址',
-              dataIndex: 'target',
-              width: 220,
-              render: (t: string) => <Text code>{t}</Text>,
-            },
-            {
-              title: '业务归属',
-              width: 160,
-              render: (_, r) => (
-                <Space direction="vertical" size={2}>
-                  <Text>{r.businessGroup}</Text>
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    负责人: {r.owner}
-                  </Text>
-                </Space>
-              ),
-            },
-            {
-              title: '生命周期状态',
-              dataIndex: 'status',
-              width: 140,
-              render: (s: FindingStatus) => <FindingStatusTag value={s} />,
-            },
-            {
-              title: '最近检出 / 未检出计数',
-              width: 230,
-              render: (_, r) => (
-                <Space direction="vertical" size={1} style={{ fontSize: 12 }}>
-                  <span>最近: {r.lastSeen}</span>
-                  {r.status === 'FIXED' ? (
-                    <Text type="success">连续未检出: {r.consecutiveMisses} 次</Text>
-                  ) : (
-                    <Text type="secondary">初见: {r.firstSeen}</Text>
-                  )}
-                </Space>
-              ),
-            },
-            {
-              title: '详情 / 状态流转',
-              width: 180,
+              title: '操作',
+              key: 'actions',
+              width: 210,
               render: (_, r) => (
                 <Space size={4} wrap>
                   <Button
@@ -399,7 +361,7 @@ export const FindingsPage: React.FC = () => {
             },
           ]}
         />
-      </Card>
+      </Panel>}
       <Modal title="确认批量处置" open={batchOpen} onCancel={()=>{if(!batchSaving)setBatchOpen(false)}} onOk={()=>void saveBatch()} confirmLoading={batchSaving} okText="确认保存" cancelText="取消" okButtonProps={{disabled:!batchAllowed}} cancelButtonProps={{disabled:batchSaving}} closable={!batchSaving} maskClosable={!batchSaving}>
         <Space direction="vertical" style={{width:'100%'}}>
           <Text>将以下 {batchSelection.length} 项统一更新为 {batchStatus}。任一记录状态发生变化或不允许流转时，整批不保存。</Text>

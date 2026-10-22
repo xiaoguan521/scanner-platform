@@ -2,19 +2,23 @@ package api
 
 import (
 	"net/http"
+	"net/url"
 	"strconv"
 
 	"scanner-platform/internal/repo"
 )
 
 func parseFindingListQuery(r *http.Request) (repo.FindingListQuery, bool, bool) {
-	values := r.URL.Query()
+	return parseFindingListValues(r.URL.Query())
+}
+
+func parseFindingListValues(values url.Values) (repo.FindingListQuery, bool, bool) {
 	if len(values) == 0 {
 		return repo.FindingListQuery{}, false, true
 	}
 	for key := range values {
 		switch key {
-		case "page", "page_size", "q", "severity", "status", "method", "confidence", "risk", "onlyVerified", "businessGroup", "assetId", "sort":
+		case "page", "page_size", "q", "severity", "status", "method", "confidence", "risk", "onlyVerified", "businessGroup", "assetId", "cve", "package", "engine", "fixable", "sort":
 		default:
 			return repo.FindingListQuery{}, true, false
 		}
@@ -40,8 +44,12 @@ func parseFindingListQuery(r *http.Request) (repo.FindingListQuery, bool, bool) 
 	onlyVerifiedText, onlyVerifiedOK := single("onlyVerified")
 	businessGroup, businessGroupOK := single("businessGroup")
 	assetID, assetIDOK := single("assetId")
+	cve, cveOK := single("cve")
+	packageName, packageOK := single("package")
+	engine, engineOK := single("engine")
+	fixableText, fixableOK := single("fixable")
 	sort, sortOK := single("sort")
-	if !pageOK || !pageSizeOK || !searchOK || !severityOK || !statusOK || !methodOK || !confidenceOK || !riskOK || !onlyVerifiedOK || !businessGroupOK || !assetIDOK || !sortOK {
+	if !pageOK || !pageSizeOK || !searchOK || !severityOK || !statusOK || !methodOK || !confidenceOK || !riskOK || !onlyVerifiedOK || !businessGroupOK || !assetIDOK || !cveOK || !packageOK || !engineOK || !fixableOK || !sortOK {
 		return repo.FindingListQuery{}, true, false
 	}
 	normalizeAll := func(value string) string {
@@ -50,12 +58,18 @@ func parseFindingListQuery(r *http.Request) (repo.FindingListQuery, bool, bool) 
 		}
 		return value
 	}
-	query := repo.FindingListQuery{Page: 1, Search: search, Severity: normalizeAll(severity), Status: normalizeAll(status), Method: normalizeAll(method), Confidence: normalizeAll(confidence), Risk: normalizeAll(risk), BusinessGroup: businessGroup, AssetID: assetID, Sort: sort}
+	query := repo.FindingListQuery{Page: 1, Search: search, Severity: normalizeAll(severity), Status: normalizeAll(status), Method: normalizeAll(method), Confidence: normalizeAll(confidence), Risk: normalizeAll(risk), BusinessGroup: businessGroup, AssetID: assetID, CVE: cve, Package: packageName, Engine: normalizeAll(engine), Sort: sort}
 	if onlyVerifiedText != "" {
 		if onlyVerifiedText != "true" && onlyVerifiedText != "false" {
 			return repo.FindingListQuery{}, true, false
 		}
 		query.OnlyVerified = onlyVerifiedText == "true"
+	}
+	if fixableText != "" {
+		if fixableText != "true" && fixableText != "false" {
+			return repo.FindingListQuery{}, true, false
+		}
+		query.FixableOnly = fixableText == "true"
 	}
 	if pageText != "" {
 		page, err := strconv.Atoi(pageText)

@@ -4,8 +4,8 @@ import { readFile } from 'node:fs/promises';
 import ts from 'typescript';
 const source = await readFile(new URL('./filters.ts', import.meta.url), 'utf8');
 const js = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.ESNext } }).outputText;
-const { readFindingFilters: read, writeFindingFilters: write } = await import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`);
-const defaults = { severity: 'ALL', status: 'ALL', method: 'ALL', confidence: 'ALL', risk: 'ALL', onlyVerified: false, businessGroup: '', assetId: '' };
+const { readFindingFilters: read, writeFindingFilters: write, hasActiveFilters } = await import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`);
+const defaults = { severity: 'ALL', status: 'ALL', method: 'ALL', confidence: 'ALL', risk: 'ALL', engine: 'ALL', view: 'flat', sort: '-severity', onlyVerified: false, fixable: false, businessGroup: '', assetId: '', cve: '', package: '' };
 assert.deepEqual(read(new URLSearchParams()), defaults);
 const allowed = {
   severity: ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO'],
@@ -13,6 +13,9 @@ const allowed = {
   method: ['principle', 'version', 'configuration', 'unknown'],
   confidence: ['high', 'medium', 'low', 'unknown'],
   risk: ['system', 'web', 'weak_credential', 'login_entry', 'unknown'],
+  engine: ['trivy', 'nuclei', 'zap'],
+  view: ['cve', 'package'],
+  sort: ['severity', '-last_seen', 'last_seen', 'target', '-target', 'title', '-title'],
 };
 for (const [key, values] of Object.entries(allowed)) {
   for (const value of values) {
@@ -36,7 +39,7 @@ for (const value of ['', 'false', '1', 'TRUE', 'yes']) {
 }
 assert.equal(read(new URLSearchParams('onlyVerified=true')).onlyVerified, true);
 assert.equal(read(new URLSearchParams('onlyVerified=true&onlyVerified=true')).onlyVerified, false);
-const combined = { severity: 'HIGH', status: 'OPEN', method: 'version', confidence: 'high', risk: 'system', onlyVerified: true, businessGroup: '支付', assetId: 'asset-1' };
+const combined = { severity: 'HIGH', status: 'OPEN', method: 'version', confidence: 'high', risk: 'system', engine: 'trivy', view: 'package', sort: '-last_seen', onlyVerified: true, fixable: true, businessGroup: '支付', assetId: 'asset-1', cve: 'CVE-2099-0001', package: 'libexample1' };
 const params = new URLSearchParams('tab=review&tab=other&q=192.0.2.10&severity=ALL&status=bad');
 const canonical = write(params, combined);
 assert.deepEqual(read(canonical), combined, 'combined filters survive reload by parsing the same URL');
@@ -54,4 +57,15 @@ for (const location of ['severity=HIGH', 'status=FIXED&onlyVerified=true', 'seve
   assert.equal(restored.severity, location.includes('severity') ? 'HIGH' : 'ALL');
   assert.equal(restored.status, location.includes('status') ? 'FIXED' : 'ALL');
 }
+// Default view and sort stay out of the URL; drill-down filters round-trip.
+assert.equal(write(new URLSearchParams(), { ...defaults, view: 'flat', sort: '-severity' }).toString(), '');
+assert.equal(read(new URLSearchParams('view=flat')).view, 'flat');
+assert.equal(read(new URLSearchParams('sort=drop_table')).sort, '-severity');
+assert.equal(read(new URLSearchParams('fixable=yes')).fixable, false);
+assert.equal(read(new URLSearchParams('cve=CVE-2099-0001')).cve, 'CVE-2099-0001');
+assert.equal(read(new URLSearchParams('package=' + 'x'.repeat(161))).package, '');
+assert.equal(hasActiveFilters(defaults), false);
+assert.equal(hasActiveFilters({ ...defaults, view: 'cve', sort: 'title' }), false, 'presentation is not a filter');
+assert.equal(hasActiveFilters({ ...defaults, package: 'openssl' }), true);
+assert.equal(hasActiveFilters({ ...defaults, fixable: true }), true);
 console.log('Findings URL filters: all checks passed');

@@ -480,6 +480,18 @@ func postgresFindingWhere(query FindingListQuery) (string, []any) {
 	if query.AssetID != "" {
 		add(`sf.asset_id=$%d`, query.AssetID)
 	}
+	if query.CVE != "" {
+		add(`COALESCE(fp.data::jsonb ->> 'templateOrCve','')=$%d`, query.CVE)
+	}
+	if query.Package != "" {
+		add(`COALESCE(fp.data::jsonb ->> 'package','')=$%d`, query.Package)
+	}
+	if query.Engine != "" {
+		add(`sf.engine_name=$%d`, query.Engine)
+	}
+	if query.FixableOnly {
+		clauses = append(clauses, `COALESCE(fp.data::jsonb ->> 'fixedVersion','')<>''`)
+	}
 	return strings.Join(clauses, " AND "), args
 }
 

@@ -30,6 +30,18 @@ export interface AssetInsight {
   latestProbe?: { id: string; status: ScanTask['status']; createdAt: string; openPorts: number[] };
   recentTasks: { id: string; engines: string[]; status: ScanTask['status']; findingCount: number; createdAt: string; finishedAt?: string }[];
 }
+export interface FindingQueryOptions {search?:string;severity?:string;status?:string;method?:string;confidence?:string;risk?:string;engine?:string;onlyVerified?:boolean;fixable?:boolean;businessGroup?:string;assetId?:string;cve?:string;package?:string}
+function findingQueryParams(options:FindingQueryOptions):URLSearchParams {
+  const params=new URLSearchParams();
+  for(const key of ['severity','status','method','confidence','risk','engine'] as const){const value=options[key];if(value&&value!=='ALL')params.set(key,value);}
+  if(options.onlyVerified)params.set('onlyVerified','true');
+  if(options.fixable)params.set('fixable','true');
+  for(const key of ['businessGroup','assetId','cve','package'] as const){const value=options[key]?.trim();if(value)params.set(key,value);}
+  if(options.search?.trim())params.set('q',options.search.trim());
+  return params;
+}
+export interface FindingGroup { key:string; title?:string; count:number; maxSeverity:Finding['severity']; statusCounts:Record<string,number>; assetCount:number; packages?:string[]; cveCount?:number; installedVersions?:string[]; fixedVersions?:string[]; lastSeen:string }
+export interface FindingGroupPage { items:FindingGroup[]; total:number; page:number; pageSize:number; findings:number; ungrouped:number; counts:FindingPageResponse<Finding>['counts'] }
 export interface ScopePageResponse extends PagedListResponse<AuthorizedScope> { expiringCount: number; expiredCount: number }
 export interface DashboardSummary {
   assetCount: number;
@@ -183,14 +195,15 @@ export const apiClient = {
     if(options.engine&&options.engine!=='all')params.set('engine',options.engine);
     return requestJSON<TaskPageResponse<ScanTask>>('/api/v1/tasks?'+params.toString(),'GET',undefined,signal);
   },
-  findingsPage(page:number,pageSize:number,options:{search?:string;severity?:string;status?:string;method?:string;confidence?:string;risk?:string;onlyVerified?:boolean;businessGroup?:string;assetId?:string;sort?:string}={},signal?:AbortSignal) {
-    const params=new URLSearchParams({page:String(page),page_size:String(pageSize),sort:options.sort??'-last_seen'});
-    for(const key of ['severity','status','method','confidence','risk'] as const){const value=options[key];if(value&&value!=='ALL')params.set(key,value);}
-    if(options.onlyVerified)params.set('onlyVerified','true');
-    if(options.businessGroup?.trim())params.set('businessGroup',options.businessGroup.trim());
-    if(options.assetId?.trim())params.set('assetId',options.assetId.trim());
-    if(options.search?.trim())params.set('q',options.search.trim());
+  findingsPage(page:number,pageSize:number,options:FindingQueryOptions&{sort?:string}={},signal?:AbortSignal) {
+    const params=findingQueryParams(options);
+    params.set('page',String(page));params.set('page_size',String(pageSize));params.set('sort',options.sort??'-last_seen');
     return requestJSON<FindingPageResponse<Finding>>('/api/v1/findings?'+params.toString(),'GET',undefined,signal);
+  },
+  findingGroups(by:'cve'|'package',page:number,pageSize:number,options:FindingQueryOptions={},signal?:AbortSignal) {
+    const params=findingQueryParams(options);
+    params.set('by',by);params.set('page',String(page));params.set('page_size',String(pageSize));
+    return requestJSON<FindingGroupPage>('/api/v1/findings/groups?'+params.toString(),'GET',undefined,signal);
   },
   nodesPage<T>(page:number,pageSize:number,options:{search?:string;sort?:string}={},signal?:AbortSignal) {
     const params=new URLSearchParams({page:String(page),page_size:String(pageSize),sort:options.sort??'id'});
