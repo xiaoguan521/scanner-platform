@@ -6,7 +6,7 @@ ifeq ($(GOOS),windows)
 EXE_EXT := .exe
 endif
 
-.PHONY: build test lint verify-flags verify-deploy test-lab test-fence-lab web-install web-dev web-build dev dev-postgres test-local test-browser engines engines-zap engines-java test-engines-local migrate-postgres
+.PHONY: build portable test lint verify-flags verify-deploy test-lab test-fence-lab web-install web-dev web-build dev dev-postgres test-local test-browser engines engines-zap engines-java test-engines-local migrate-postgres
 
 dev:
 	bash scripts/dev.sh
@@ -34,6 +34,13 @@ web-dev:
 
 web-build:
 	cd web && npm run build
+
+# Single-binary offline edition: embeds web/dist (only the placeholder is tracked).
+portable: web-build
+	find internal/webui/dist -mindepth 1 ! -name README.txt -exec rm -rf {} +
+	cp -R web/dist/. internal/webui/dist/
+	mkdir -p dist
+	$(GO) build -o dist/sec-portable$(EXE_EXT) ./cmd/portable
 
 
 test:

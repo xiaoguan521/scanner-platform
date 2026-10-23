@@ -27,13 +27,23 @@ func NewRuntimeHandler(store repo.RuntimeBackend, fallback http.Handler, uiDir s
 // explicitly registered node. The default constructor keeps test and local
 // compatibility modes issuance-disabled.
 func NewRuntimeHandlerWithNodeIssuer(store repo.RuntimeBackend, fallback http.Handler, uiDir string, issuer NodeCredentialIssuer, accounts ...account.Repository) http.Handler {
+	var uiFiles http.FileSystem
+	if uiDir != "" {
+		uiFiles = http.Dir(uiDir)
+	}
+	return NewRuntimeHandlerWithUI(store, fallback, uiFiles, issuer, accounts...)
+}
+
+// NewRuntimeHandlerWithUI serves the web UI from any file system, such as the
+// UI embedded in sec-portable; nil serves the API only.
+func NewRuntimeHandlerWithUI(store repo.RuntimeBackend, fallback http.Handler, uiFiles http.FileSystem, issuer NodeCredentialIssuer, accounts ...account.Repository) http.Handler {
 	mux := http.NewServeMux()
 	if fallback == nil {
 		fallback = NewScaffoldHandler("sec-server")
 	}
 	mux.Handle("/api/", fallback)
-	if uiDir != "" {
-		files := http.FileServer(http.Dir(uiDir))
+	if uiFiles != nil {
+		files := http.FileServer(uiFiles)
 		mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodGet && r.Method != http.MethodHead {
 				w.WriteHeader(http.StatusMethodNotAllowed)

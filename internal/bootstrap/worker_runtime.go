@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -59,14 +60,10 @@ func RunWorker(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	absolute := func(path string) string { p, _ := filepath.Abs(path); return p }
-	runner := &executor.Runner{BinDir: absolute(*binDir), RulesDir: absolute(*rulesDir), RuntimeDir: absolute(*runtimeDir), InputsDir: absolute(*inputsDir), Rate: *rate, Timeout: *timeout}
-	if *sshConfigPath != "" {
-		collector, err := sshcollect.Load(absolute(*sshConfigPath))
-		if err != nil {
-			fmt.Fprintln(stderr, "invalid --ssh-config; see docs/ssh-collection.md")
-			return 2
-		}
-		runner.SSHCollector = collector
+	runner, err := newExecutorRunner(WorkerOptions{BinDir: *binDir, RulesDir: *rulesDir, RuntimeDir: *runtimeDir, InputsDir: *inputsDir, SSHConfigPath: *sshConfigPath, Rate: *rate, Timeout: *timeout})
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
 	}
 	if *status {
 		_ = json.NewEncoder(stdout).Encode(map[string]any{"role": "sec-worker", "engines": runner.Status()})
@@ -162,17 +159,8 @@ func RunWorker(args []string, stdout, stderr io.Writer) int {
 	if fenced != nil {
 		execute, probePorts, autoScan = fenced.Execute, fenced.ProbePorts, fenced.AutoScan
 	}
-	worker := taskflow.Worker{
-		ServerURL: *server, ID: *id, NodeToken: nodeToken, Interval: *interval, Delay: *delay,
-		Execute: execute, ProbePorts: probePorts, AutoScan: autoScan, EngineStatus: runner.Status,
-		CurrentRuleVersion: runner.CurrentRuleVersion,
-		RequireLeases:      true,
-		Client: &http.Client{
-			Timeout:       5 * time.Second,
-			Transport:     &http.Transport{Proxy: nil, TLSClientConfig: clientTLS},
-			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-		},
-	}
+	worker := newTaskWorker(runner, *server, *id, nodeToken, *interval, *delay, clientTLS)
+	worker.Execute, worker.ProbePorts, worker.AutoScan = execute, probePorts, autoScan
 	if fenced != nil {
 		worker.FenceTelemetry = fenced.Telemetry
 	}
@@ -181,4 +169,61 @@ func RunWorker(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// WorkerOptions configures an unfenced Worker. sec-portable runs one in
+// process: scan scope is then enforced by the executor in Go (rule 4.1-8),
+// and the rule directory is only ever read, never written, by this code.
+type WorkerOptions struct {
+	ServerURL, ID, NodeToken                               string
+	BinDir, RulesDir, RuntimeDir, InputsDir, SSHConfigPath string
+	Rate, Timeout                                          int
+	Interval, SyntheticDelay                               time.Duration
+}
+
+func newExecutorRunner(opts WorkerOptions) (*executor.Runner, error) {
+	absolute := func(path string) string { p, _ := filepath.Abs(path); return p }
+	runner := &executor.Runner{BinDir: absolute(opts.BinDir), RulesDir: absolute(opts.RulesDir), RuntimeDir: absolute(opts.RuntimeDir), InputsDir: absolute(opts.InputsDir), Rate: opts.Rate, Timeout: opts.Timeout}
+	if opts.SSHConfigPath != "" {
+		collector, err := sshcollect.Load(absolute(opts.SSHConfigPath))
+		if err != nil {
+			return nil, errors.New("invalid --ssh-config; see docs/ssh-collection.md")
+		}
+		runner.SSHCollector = collector
+	}
+	return runner, nil
+}
+
+func newTaskWorker(runner *executor.Runner, serverURL, id, token string, interval, delay time.Duration, clientTLS *tls.Config) taskflow.Worker {
+	return taskflow.Worker{
+		ServerURL: serverURL, ID: id, NodeToken: token, Interval: interval, Delay: delay,
+		Execute: runner.Execute, ProbePorts: runner.ProbePorts, AutoScan: runner.AutoScan, EngineStatus: runner.Status,
+		CurrentRuleVersion: runner.CurrentRuleVersion,
+		RequireLeases:      true,
+		Client: &http.Client{
+			Timeout:       5 * time.Second,
+			Transport:     &http.Transport{Proxy: nil, TLSClientConfig: clientTLS},
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		},
+	}
+}
+
+// ServeWorker runs an unfenced Worker against a loopback Server until ctx ends.
+func ServeWorker(ctx context.Context, opts WorkerOptions, stderr io.Writer) error {
+	endpoint, err := url.Parse(opts.ServerURL)
+	if err != nil || endpoint.Scheme != "http" || !isNumericLoopback(endpoint.Host) || opts.ID == "" || opts.NodeToken == "" || opts.Interval <= 0 {
+		return errors.New("in-process worker needs a loopback Server URL, an ID, a node token and a polling interval")
+	}
+	if opts.Rate < 1 || opts.Rate > 100 || opts.Timeout < 1 || opts.Timeout > 60 {
+		return errors.New("rate or timeout outside supported range")
+	}
+	runner, err := newExecutorRunner(opts)
+	if err != nil {
+		return err
+	}
+	worker := newTaskWorker(runner, opts.ServerURL, opts.ID, opts.NodeToken, opts.Interval, opts.SyntheticDelay, nil)
+	if err := worker.Run(ctx, false); err != nil && !errors.Is(err, context.Canceled) {
+		return fmt.Errorf("worker stopped: %w", err)
+	}
+	return nil
 }

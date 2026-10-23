@@ -111,12 +111,6 @@ jobs:
               -o "build_output/sec-$command$ext" "./cmd/$command"
           done
 
-          # Build portable only when a real Go entry point is implemented.
-          if [[ -f cmd/portable/main.go ]]; then
-            CGO_ENABLED=0 GOOS="$TARGET_GOOS" GOARCH="$TARGET_GOARCH" \
-              go build -trimpath -ldflags="-s -w" \
-              -o "build_output/sec-portable$ext" ./cmd/portable
-          fi
 
       - name: Install SHA-256-pinned scanner engines
         shell: bash
@@ -182,15 +176,34 @@ jobs:
           test "${#scripts[@]}" -gt 0
           # sec-server serves web/dist relative to the package root.
 
+      - name: Compile sec-portable with the embedded frontend
+        shell: bash
+        env:
+          TARGET_GOOS: ${{ matrix.goos }}
+          TARGET_GOARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          ext=""
+          if [[ "$TARGET_GOOS" == windows ]]; then
+            ext=".exe"
+          fi
+          # Embed the same reviewed bundle that ships in web/dist.
+          find internal/webui/dist -mindepth 1 ! -name README.txt -exec rm -rf {} +
+          cp -R build_output/web/dist/. internal/webui/dist/
+          test -s internal/webui/dist/index.html
+          CGO_ENABLED=0 GOOS="$TARGET_GOOS" GOARCH="$TARGET_GOARCH" \
+            go build -trimpath -ldflags="-s -w" \
+            -o "build_output/sec-portable$ext" ./cmd/portable
+
       - name: Include package quickstart and offline data directories
         shell: bash
         run: |
           set -euo pipefail
           cp docs/offline-package.md build_output/README.md
           mkdir -p build_output/docs build_output/tools
-          cp docs/engines.md docs/linux-server-scan.md docs/offline-vulnerability-data.md build_output/docs/
+          cp docs/engines.md docs/linux-server-scan.md docs/offline-vulnerability-data.md docs/portable.md docs/ssh-collection.md build_output/docs/
           cp scripts/collect_linux_inputs.py build_output/tools/
-          mkdir -p build_output/runtime/inputs build_output/vuln-data
+          mkdir -p build_output/runtime/inputs build_output/vuln-data build_output/config/trusted-rule-keys
 
       - name: Package artifacts and checksums
         shell: bash

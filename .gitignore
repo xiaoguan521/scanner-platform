@@ -67,3 +67,7 @@ pnpm-debug.log*
 
 
 
+
+# sec-portable embeds the built UI; only the placeholder is tracked.
+/internal/webui/dist/*
+!/internal/webui/dist/README.txt

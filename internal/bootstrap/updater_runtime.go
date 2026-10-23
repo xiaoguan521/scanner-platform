@@ -94,13 +94,10 @@ func RunUpdater(args []string, stdout, stderr io.Writer) int {
 	client := &http.Client{Timeout: 2 * time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }, Transport: &http.Transport{Proxy: nil, TLSClientConfig: clientTLS}}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	manager := &rules.Manager{Root: *root}
-	if len(trustedKeys) > 0 {
-		manager, err = rules.NewVerifiedManagerWithKeys(*root, trustedKeys)
-		if err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
+	manager, err := NewRuleManager(*root, trustedKeys)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
 	}
 	if *importBundle != "" {
 		if *prepare || *skipDownload || *withJava || *once || *syncStateOnly {
@@ -135,38 +132,9 @@ func RunUpdater(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	if *prepare {
-		absolute := func(path string) string { p, _ := filepath.Abs(path); return p }
-		if !*skipDownload {
-			fmt.Fprintln(stdout, "Downloading Trivy vulnerability database (no scan)...")
-			if err := executor.DownloadTrivyDB(ctx, absolute(*binDir), absolute(*dbCache), absolute("runtime/updater-prepare")); err != nil {
-				fmt.Fprintln(stderr, err)
-				return 1
-			}
-			if *withJava {
-				fmt.Fprintln(stdout, "Downloading Trivy Java artifact index (no scan)...")
-				if err := executor.DownloadTrivyJavaDB(ctx, absolute(*binDir), absolute(*dbCache), absolute("runtime/updater-prepare-java")); err != nil {
-					fmt.Fprintln(stderr, err)
-					return 1
-				}
-			}
-		}
-		version := time.Now().UTC().Format("20060102.150405")
-		fmt.Fprintln(stdout, "Packaging, hashing and installing local engine rules...")
-		curatedTemplates := ""
-		if *templatesDir != "" {
-			curatedTemplates = absolute(*templatesDir)
-		}
-		bundle, err := manager.PrepareDefault(ctx, version, absolute(*dbCache), *withJava, curatedTemplates)
-		if err == nil {
-			err = manager.ActivatePreparedLocal(ctx, bundle.Version)
-		}
-		if err != nil {
+		if err := PrepareEngines(ctx, manager, PrepareOptions{BinDir: *binDir, DBCache: *dbCache, WorkDir: "runtime", WithJava: *withJava, SkipDownload: *skipDownload, TemplatesDir: *templatesDir}, stdout); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
-		}
-		fmt.Fprintln(stdout, "Activated rules", bundle.Version, "(Nuclei root-GET baseline + Trivy DB)")
-		if *withJava {
-			fmt.Fprintln(stdout, "Java artifact index included; scan runners remain offline")
 		}
 		return 0
 	}
@@ -176,4 +144,80 @@ func RunUpdater(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// NewRuleManager verifies bundle signatures when trusted keys are given and
+// otherwise keeps the existing unsigned local behaviour.
+func NewRuleManager(root string, trustedKeys []string) (*rules.Manager, error) {
+	if len(trustedKeys) == 0 {
+		return &rules.Manager{Root: root}, nil
+	}
+	return rules.NewVerifiedManagerWithKeys(root, trustedKeys)
+}
+
+// PrepareOptions locate the engine and download directories for --prepare-engines.
+type PrepareOptions struct {
+	BinDir, DBCache, WorkDir, TemplatesDir string
+	WithJava, SkipDownload                 bool
+}
+
+// PrepareEngines downloads the Trivy databases, packages the local rules and
+// activates them. It never scans.
+func PrepareEngines(ctx context.Context, manager *rules.Manager, opts PrepareOptions, stdout io.Writer) error {
+	absolute := func(path string) string { p, _ := filepath.Abs(path); return p }
+	if !opts.SkipDownload {
+		fmt.Fprintln(stdout, "Downloading Trivy vulnerability database (no scan)...")
+		if err := executor.DownloadTrivyDB(ctx, absolute(opts.BinDir), absolute(opts.DBCache), absolute(filepath.Join(opts.WorkDir, "updater-prepare"))); err != nil {
+			return err
+		}
+		if opts.WithJava {
+			fmt.Fprintln(stdout, "Downloading Trivy Java artifact index (no scan)...")
+			if err := executor.DownloadTrivyJavaDB(ctx, absolute(opts.BinDir), absolute(opts.DBCache), absolute(filepath.Join(opts.WorkDir, "updater-prepare-java"))); err != nil {
+				return err
+			}
+		}
+	}
+	version := time.Now().UTC().Format("20060102.150405")
+	fmt.Fprintln(stdout, "Packaging, hashing and installing local engine rules...")
+	curatedTemplates := ""
+	if opts.TemplatesDir != "" {
+		curatedTemplates = absolute(opts.TemplatesDir)
+	}
+	bundle, err := manager.PrepareDefault(ctx, version, absolute(opts.DBCache), opts.WithJava, curatedTemplates)
+	if err == nil {
+		err = manager.ActivatePreparedLocal(ctx, bundle.Version)
+	}
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(stdout, "Activated rules", bundle.Version, "(Nuclei templates + Trivy DB)")
+	if opts.WithJava {
+		fmt.Fprintln(stdout, "Java artifact index included; scan runners remain offline")
+	}
+	return nil
+}
+
+// UpdaterOptions configures an in-process Updater for sec-portable.
+type UpdaterOptions struct {
+	ServerURL, ID, NodeToken, RulesDir string
+	TrustedKeys                        []string
+}
+
+// ServeUpdater runs the rule agent against a loopback Server until ctx ends.
+// It is the only in-process component that writes the rule directory.
+func ServeUpdater(ctx context.Context, opts UpdaterOptions) error {
+	endpoint, err := url.Parse(opts.ServerURL)
+	if err != nil || endpoint.Scheme != "http" || !isNumericLoopback(endpoint.Host) || opts.ID == "" || opts.NodeToken == "" {
+		return errors.New("in-process updater needs a loopback Server URL, an ID and a node token")
+	}
+	manager, err := NewRuleManager(opts.RulesDir, opts.TrustedKeys)
+	if err != nil {
+		return err
+	}
+	client := &http.Client{Timeout: 2 * time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }, Transport: &http.Transport{Proxy: nil}}
+	agent := rules.Agent{ServerURL: opts.ServerURL, ID: opts.ID, NodeToken: opts.NodeToken, Manager: manager, Client: client}
+	if err := agent.Run(ctx, false); err != nil && !errors.Is(err, context.Canceled) {
+		return fmt.Errorf("updater stopped: %w", err)
+	}
+	return nil
 }

@@ -4,6 +4,10 @@ GitHub Actions 的 `Build & Release Artifacts` 工作流提供 Linux amd64/arm64
 
 每个压缩包包含平台 Server、Worker、Updater、Server 模式网页（`web/dist/`）、Nuclei、Trivy、Linux 输入采集脚本、引擎版本/来源/许可证元数据，以及本文档。Nuclei 和 Trivy 的归档按 `config/engines.lock.json` 中固定的 SHA-256 校验；手动触发 `Build & Release Artifacts` 时选择 `include_zap=true` 才会额外打包裁剪为被动分析用途的 ZAP。压缩包另附整体 SHA-256 文件。启用 ZAP 时需要 Java 17 或更新版本，目标机需要预先安装 Java 并确保 `java` 在 PATH 中。
 
+## 便携版（推荐）
+
+压缩包中的 `sec-portable` 是单个程序，内嵌网页，启动后 Server、Worker、Updater 在同一进程运行：先运行 `./sec-portable prepare --with-java-db` 准备漏洞库，再运行 `./sec-portable` 并在打开的浏览器中创建管理员。详见 [便携版](portable.md)（压缩包内为 `docs/portable.md`）。下文是分别启动三个程序的方式，适合排查问题或需要单独配置时使用。
+
 ## 准备漏洞库
 
 程序压缩包不包含规则发布目录和 Trivy 数据库。可在本机手动准备，也可以在 GitHub Actions 中运行 `Build Offline Vulnerability Data` 工作流下载独立数据包。操作步骤、校验方式和当前覆盖范围见[离线漏洞库下载包](offline-vulnerability-data.md)。
@@ -20,7 +24,7 @@ Windows PowerShell 使用：
 .\sec-updater.exe --prepare-engines --with-java-db
 ```
 
-Updater 会将 Trivy 主漏洞库、Java 索引和平台内置的四项只读 Nuclei HTTP 基线准备到 `vuln-data/`，并激活该版本。它不会下载完整上游 Nuclei 模板库；当前 Worker 也不接受任意上游 YAML 模板。
+Updater 会将 Trivy 主漏洞库、Java 索引和平台内置的四项只读 Nuclei HTTP 基线准备到 `vuln-data/`，并激活该版本；加 `--nuclei-templates-dir` 时还会纳入已筛选的只读检测模板（离线漏洞库下载包已包含）。它不会下载完整上游 Nuclei 模板库；Worker 也不接受任意上游 YAML 模板，只接受单次同源只读 GET 的 JSON 模板。
 
 离线部署时，把完整的 `vuln-data/` 目录（包括 `CURRENT` 和 `releases/`）复制到目标机解压后的平台包目录。只扫描 Java 以外的 Trivy 输入时，也可以不带 `--with-java-db`；JAR/WAR/EAR/PAR 检查必须准备 Java 索引。
 
@@ -55,6 +59,6 @@ python3 tools/collect_linux_inputs.py --source server-a --output /tmp/server-a \
 ./sec-updater --server http://127.0.0.1:8080 --rules-dir vuln-data
 ```
 
-Windows 使用对应的 `.exe` 文件，例如 `sec-server.exe`；命令参数相同。浏览器在扫描机打开 `http://127.0.0.1:8080`。先创建账号，再只登记获准扫描的数字 IP 和端口并手动创建任务。Nuclei 当前只做四项只读 HTTP 基线；ZAP 只做被动分析。
+Windows 使用对应的 `.exe` 文件，例如 `sec-server.exe`；命令参数相同。浏览器在扫描机打开 `http://127.0.0.1:8080`。先创建账号，再只登记获准扫描的数字 IP 和端口并手动创建任务。Nuclei 只执行规则包中的只读 GET 模板（见 [引擎指南](engines.md)）；ZAP 只做被动分析。
 
-这是早期单机运行包：Server、Worker 与 Updater 通过 loopback 通信。包没有开启远程节点 TLS/令牌及系统网络围栏，不应直接作为公开网络上的生产集群部署。Trivy 规则库、Nuclei 模板和实际扫描覆盖边界见 [引擎指南](engines.md) 与 [Linux 采集说明](linux-server-scan.md)。
+分别启动时，Server、Worker 与 Updater 通过 loopback 通信，默认不启用节点令牌；便携版每次启动会为 Worker 和 Updater 生成仅在内存中的令牌。两种方式都没有系统网络围栏（扫描范围由 Go 代码校验），不应作为公开网络上的生产集群部署。Trivy 规则库、Nuclei 模板和实际扫描覆盖边界见 [引擎指南](engines.md) 与 [Linux 采集说明](linux-server-scan.md)。

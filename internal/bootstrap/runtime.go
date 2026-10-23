@@ -168,15 +168,46 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "provide flags only and use a numeric loopback listen address")
 		return 2
 	}
-	if _, err := os.Stat(filepath.Join(*uiDir, "index.html")); err != nil {
-		fmt.Fprintln(stderr, "Web UI is missing. Run make dev, or build web/ and pass --ui-dir.")
-		return 1
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return ServeServer(ctx, ServerOptions{
+		Addr: *addr, DBPath: *dbPath, Storage: *storage, UIDir: *uiDir, ReportDir: *reportDir,
+		PostgresDSNFile: *postgresDSNFile, NodeTokenFile: *nodeTokenFile, NodeListen: *nodeListen,
+		NodeTLSCert: *nodeTLSCert, NodeTLSKey: *nodeTLSKey, NodeTLSClientCA: *nodeTLSClientCA,
+	}, stdout, stderr)
+}
+
+// ServerOptions is the validated Server configuration. RunServer fills it
+// from flags; sec-portable fills it directly with in-memory node tokens, an
+// embedded UI and a pre-opened loopback listener.
+type ServerOptions struct {
+	Addr, DBPath, Storage, UIDir, ReportDir, PostgresDSNFile string
+	// UI, when set, replaces UIDir (sec-portable embeds the built web UI).
+	UI http.FileSystem
+	// NodeTokenFile, or NodeTokens for in-process nodes; with neither the
+	// loopback node API keeps its existing unauthenticated local behaviour.
+	NodeTokenFile                                        string
+	NodeTokens                                           api.NodeTokenSet
+	NodeListen, NodeTLSCert, NodeTLSKey, NodeTLSClientCA string
+	// Listener, when set, is served instead of listening on Addr.
+	Listener net.Listener
+}
+
+// ServeServer runs the Server until ctx ends. Flag validation stays in RunServer.
+func ServeServer(ctx context.Context, opts ServerOptions, stdout, stderr io.Writer) int {
+	ui := opts.UI
+	if ui == nil {
+		if _, err := os.Stat(filepath.Join(opts.UIDir, "index.html")); err != nil {
+			fmt.Fprintln(stderr, "Web UI is missing. Run make dev, or build web/ and pass --ui-dir.")
+			return 1
+		}
+		ui = http.Dir(opts.UIDir)
 	}
 	var nodeTLSConfig *tls.Config
 	var nodeTLSReloader *nodeTLSReloader
-	if *nodeListen != "" {
+	if opts.NodeListen != "" {
 		var err error
-		nodeTLSReloader, err = newNodeTLSReloader(*nodeTLSCert, *nodeTLSKey, *nodeTLSClientCA)
+		nodeTLSReloader, err = newNodeTLSReloader(opts.NodeTLSCert, opts.NodeTLSKey, opts.NodeTLSClientCA)
 		if err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
@@ -194,8 +225,8 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 		notificationsOn bool
 		absoluteDB      string
 	)
-	if *storage == "postgres" {
-		dsn, err := repo.ReadPostgresDSNFile(*postgresDSNFile)
+	if opts.Storage == "postgres" {
+		dsn, err := repo.ReadPostgresDSNFile(opts.PostgresDSNFile)
 		if err != nil {
 			fmt.Fprintln(stderr, "read PostgreSQL DSN file: invalid protected file")
 			return 2
@@ -237,7 +268,7 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 		notificationsOn = true
 	} else {
 		var err error
-		absoluteDB, err = filepath.Abs(*dbPath)
+		absoluteDB, err = filepath.Abs(opts.DBPath)
 		if err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
@@ -279,16 +310,15 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 	defer closeAccounts()
 	defer closeDatabase()
 	defer store.Close()
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	if *reportDir == "" {
-		if *storage == "postgres" {
-			*reportDir = filepath.Join("runtime", "reports")
+	reportDir := opts.ReportDir
+	if reportDir == "" {
+		if opts.Storage == "postgres" {
+			reportDir = filepath.Join("runtime", "reports")
 		} else {
-			*reportDir = filepath.Join(filepath.Dir(absoluteDB), "reports")
+			reportDir = filepath.Join(filepath.Dir(absoluteDB), "reports")
 		}
 	}
-	go store.RunReports(ctx, *reportDir)
+	go store.RunReports(ctx, reportDir)
 	if err := restartCleanup(ctx); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -344,44 +374,47 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 	}
 	var nodeTokenRegistry *api.NodeTokenRegistry
 	var nodeIssuer api.NodeCredentialIssuer
-	if *nodeTokenFile != "" {
-		tokens, err := api.ReadNodeTokenSetFile(*nodeTokenFile)
+	if opts.NodeTokenFile != "" {
+		tokens, err := api.ReadNodeTokenSetFile(opts.NodeTokenFile)
 		if err != nil {
 			fmt.Fprintln(stderr, "read node token registry:", err)
 			return 1
 		}
 		nodeTokenRegistry = api.NewNodeTokenRegistry(tokens)
-		if *nodeListen != "" {
-			nodeIssuer = api.NewFileNodeCredentialIssuer(store, nodeTokenRegistry, *nodeTokenFile, "https://"+*nodeListen)
+		if opts.NodeListen != "" {
+			nodeIssuer = api.NewFileNodeCredentialIssuer(store, nodeTokenRegistry, opts.NodeTokenFile, "https://"+opts.NodeListen)
 		}
+	} else if opts.NodeTokens != nil {
+		// In-process nodes (sec-portable) get per-start tokens that never touch disk.
+		nodeTokenRegistry = api.NewNodeTokenRegistry(opts.NodeTokens)
 	}
-	baseHandler := api.NewRuntimeHandlerWithNodeIssuer(store, api.NewDevelopmentHandler(accounts, assetStore, approvalsStore), *uiDir, nodeIssuer, accounts)
+	baseHandler := api.NewRuntimeHandlerWithUI(store, api.NewDevelopmentHandler(accounts, assetStore, approvalsStore), ui, nodeIssuer, accounts)
 	handler := http.Handler(baseHandler)
 	if nodeTokenRegistry != nil {
 		handler = api.NodeAuthMiddlewareWithRegistry(api.NodeLifecycleMiddleware(handler, store), nodeTokenRegistry)
 	}
-	server := &http.Server{Addr: *addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
+	server := &http.Server{Addr: opts.Addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 	var nodeServer *http.Server
 	var nodeListener net.Listener
-	if *nodeListen != "" {
-		listener, err := net.Listen("tcp", *nodeListen)
+	if opts.NodeListen != "" {
+		listener, err := net.Listen("tcp", opts.NodeListen)
 		if err != nil {
 			fmt.Fprintln(stderr, "listen node API:", err)
 			return 1
 		}
 		nodeListener = tls.NewListener(listener, nodeTLSConfig)
 		nodeHandler := api.NodeProtocolHandler(api.NodeAuthMiddlewareWithRegistry(api.NodeLifecycleMiddleware(baseHandler, store), nodeTokenRegistry))
-		nodeServer = &http.Server{Addr: *nodeListen, Handler: nodeHandler, ReadHeaderTimeout: 5 * time.Second, TLSConfig: nodeTLSConfig}
+		nodeServer = &http.Server{Addr: opts.NodeListen, Handler: nodeHandler, ReadHeaderTimeout: 5 * time.Second, TLSConfig: nodeTLSConfig}
 		go func() {
 			if err := nodeServer.Serve(nodeListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				slog.Error("node API stopped", "error", err)
 			}
 		}()
-		fmt.Fprintf(stdout, "Node API: https://%s\n", *nodeListen)
-		slog.Info("node API started", "address", *nodeListen, "tls", true)
+		fmt.Fprintf(stdout, "Node API: https://%s\n", opts.NodeListen)
+		slog.Info("node API started", "address", opts.NodeListen, "tls", true)
 	}
 	reloadSignals := make(chan os.Signal, 1)
-	if *nodeTokenFile != "" || nodeTLSReloader != nil {
+	if opts.NodeTokenFile != "" || nodeTLSReloader != nil {
 		signal.Notify(reloadSignals, syscall.SIGHUP)
 		defer signal.Stop(reloadSignals)
 		go func() {
@@ -390,8 +423,8 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 				case <-ctx.Done():
 					return
 				case <-reloadSignals:
-					if *nodeTokenFile != "" {
-						if err := nodeTokenRegistry.ReloadFile(*nodeTokenFile); err != nil {
+					if opts.NodeTokenFile != "" {
+						if err := nodeTokenRegistry.ReloadFile(opts.NodeTokenFile); err != nil {
 							slog.Error("node token rotation rejected", "error", err)
 						} else {
 							slog.Info("node token registry reloaded")
@@ -417,9 +450,13 @@ func RunServer(args []string, stdout, stderr io.Writer) int {
 			_ = nodeServer.Shutdown(shutdown)
 		}
 	}()
-	fmt.Fprintf(stdout, "Web UI: http://%s/#/tasks\n", *addr)
-	slog.Info("local framework started", "address", *addr, "mode", *storage)
-	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	fmt.Fprintf(stdout, "Web UI: http://%s/#/tasks\n", opts.Addr)
+	slog.Info("local framework started", "address", opts.Addr, "mode", opts.Storage)
+	serve := server.ListenAndServe
+	if opts.Listener != nil {
+		serve = func() error { return server.Serve(opts.Listener) }
+	}
+	if err := serve(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		fmt.Fprintf(stderr, "serve framework: %v\n", err)
 		return 1
 	}

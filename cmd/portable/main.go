@@ -3,9 +3,9 @@ package main
 import (
 	"os"
 
-	"scanner-platform/internal/bootstrap"
+	"scanner-platform/internal/portable"
 )
 
 func main() {
-	os.Exit(bootstrap.Run(bootstrap.Portable, os.Args[1:], os.Stdout, os.Stderr))
+	os.Exit(portable.Main(os.Args[1:], os.Stdout, os.Stderr))
 }

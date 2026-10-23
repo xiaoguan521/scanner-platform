@@ -896,3 +896,10 @@
 - `web/src/pages/Assets/sshProfile.ts` 复刻 `internal/sshcollect` 的加载校验（规范数字 IP、端口、账号格式、agent/private-key、本地路径、应用别名与目录规则、数量上限）。共享夹具 `internal/sshcollect/testdata/ui-generated-ssh-config.json`：前端测试要求生成结果与之逐字一致，`TestLoadAcceptsWebGeneratedConfig` 要求 Worker 原样加载。前端测试同时约束生成器不调用 API、不写浏览器存储、不含密码或私钥内容输入。
 - 资产洞察接口 `recentTasks` 增加 `systemScanCode`，资产列表“最近扫描”显示最近一次自动扫描的 SSH 采集状态；“未配置 SSH 采集”提示改为指向生成器。
 - 验证：`go test -race ./internal/sshcollect ./internal/api`、前端全部 `*.test.mjs`、`tsc`、生产构建；在本机临时 Server（示例数据）上实际操作生成器并核对输出。未在真实 Worker 和目标主机上执行 SSH 采集。
+
+## 2026-10-23：单程序便携版 sec-portable
+
+- `sec-portable` 从占位程序改为可用的单程序启动器（`internal/portable`）：Server、Worker、Updater 在同一进程运行，网页经 `internal/webui` 内嵌，SQLite，只接受数字回环地址；固定目录结构以程序所在目录为根（`--home` 可覆盖），`runtime/` 为 0700，`runtime/portable.lock` 文件锁防止两个副本共用数据。新增 `sec-portable --status` 与 `sec-portable prepare`（复用 Updater 的 `--prepare-engines`，运行期间拒绝执行）。
+- 三权分立保持：Worker、Updater 仍只通过 Server 节点接口通信，每次启动各生成 32 字节随机令牌，只存在内存，Server 用内存令牌表校验；无令牌的节点请求返回 401。Worker 不持有数据库连接。规则目录对 Worker 只读由代码保证（同进程无法以系统权限隔离，经用户确认接受）；无 Linux 围栏，范围由 Go 层校验（4.1-8）。`config/trusted-rule-keys/*.pem` 存在时规则包须验签，否则保持现有本地未签名行为（经用户确认）。
+- `internal/bootstrap` 把 `RunServer`、`RunWorker`、`RunUpdater` 拆为参数解析与可复用的 `ServeServer`、`ServeWorker`、`ServeUpdater`、`PrepareEngines`、`NewRuleManager`；三个独立程序的参数与行为不变，Linux 围栏路径未改动。新增 `golang.org/x/sys` 直接依赖（原已为间接依赖，BSD 许可证）用于 Windows 文件锁。
+- 验证：`go test -race ./internal/portable`（目录与权限、文件锁、回环限制、令牌随机性；在临时目录真实启动三组件，确认网页、401、第二副本被拒、Worker 与 Updater 以令牌上报心跳、取消后正常退出，并确认磁盘文件含数据库、日志及控制台输出中不含本次令牌）；`make portable` 后实际运行二进制：`--status`、首次创建管理员页面、无令牌节点请求 401、第二副本与 `prepare` 被拒、SIGINT 后退出码 0。未执行联网的 `prepare` 下载；未在 Windows 实机运行（仅交叉编译）；代码签名与 EDR 测试未做。
