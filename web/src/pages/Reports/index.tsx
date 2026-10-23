@@ -9,6 +9,11 @@ import { apiClient, requestJSON } from '../../api/client';
 import { CollectionNotice } from '../../api/CollectionNotice';
 import { pollIntervals, pollWhileVisible } from '../../api/polling';
 import { useAuth } from '../../auth/AuthProvider';
+import { Mono, StatusPill, taskStatusMeta } from '../../components/Semantic';
+import { PageHeader, Panel } from '../../components/Page';
+import { useAppTheme } from '../../context/ThemeContext';
+import type { Tone } from '../../theme/palette';
+import { taskTargetSummary } from '../Tasks/targets';
 import type { ReportJob, ReportScope, ReportTemplate } from './types';
 
 const sections = { cover: '封面', overview: '综述', assets: '资产统计', 'asset-risks': '资产风险信息', 'asset-details': '资产详情', 'risk-statistics': '风险统计', 'risk-details': '风险详情', appendix: '附录' };
@@ -34,6 +39,7 @@ function reportTargetHost(raw: string): string {
 
 export const ReportsPage: React.FC = () => {
   const { user } = useAuth();
+  const { palette } = useAppTheme();
   const canWrite = user?.role === 'admin' || user?.role === 'security_engineer';
   const { data: assets, loading: assetsLoading, error: assetsError } = useCollection('assets', '', true, pollIntervals.reference);
   const { data: tasks, loading: tasksLoading, error: tasksError } = useCollection('tasks', '', true, pollIntervals.reference);
@@ -101,37 +107,63 @@ export const ReportsPage: React.FC = () => {
     try { const values = await form.validateFields(); const { enabledSections, ...fields } = values; const body = { ...fields, logo: logo ?? '', sections: Object.fromEntries(Object.keys(sections).map(key => [key, enabledSections.includes(key)])) }; await requestJSON(`${templatesEndpoint}/${encodeURIComponent(templateId)}`, 'PUT', body); setEditing(false); message.success('模板已保存，新报告将使用更新后的模板'); await reload(); }
     catch (cause) { if (cause instanceof Error) message.error(cause.message); }
   };
+  const muted = { color: palette.textSecondary };
+  const small = { fontSize: 12, ...muted };
+  const stateTones: Record<ReportJob['status'], Tone> = { QUEUED: 'neutral', GENERATING: 'running', READY: 'ok', FAILED: 'error' };
+  const fileSize = (bytes: number) => bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MiB` : `${(bytes / 1024).toFixed(1)} KiB`;
+  const taskLabel = (task: (typeof availableTasks)[number]) => {
+    const target = taskTargetSummary(task);
+    return `${target.primary} · ${new Date(task.createdAt).toLocaleString()} · ${taskStatusMeta[task.status as keyof typeof taskStatusMeta]?.label ?? task.status}`;
+  };
+  const scopeSummary = [
+    businessGroup ? `业务组 ${businessGroup}` : '',
+    assetId ? `资产 ${assets.find(a => a.id === assetId)?.address ?? assetId}` : '',
+    taskId ? `任务 ${taskId}` : '',
+    range?.[0] || range?.[1] ? `最近发现 ${range?.[0]?.format('YYYY-MM-DD') ?? '不限'} 至 ${range?.[1]?.format('YYYY-MM-DD') ?? '不限'}` : '',
+  ].filter(Boolean).join(' · ') || '全部资产和发现项';
+  const field = (label: string, control: React.ReactNode) => <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12, color: palette.textTertiary, minWidth: 0 }}>{label}{control}</label>;
+
   return <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-    <CollectionNotice loading={assetsLoading || tasksLoading || reportLoading} error={assetsError || tasksError || error} />
-    <Card title={<TitleWithHelp title={<Space><FileTextOutlined />生成安全报告</Space>} helpTitle="后台生成与历史记录" help="每次生成冻结一份带版本的数据快照，HTML、Excel、Word、PDF、CSV 与 JSON 使用相同数据与统计规则。CSV 为漏洞明细平面文件，JSON 为完整快照。登录入口单独统计。报告上限 64 MiB，失败可用原快照重试。"/>} extra={<Button icon={<SettingOutlined />} disabled={!canWrite || !selectedTemplate} onClick={editTemplate}>配置模板</Button>}>
-      <Space wrap align="end">
-        <div><Text type="secondary">报告模板</Text><Select aria-label="报告模板" value={templateId} onChange={setTemplateId} style={{ display: 'block', width: 190 }} options={templates.map(t => ({ value: t.id, label: t.name }))} /></div>
-        <div><Text type="secondary">输出格式</Text><Select aria-label="输出格式" value={format} onChange={setFormat} style={{ display: 'block', width: 130 }} options={Object.entries(formatNames).map(([value, label]) => ({ value, label }))} /></div>
-        <div><Text type="secondary">业务组</Text><Select aria-label="业务组" allowClear value={businessGroup} onChange={value => { setBusinessGroup(value); setAssetId(undefined); setTaskId(undefined); }} style={{ display: 'block', width: 180 }} placeholder="全部业务组" options={groups.map(value => ({ value, label: value }))} /></div>
-        <div><Text type="secondary">资产</Text><Select aria-label="资产" allowClear showSearch optionFilterProp="label" value={assetId} onChange={value => { setAssetId(value); setTaskId(undefined); }} style={{ display: 'block', width: 210 }} placeholder="全部资产" options={assets.filter(a => !businessGroup || a.businessGroup === businessGroup).map(a => ({ value: a.id, label: a.address }))} /></div>
-        <div><Text type="secondary">扫描任务</Text><Select aria-label="扫描任务" allowClear showSearch optionFilterProp="label" value={taskId} onChange={setTaskId} style={{ display: 'block', width: 220 }} placeholder="全部任务" options={availableTasks.map(t => ({ value: t.id, label: `${t.id} · ${t.status}` }))} /></div>
-        <div><Text type="secondary">最近发现时间</Text><DatePicker.RangePicker aria-label="最近发现时间" value={range} onChange={setRange} allowEmpty={[true, true]} /></div>
-        <Button type="primary" loading={busy} disabled={!canWrite || !!error || !!assetsError || !!tasksError || !selectedTemplate} onClick={() => void generate()}>生成报告</Button>
-      </Space>
-      <Typography.Paragraph type="secondary" style={{ marginTop: 14, marginBottom: 0 }}>任务范围使用该任务的历史观察记录；失败、取消或尚未完成的任务会保留状态说明。未知字段显示“未采集”或“未知”。</Typography.Paragraph>
-    </Card>
-    <Space wrap>
-      <Input aria-label="报告历史搜索" placeholder="搜索报告 ID、名称、创建人或快照" allowClear value={reportSearch} onChange={event => setReportSearch(event.target.value)} style={{ width: 280 }} />
-      <Select aria-label="报告状态筛选" value={reportStatus} onChange={setReportStatus} style={{ width: 150 }} options={[{ value: 'ALL', label: '全部状态' }, ...Object.entries(stateNames).map(([value, label]) => ({ value, label }))]} />
-      <Select aria-label="报告格式筛选" value={reportFormat} onChange={setReportFormat} style={{ width: 190 }} options={[{ value: 'ALL', label: '全部格式' }, ...Object.entries(formatNames).map(([value, label]) => ({ value, label }))]} />
-    </Space>
-    <Card title="报告历史" extra={<Button onClick={() => void reload()}>刷新</Button>}>
-      <DataTable<ReportJob> rowKey="id" dataSource={jobs} loading={reportLoading} scroll={{ x: 1300 }} pagination={{ current: reportPage, pageSize: reportPageSize, total: reportTotal, showSizeChanger: true, pageSizeOptions: [10, 20, 50], showTotal: total => `共 ${total} 项`, onChange: (page, size) => { if (size !== reportPageSize) { setReportPageSize(size); setReportPage(1); } else setReportPage(page); } }} locale={{ emptyText: <Empty description="暂无报告，选择范围后生成" /> }} columns={[
-        { title: '报告名称', dataIndex: 'name', width: 330, ellipsis: true, render: (value: string, job) => <span title={`${value}\n快照 ${job.snapshotId}`}>{value}</span> },
-        { title: '格式', dataIndex: 'format', width: 85, render: (value: ReportJob['format']) => formatNames[value] },
-        { title: '状态', dataIndex: 'status', width: 190, render: (value: ReportJob['status'], job) => <div><Tag color={value === 'READY' ? 'success' : value === 'FAILED' ? 'error' : 'processing'}>{stateNames[value]}</Tag>{value === 'GENERATING' && <Progress size="small" percent={job.progress} />}{job.error && <Text type="danger">{job.error}</Text>}</div> },
-        { title: '文件大小', dataIndex: 'fileSize', width: 110, render: (value: number, job) => job.status === 'READY' ? `${(value / 1024).toFixed(1)} KiB` : '—' },
-        { title: '创建时间', dataIndex: 'createdAt', width: 180, render: (value: string) => new Date(value).toLocaleString() },
-        { title: '创建人 / 快照版本', width: 170, render: (_: unknown, job) => `${job.createdBy} / v${job.snapshotVersion}` },
-        { title: '操作', width: 280, render: (_: unknown, job) => <Space>{job.status === 'READY' && <Button size="small" icon={<DownloadOutlined />} href={`${endpoint}/${encodeURIComponent(job.id)}/download`}>下载</Button>}<Dropdown disabled={!canWrite} menu={{ items: Object.entries(formatNames).filter(([key]) => key !== job.format).map(([key, label]) => ({ key, label })), onClick: ({ key }) => void exportFormat(job, key) }}><Button size="small" disabled={!canWrite}>导出其他格式</Button></Dropdown>{job.status === 'FAILED' && <Button size="small" disabled={!canWrite} onClick={() => void retry(job)}>原快照重试</Button>}</Space> },
+    <PageHeader title="报告中心" description="按范围冻结一份数据快照，再导出为 Excel、Word、PDF、HTML、CSV 或 JSON"
+      extra={<Button icon={<SettingOutlined />} disabled={!canWrite || !selectedTemplate} onClick={editTemplate}>配置模板</Button>} />
+    <CollectionNotice loading={(assetsLoading || tasksLoading || reportLoading) && jobs.length === 0 && templates.length === 0} error={assetsError || tasksError || error} />
+
+    <Panel title={<TitleWithHelp title={<span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><FileTextOutlined /><span>生成安全报告</span></span>} helpTitle="后台生成与历史记录" help="每次生成冻结一份带版本的数据快照，HTML、Excel、Word、PDF、CSV 与 JSON 使用相同数据与统计规则。CSV 为漏洞明细平面文件，JSON 为完整快照。登录入口单独统计。报告上限 64 MiB，失败可用原快照重试。"/>}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(200px, 100%), 1fr))', gap: 12 }}>
+          {field('报告模板', <Select aria-label="报告模板" value={templateId} onChange={setTemplateId} options={templates.map(t => ({ value: t.id, label: t.name }))} />)}
+          {field('输出格式', <Select aria-label="输出格式" value={format} onChange={setFormat} options={Object.entries(formatNames).map(([value, label]) => ({ value, label }))} />)}
+          {field('业务组', <Select aria-label="业务组" allowClear value={businessGroup} onChange={value => { setBusinessGroup(value); setAssetId(undefined); setTaskId(undefined); }} placeholder="全部业务组" options={groups.map(value => ({ value, label: value }))} />)}
+          {field('资产', <Select aria-label="资产" allowClear showSearch optionFilterProp="label" value={assetId} onChange={value => { setAssetId(value); setTaskId(undefined); }} placeholder="全部资产" options={assets.filter(a => !businessGroup || a.businessGroup === businessGroup).map(a => ({ value: a.id, label: a.name ? `${a.address} · ${a.name}` : a.address }))} />)}
+          {field('扫描任务', <Select aria-label="扫描任务" allowClear showSearch optionFilterProp="label" value={taskId} onChange={setTaskId} placeholder="全部任务" options={availableTasks.map(t => ({ value: t.id, label: taskLabel(t) }))} />)}
+          {field('最近发现时间', <DatePicker.RangePicker aria-label="最近发现时间" value={range} onChange={setRange} allowEmpty={[true, true]} />)}
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '12px 14px', borderRadius: 10, background: palette.bgSubtle, border: `1px solid ${palette.borderSubtle}` }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+            <span style={{ fontSize: 13, color: palette.text }}>报告范围：{scopeSummary}</span>
+            <span style={small}>任务范围使用该任务的历史观察记录；失败、取消或尚未完成的任务会保留状态说明，未知字段显示“未采集”或“未知”。</span>
+          </div>
+          <Button type="primary" loading={busy} disabled={!canWrite || !!error || !!assetsError || !!tasksError || !selectedTemplate} onClick={() => void generate()}>生成报告</Button>
+        </div>
+      </div>
+    </Panel>
+
+    <Panel flush title="报告历史" extra={<Space wrap>
+      <Input aria-label="报告历史搜索" placeholder="搜索报告 ID、名称、创建人或快照" allowClear value={reportSearch} onChange={event => setReportSearch(event.target.value)} style={{ width: 260 }} />
+      <Select aria-label="报告状态筛选" value={reportStatus} onChange={setReportStatus} style={{ width: 120 }} options={[{ value: 'ALL', label: '全部状态' }, ...Object.entries(stateNames).map(([value, label]) => ({ value, label }))]} />
+      <Select aria-label="报告格式筛选" value={reportFormat} onChange={setReportFormat} style={{ width: 170 }} options={[{ value: 'ALL', label: '全部格式' }, ...Object.entries(formatNames).map(([value, label]) => ({ value, label }))]} />
+      <Button onClick={() => void reload()}>刷新</Button>
+    </Space>}>
+      <DataTable<ReportJob> rowKey="id" dataSource={jobs} loading={reportLoading} tableLayout="fixed" scroll={{ x: 1000 }} pagination={{ current: reportPage, pageSize: reportPageSize, total: reportTotal, showSizeChanger: true, pageSizeOptions: [10, 20, 50], showTotal: total => `共 ${total} 项`, onChange: (page, size) => { if (size !== reportPageSize) { setReportPageSize(size); setReportPage(1); } else setReportPage(page); } }} locale={{ emptyText: <Empty description="暂无报告，选择范围后生成" /> }} columns={[
+        { title: '报告', key: 'name', render: (_: unknown, job) => <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}><span style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={job.name}>{job.name}</span><span style={small} title={`快照 ${job.snapshotId}`}>快照 <Mono>{job.snapshotId.slice(0, 12)}</Mono> · v{job.snapshotVersion}</span></div> },
+        { title: '格式', key: 'format', width: 130, render: (_: unknown, job) => <StatusPill tone="neutral">{formatNames[job.format]}</StatusPill> },
+        { title: '状态', key: 'status', width: 190, render: (_: unknown, job) => <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start', width: '100%' }}><StatusPill tone={stateTones[job.status]}>{stateNames[job.status]}</StatusPill>{job.status === 'GENERATING' && <Progress size="small" percent={job.progress} style={{ width: '100%', margin: 0 }} />}{job.error && <span style={{ fontSize: 12, color: palette.error, overflowWrap: 'anywhere' }}>{job.error}</span>}</div> },
+        { title: '文件大小', key: 'size', width: 100, render: (_: unknown, job) => job.status === 'READY' ? <Mono>{fileSize(job.fileSize)}</Mono> : <span style={small}>—</span> },
+        { title: '创建', key: 'created', width: 180, render: (_: unknown, job) => <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}><span style={{ fontSize: 13 }}>{new Date(job.createdAt).toLocaleString()}</span><span style={{ ...small, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={job.createdBy}>{job.createdBy}</span></div> },
+        { title: '操作', key: 'actions', width: 220, render: (_: unknown, job) => <Space size={0} wrap>{job.status === 'READY' && <Button type="link" size="small" icon={<DownloadOutlined />} href={`${endpoint}/${encodeURIComponent(job.id)}/download`}>下载</Button>}<Dropdown disabled={!canWrite} menu={{ items: Object.entries(formatNames).filter(([key]) => key !== job.format).map(([key, label]) => ({ key, label })), onClick: ({ key }) => void exportFormat(job, key) }}><Button type="link" size="small" disabled={!canWrite}>导出其他格式</Button></Dropdown>{job.status === 'FAILED' && <Button type="link" size="small" disabled={!canWrite} onClick={() => void retry(job)}>原快照重试</Button>}</Space> },
       ]} />
-    </Card>
-    <Drawer title="报告模板" width={620} open={editing} onClose={() => setEditing(false)} extra={<Button type="primary" onClick={() => void saveTemplate()}>保存模板</Button>}>
+    </Panel>
+    <Drawer title="报告模板" width="min(640px, 100vw)" open={editing} onClose={() => setEditing(false)} extra={<Button type="primary" onClick={() => void saveTemplate()}>保存模板</Button>}>
       <Form form={form} layout="vertical">
         <Form.Item name="id" hidden><Input /></Form.Item>
         <Form.Item name="name" label="方案名称" rules={[{ required: true, max: 200 }]}><Input /></Form.Item>

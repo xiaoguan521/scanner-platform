@@ -363,3 +363,33 @@ func TestIncompleteSystemAndInfoOnlyAssessmentIsExplicit(t *testing.T) {
 		}
 	}
 }
+
+func TestWordReportUsesChaptersAndWritesNoneForEmptySections(t *testing.T) {
+	s := exampleSnapshot()
+	s.Findings = nil
+	s.Assets[0].LoginEntries = nil
+	s.Assets[0].Services[0].LoginEntries = nil
+	s = Freeze(s)
+	var b bytes.Buffer
+	if err := Render(context.Background(), &b, s, "docx"); err != nil {
+		t.Fatal(err)
+	}
+	files := unzip(t, b.Bytes())
+	content := xmlText(t, files["word/document.xml"])
+	for _, want := range []string{"1 综述", "2 资产统计", "3 资产详情", "4 风险统计", "5 风险详情", "系统漏洞影响分析", "本次未启用该检测项", s.ID} {
+		if !strings.Contains(content, want) {
+			t.Errorf("missing %q", want)
+		}
+	}
+	if strings.Count(content, "无") < 5 {
+		t.Fatalf("empty sections should say 无: %d", strings.Count(content, "无"))
+	}
+	for _, filler := range []string{"漏洞总数 = 系统漏洞", "图表均由服务端生成", "更多信息请在平台查看或下载 Excel。TOP 表"} {
+		if strings.Contains(content, filler) {
+			t.Fatalf("filler text %q should not be in the Word report", filler)
+		}
+	}
+	if !strings.Contains(files["word/styles.xml"], `w:styleId="Heading1"`) || !strings.Contains(files["word/document.xml"], `w:fill="DAE3F3"`) {
+		t.Fatal("Word report must use heading styles and shaded table headers")
+	}
+}
