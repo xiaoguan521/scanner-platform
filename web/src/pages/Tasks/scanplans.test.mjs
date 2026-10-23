@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const runtime = await readFile(new URL('../../api/runtime.ts', import.meta.url), 'utf8');
-const page = await readFile(new URL('./index.tsx', import.meta.url), 'utf8');
-const types = await readFile(new URL('../../types/index.ts', import.meta.url), 'utf8');
+const page = await readFile(new URL('./index.tsx', import.meta.url), 'utf8')
+  + await readFile(new URL('./ScanPlanEditor.tsx', import.meta.url), 'utf8');
+const types = await readFile(new URL('../../types/task.ts', import.meta.url), 'utf8');
 
 for (const name of ['createScanPlan', 'updateScanPlan', 'deleteScanPlan']) {
   assert.match(runtime, new RegExp(`${name}\\s*=`), `${name} must use the shared API client`);

@@ -7,7 +7,7 @@ import { useAppTheme } from '../../context/ThemeContext';
 import { TitleWithHelp } from '../../components/HelpTip';
 import type { Dayjs } from 'dayjs';
 import { ReloadOutlined, SearchOutlined } from '@ant-design/icons';
-import { requestJSON } from '../../api/client';
+import { requestJSON, errorMessage } from '../../api/client';
 import type { AuditLog } from '../../types';
 import { buildAuditQuery, defaultAuditFilters, type AuditFilters } from './filters';
 
@@ -29,7 +29,7 @@ export const AuditPage: React.FC = () => {
       const response = await requestJSON<{ items: AuditLog[]; total: number }>(`/api/v1/audit-logs${buildAuditQuery(filters, pageSize)}`, 'GET', undefined, signal);
       if (!signal?.aborted) { setItems(response.items); setTotal(response.total); setError(null); }
     } catch (cause) {
-      if (!signal?.aborted) setError(cause instanceof Error ? cause.message : '审计日志不可用');
+      if (!signal?.aborted) setError(errorMessage(cause,'审计日志不可用'));
     } finally {
       if (!signal?.aborted) setLoading(false);
     }

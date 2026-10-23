@@ -1,54 +1,40 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { Alert, Button, Empty, Form, Input, message, Modal, Space, Typography } from 'antd';
 import { Mono, StatusPill } from '../../components/Semantic';
 import { PageHeader, Panel } from '../../components/Page';
 import { TitleWithHelp } from '../../components/HelpTip';
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { DataTable } from '../../components/DataState';
-import { apiClient } from '../../api/client';
+import { apiClient, errorMessage } from '../../api/client';
+import { usePageState, useQuery } from '../../api/query';
 import { useAuth } from '../../auth/AuthProvider';
 import type { BusinessGroup } from '../../types';
 
 export const BusinessGroupsPage: React.FC = () => {
-  const { user } = useAuth();
-  const canEdit = user?.role === 'admin' || user?.role === 'security_engineer';
-  const [items, setItems] = useState<BusinessGroup[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(15);
-  const [total, setTotal] = useState(0);
+  const { canWrite } = useAuth();
+  const canEdit = canWrite;
   const [search, setSearch] = useState('');
+  const { page, pageSize, setPage, onChange: onPageChange } = usePageState(search, 15);
+  const list = useQuery(signal => apiClient.businessGroupsPage(page, pageSize, search, signal), [page, pageSize, search], { errorFallback: '业务组读取失败' });
+  const items = list.data?.items ?? [];
+  const total = list.data?.total ?? 0;
+  const { loading, error, reload } = list;
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [form] = Form.useForm<{ name: string }>();
 
-  const reload = useCallback(async () => {
-    setLoading(true);
-    try {
-      const response = await apiClient.businessGroupsPage(page, pageSize, search);
-      setItems(response.items);
-      setTotal(response.total);
-      setError('');
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : '业务组读取失败');
-    } finally {
-      setLoading(false);
-    }
-  }, [page, pageSize, search]);
-  useEffect(() => { void reload(); }, [reload]);
-
   const create = async ({ name }: { name: string }) => {
     setBusy(true);
     try {
-      const item = await apiClient.createBusinessGroup(name.trim());
-      setPage(1);
+      await apiClient.createBusinessGroup(name.trim());
       setSearch('');
+      setPage(1);
+      reload();
       setOpen(false);
       form.resetFields();
       message.success('业务组已创建');
     } catch (cause) {
-      message.error(cause instanceof Error ? cause.message : '业务组创建失败');
+      message.error(errorMessage(cause,'业务组创建失败'));
     } finally {
       setBusy(false);
     }
@@ -63,14 +49,14 @@ export const BusinessGroupsPage: React.FC = () => {
         extra={<Button type="primary" icon={<PlusOutlined />} disabled={!canEdit} onClick={() => setOpen(true)}>新增业务组</Button>}
       />
       {error && <Alert type="error" showIcon message={error} />}
-      <Panel flush title="业务组列表" extra={<Space wrap><Input.Search aria-label="业务组搜索" placeholder="搜索业务组" allowClear value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} style={{ width: 220 }} /><Button icon={<ReloadOutlined />} onClick={() => void reload()} loading={loading}>刷新</Button></Space>}>
+      <Panel flush title="业务组列表" extra={<Space wrap><Input.Search aria-label="业务组搜索" placeholder="搜索业务组" allowClear value={search} onChange={event => setSearch(event.target.value)} style={{ width: 220 }} /><Button icon={<ReloadOutlined />} onClick={reload} loading={loading}>刷新</Button></Space>}>
         <DataTable<BusinessGroup>
           rowKey="name"
           dataSource={items}
           loading={loading}
           tableLayout="fixed"
           locale={{ emptyText: <Empty description={search ? '没有符合条件的业务组' : '暂无业务组，请先登记资产或创建业务组'} /> }}
-          pagination={{ current: page, pageSize, total, showSizeChanger: true, pageSizeOptions: [15, 30, 60], showTotal: count => `共 ${count} 个业务组`, onChange: (nextPage, nextSize) => { if (nextSize !== pageSize) { setPageSize(nextSize); setPage(1); } else setPage(nextPage); } }}
+          pagination={{ current: page, pageSize, total, showSizeChanger: true, pageSizeOptions: [15, 30, 60], showTotal: count => `共 ${count} 个业务组`, onChange: onPageChange }}
           columns={[
             { title: '业务组', dataIndex: 'name', ellipsis: true, render: (name: string) => <Typography.Text strong>{name}</Typography.Text> },
             { title: '资产数', dataIndex: 'assetCount', width: 140, render: (count: number) => <StatusPill tone={count ? 'running' : 'neutral'}>{count} 台</StatusPill> },

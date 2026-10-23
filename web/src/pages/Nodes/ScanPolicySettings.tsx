@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Alert, Button, Card, Form, Input, InputNumber, message, Space, Tag, Typography } from 'antd';
-import { apiClient } from '../../api/client';
+import { apiClient, errorMessage } from '../../api/client';
 import { TitleWithHelp } from '../../components/HelpTip';
 import { useCollection } from '../../api/hooks';
 import { useAuth } from '../../auth/AuthProvider';
@@ -9,16 +9,16 @@ import type { ScanPolicy } from '../../types';
 
 type PolicyValues={commonPortsText:string;exclusionsText:string;quarantineThreshold:number;fixedThreshold:number};
 export const ScanPolicySettings:React.FC=()=>{
-  const {user}=useAuth();const canEdit=user?.role==='admin';const [form]=Form.useForm<PolicyValues>();
+  const {isAdmin:canEdit}=useAuth();const [form]=Form.useForm<PolicyValues>();
   const [policy,setPolicy]=useState<ScanPolicy|null>(null);const [error,setError]=useState('');const [busy,setBusy]=useState(false);
   const {data:capabilities,error:capabilityError}=useCollection('detection-capabilities');
   const apply=(next:ScanPolicy)=>{setPolicy(next);form.setFieldsValue({commonPortsText:compressPorts(next.commonPorts),exclusionsText:showRanges(next.exclusions)==='无'?'':showRanges(next.exclusions),quarantineThreshold:next.quarantineThreshold,fixedThreshold:next.fixedThreshold});};
-  useEffect(()=>{let active=true;apiClient.scanPolicy().then(p=>{if(active)apply(p);}).catch(e=>{if(active)setError(e instanceof Error?e.message:'策略读取失败');});return()=>{active=false;};},[]);
+  useEffect(()=>{let active=true;apiClient.scanPolicy().then(p=>{if(active)apply(p);}).catch(e=>{if(active)setError(errorMessage(e,'策略读取失败'));});return()=>{active=false;};},[]);
   const save=async(values:PolicyValues)=>{setBusy(true);try{
     const ranges=parsePortRanges(values.commonPortsText);if(!ranges.length)throw new Error('常见端口至少包含一个端口');
     const commonPorts=expandPortRanges(values.commonPortsText);
     const saved=await apiClient.saveScanPolicy({commonPorts,exclusions:parsePortRanges(values.exclusionsText),quarantineThreshold:values.quarantineThreshold,discoveryAttempts:3,fixedThreshold:values.fixedThreshold});apply(saved);setError('');message.success('系统扫描策略已保存；新建任务将冻结新策略');
-  }catch(e){message.error(e instanceof Error?e.message:'保存失败');}finally{setBusy(false);}};
+  }catch(e){message.error(errorMessage(e,'保存失败'));}finally{setBusy(false);}};
   const validateRanges=(_:unknown,value:string)=>{try{parsePortRanges(value);return Promise.resolve();}catch(e){return Promise.reject(e);}};
   return <>
     <Card title="检测能力状态"><Space wrap>{capabilities.map(c=><Tag key={c.id} color={c.status==='enabled'?'green':'default'} title={c.message}>{c.name}：{c.status==='enabled'?'已启用':c.status==='disabled'?'未启用':'未提供'}</Tag>)}{!capabilities.some(c=>c.id==='weak_credential')&&<Tag>弱口令：本次未启用该检测项</Tag>}</Space>{capabilityError&&<Typography.Paragraph type="danger">{capabilityError}</Typography.Paragraph>}</Card>

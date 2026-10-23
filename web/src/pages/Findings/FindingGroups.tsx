@@ -4,7 +4,7 @@ import { DownOutlined, RightOutlined } from '@ant-design/icons';
 import { DataTable } from '../../components/DataState';
 import { FindingStatusTag, Mono, SeverityTag, findingStatusMeta } from '../../components/Semantic';
 import { useAppTheme } from '../../context/ThemeContext';
-import { apiClient } from '../../api/client';
+import { apiClient, errorMessage } from '../../api/client';
 import type { FindingGroup, FindingGroupPage, FindingQueryOptions } from '../../api/client';
 import type { Finding } from '../../types';
 
@@ -36,7 +36,7 @@ const GroupFindings: React.FC<{
     apiClient.findingsPage(page, 10, { ...options, ...exact, sort: '-severity' }, controller.signal).then(result => {
       if (controller.signal.aborted) return;
       setItems(result.items); setCount(result.total); setError(''); onLoaded(result.items);
-    }).catch(cause => { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : '明细加载失败'); })
+    }).catch(cause => { if (!controller.signal.aborted) setError(errorMessage(cause,'明细加载失败')); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
     // options is compared through optionsKey; onLoaded only forwards results.
@@ -99,7 +99,7 @@ export const FindingGroups: React.FC<{
     }).catch(cause => {
       if (controller.signal.aborted) return;
       setData(null);
-      onSummary(null, cause instanceof Error ? cause.message : '聚合结果加载失败');
+      onSummary(null, errorMessage(cause,'聚合结果加载失败'));
     }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
     // options is compared through optionsKey; onSummary only forwards results.

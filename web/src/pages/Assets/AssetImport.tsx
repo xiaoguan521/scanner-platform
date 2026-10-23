@@ -1,7 +1,7 @@
 import React, {useState} from 'react';
 import { DataTable } from '../../components/DataState';
 import {Alert, Button, Checkbox, message, Modal, Space, Typography} from 'antd';
-import {apiClient} from '../../api/client';
+import {apiClient,errorMessage} from '../../api/client';
 import {assertImportFile,canConfirmImport} from './import';
 import type {AssetImportPreview,AssetImportRow} from './import';
 
@@ -14,7 +14,7 @@ export const AssetImport:React.FC<{disabled:boolean;onImported:()=>Promise<void>
   const upload=async(file:File)=>{
     setPreview(null);setAccepted(false);setError('');setBusy(true);
     try {assertImportFile(file);setPreview(await apiClient.previewAssetImport(file));}
-    catch(cause){setError(cause instanceof Error?cause.message:'预览失败');}
+    catch(cause){setError(errorMessage(cause,'预览失败'));}
     finally{setBusy(false);}
   };
   const confirm=async()=>{
@@ -26,7 +26,7 @@ export const AssetImport:React.FC<{disabled:boolean;onImported:()=>Promise<void>
       setPreview(null);setAccepted(false);
       message.success(`已导入 ${result.imported} 条资产`);
       await onImported();setOpen(false);
-    }catch(cause){setPreview(null);setAccepted(false);setError(cause instanceof Error?cause.message:'确认失败，请重新预览');}
+    }catch(cause){setPreview(null);setAccepted(false);setError(errorMessage(cause,'确认失败，请重新预览'));}
     finally{setBusy(false);}
   };
   return <>

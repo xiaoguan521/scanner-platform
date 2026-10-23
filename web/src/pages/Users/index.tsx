@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { DataTable } from '../../components/DataState';
 import { Alert, Button, Form, Input, message, Modal, Select, Space } from 'antd';
 import { PlusOutlined } from '@ant-design/icons';
-import { apiClient } from '../../api/client';
+import { apiClient, errorMessage } from '../../api/client';
 import { useCollection } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
 import { useAuth } from '../../auth/AuthProvider';
@@ -14,7 +14,7 @@ import type { User, UserRole } from '../../types';
 const roleOptions = Object.entries(roleNames).map(([value,label])=>({value,label}));
 
 export const UsersPage: React.FC = () => {
-  const {user:currentUser} = useAuth();
+  const {user:currentUser, isAdmin} = useAuth();
   const {data: users, setData: setUsers, loading, error} = useCollection('users');
   const [query,setQuery] = useState('');
   const [creating,setCreating] = useState(false);
@@ -25,7 +25,7 @@ export const UsersPage: React.FC = () => {
   const [editForm] = Form.useForm();
   const [resetForm] = Form.useForm<{password:string;confirmPassword:string}>();
   const rows = useMemo(()=>users.filter(u=>u.username.toLowerCase().includes(query.trim().toLowerCase())),[users,query]);
-  const canManage = currentUser?.role==='admin';
+  const canManage = isAdmin;
 
   const createUser = async (values:{username:string,password:string,role:UserRole}) => {
     setBusy(true);
@@ -33,7 +33,7 @@ export const UsersPage: React.FC = () => {
       const result=await apiClient.createUser(values.username,values.password,values.role);
       setUsers(prev=>[...prev,result]);createForm.resetFields();setCreating(false);
       message.success('用户已创建');
-    }catch(e){message.error(e instanceof Error ? e.message:'创建失败');}
+    }catch(e){message.error(errorMessage(e,'创建失败'));}
     finally{setBusy(false);}
   };
   const editUser = async (values:{role:UserRole,isActive:boolean})=>{
@@ -43,7 +43,7 @@ export const UsersPage: React.FC = () => {
       const result=await apiClient.updateUser(editing.id,values.role,values.isActive);
       setUsers(prev=>prev.map(u=>u.id===result.id?result:u));setEditing(null);
       message.success('用户资料已更新');
-    }catch(e){message.error(e instanceof Error ? e.message:'更新失败');}
+    }catch(e){message.error(errorMessage(e,'更新失败'));}
     finally{setBusy(false);}
   };
   const resetPassword = async (values:{password:string;confirmPassword:string})=>{
@@ -53,7 +53,7 @@ export const UsersPage: React.FC = () => {
     try {
       await apiClient.resetUserPassword(resetting.id,values.password);
       setResetting(null);resetForm.resetFields();message.success(`已重置 ${resetting.username} 的密码，旧会话已失效`);
-    }catch(e){message.error(e instanceof Error ? e.message:'密码重置失败');}
+    }catch(e){message.error(errorMessage(e,'密码重置失败'));}
     finally{setBusy(false);}
   };
   const roleTones: Record<UserRole, Tone> = { admin: 'warning', security_engineer: 'running', ops_approver: 'ok', viewer: 'neutral' };

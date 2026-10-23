@@ -33,7 +33,8 @@ assert.equal(selected([refreshed], [original], original.id), refreshed, 'use the
 assert.equal(selected([refreshed], [], original.id), undefined, 'filtered records close');
 assert.equal(selected([], [original], original.id), undefined, 'removed records close');
 
-const page = await readFile(new URL('./index.tsx', import.meta.url), 'utf8');
+const page = await readFile(new URL('./index.tsx', import.meta.url), 'utf8')
+  + await readFile(new URL('./FindingDrawer.tsx', import.meta.url), 'utf8');
 const ast = ts.createSourceFile('index.tsx', page, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const elements = [];
 function visit(node) {

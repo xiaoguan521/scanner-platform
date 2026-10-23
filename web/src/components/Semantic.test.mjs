@@ -6,6 +6,7 @@ const semantic = fs.readFileSync(new URL('./Semantic.tsx', import.meta.url), 'ut
 const findings = fs.readFileSync(new URL('../pages/Findings/index.tsx', import.meta.url), 'utf8');
 const dashboard = fs.readFileSync(new URL('../pages/Dashboard/index.tsx', import.meta.url), 'utf8');
 const tasks = fs.readFileSync(new URL('../pages/Tasks/index.tsx', import.meta.url), 'utf8');
+const scheduleHistory = fs.readFileSync(new URL('../pages/Tasks/ScheduleHistoryModal.tsx', import.meta.url), 'utf8');
 
 test('semantic components own the shared status vocabulary', () => {
   for (const token of ['severityMeta', 'findingStatusMeta', 'taskStatusMeta', 'SeverityTag', 'FindingStatusTag', 'TaskStatusTag', 'StatCard', 'LoadingSkeleton']) {
@@ -27,6 +28,6 @@ test('high traffic pages consume shared semantic tags', () => {
   assert.match(dashboard, /<TaskStatusTag\b/);
   assert.match(tasks, /from ['"]\.\.\/\.\.\/components\/Semantic['"]/);
   assert.match(tasks, /<TaskStatusTag\b/);
-  assert.match(tasks, /<ScheduleStatusTag\b/);
+  assert.match(scheduleHistory, /<ScheduleStatusTag\b/);
   assert.doesNotMatch(tasks, /const names:Record<string,string>/);
 });

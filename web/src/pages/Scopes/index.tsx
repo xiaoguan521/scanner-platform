@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { DataTable } from '../../components/DataState';
-import { Alert, Button, Card, Form, Input, message, Modal, Select, Space, Tag, Typography } from 'antd';
+import { Alert, Button, Form, Input, message, Modal, Select, Space, Typography } from 'antd';
 import { PlusOutlined } from '@ant-design/icons';
-import { apiClient } from '../../api/client';
+import { apiClient, errorMessage } from '../../api/client';
 import { useCollection } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
 import { pollIntervals, pollWhileVisible } from '../../api/polling';
@@ -14,7 +14,6 @@ import type { Tone } from '../../theme/palette';
 import type { ApprovalDecision, AuthorizedScope, PortRequest, ReviewStatus, TimeWindow } from '../../types';
 import { scopeExpiryLabel, scopeExpiryState, type ScopeExpiryFilter } from './expiry';
 
-const { Text } = Typography;
 const weekdays = [
   { value: 1, label: '周一' }, { value: 2, label: '周二' },
   { value: 3, label: '周三' }, { value: 4, label: '周四' },
@@ -35,7 +34,7 @@ type ReviewTarget = { kind: 'scope'; id: string; requestedBy?: string } |
   { kind: 'port'; id: string; port: number; requestedBy?: string };
 
 export const ScopesPage: React.FC = () => {
-  const { user } = useAuth();
+  const { user, canWrite, canReview } = useAuth();
   const { palette } = useAppTheme();
   const { data: assets } = useCollection('assets');
   const [scopes, setScopes] = useState<AuthorizedScope[]>([]);
@@ -69,8 +68,8 @@ export const ScopesPage: React.FC = () => {
   const [reviewForm] = Form.useForm<ApprovalDecision>();
   const pendingPortReview = reviewTarget?.kind === 'port';
   const hostAssets = useMemo(() => assets.filter(asset => asset.kind === 'host'), [assets]);
-  const canRequest = user?.role === 'admin' || user?.role === 'security_engineer';
-  const canReview = user?.role === 'admin' || user?.role === 'ops_approver';
+  const canRequest = canWrite;
+  
   const scopeStatus = (scope: AuthorizedScope): ReviewStatus | 'REVOKED' =>
     scope.status ?? (scope.isActive ? 'APPROVED' : 'PENDING');
 
@@ -94,7 +93,7 @@ export const ScopesPage: React.FC = () => {
         setPortTotal(portResult.total);
         setError(null);
       }).catch(cause => {
-        if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : '授权清册服务不可用');
+        if (!controller.signal.aborted) setError(errorMessage(cause,'授权清册服务不可用'));
       }).finally(() => {
         inFlight = false;
         if (!controller.signal.aborted) setLoading(false);
@@ -128,7 +127,7 @@ export const ScopesPage: React.FC = () => {
       setEditingScope(null);
       message.success(editingScope ? '修改已保存，授权已重置为待审核' : '范围申请已保存，等待另一位审批人审核');
     } catch (e) {
-      message.error(e instanceof Error ? e.message : '提交授权申请失败');
+      message.error(errorMessage(e,'提交授权申请失败'));
     } finally { setBusy(false); }
   };
   const openReview = (target: ReviewTarget) => {
@@ -152,7 +151,7 @@ export const ScopesPage: React.FC = () => {
     okText: '删除', okButtonProps: { danger: true }, cancelText: '取消',
     onOk: async () => {
       try { await apiClient.deleteScope(scope.id); setScopes(prev => prev.filter(item => item.id !== scope.id)); refresh(); message.success('授权记录已删除'); }
-      catch (cause) { message.error(cause instanceof Error ? cause.message : '删除失败'); throw cause; }
+      catch (cause) { message.error(errorMessage(cause,'删除失败')); throw cause; }
     },
   });
   const revokeScope = (scope: AuthorizedScope) => Modal.confirm({
@@ -160,7 +159,7 @@ export const ScopesPage: React.FC = () => {
     okText: '撤销授权', okButtonProps: { danger: true }, cancelText: '取消',
     onOk: async () => {
       try { const updated = await apiClient.revokeScope(scope.id); setScopes(prev => prev.map(item => item.id === updated.id ? updated : item)); refresh(); message.success('授权已撤销'); }
-      catch (cause) { message.error(cause instanceof Error ? cause.message : '撤销失败'); throw cause; }
+      catch (cause) { message.error(errorMessage(cause,'撤销失败')); throw cause; }
     },
   });
   const renewScopes = async () => {
@@ -180,7 +179,7 @@ export const ScopesPage: React.FC = () => {
       refresh();
       message.success(`已提交 ${result.items.length} 条续期申请，等待重新审批`);
     } catch (cause) {
-      message.error(cause instanceof Error ? cause.message : '批量续期失败，记录未改变');
+      message.error(errorMessage(cause,'批量续期失败，记录未改变'));
     } finally { setBusy(false); }
   };
   const submitReview = async (decision: ApprovalDecision) => {
@@ -198,7 +197,7 @@ export const ScopesPage: React.FC = () => {
       setReviewTarget(null);
       message.success(decision.decision === 'APPROVE' ? '审批结果已记录' : '驳回结果已记录');
     } catch (e) {
-      message.error(e instanceof Error ? e.message : '审批失败，记录未改变');
+      message.error(errorMessage(e,'审批失败，记录未改变'));
     } finally { setBusy(false); }
   };
   const statusTones: Record<ReviewStatus | 'REVOKED', Tone> = { PENDING: 'warning', APPROVED: 'ok', REJECTED: 'error', REVOKED: 'neutral' };

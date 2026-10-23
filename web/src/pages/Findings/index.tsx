@@ -2,51 +2,42 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { DataTable } from '../../components/DataState';
 import { useSearchParams } from 'react-router-dom';
 import {
-  Tag,
   Button,
   Space,
   Select,
   Input,
   Typography,
-  Alert,
   Tooltip,
-  Descriptions,
-  Drawer,
-  Timeline,
   Modal,
   Segmented,
   message,
-  theme,
 } from 'antd';
-import { Finding, FindingAssignmentEvent, FindingEvent, FindingAssignee, FindingNote, FindingRetest, FindingSeverity, FindingStatus } from '../../types';
+import { Finding, FindingAssignee, FindingSeverity, FindingStatus } from '../../types';
 import { FindingStatusTag, Mono, SeverityTag } from '../../components/Semantic';
 import { PageHeader, Panel } from '../../components/Page';
 import { useAppTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../auth/AuthProvider';
-import { batchAssignFindings, batchFindingDisposition, updateFinding, fetchFindingEvents, fetchFindingAssignees, fetchFindingAssignments, assignFinding, fetchFindingNotes, addFindingNote, createFindingRetest, fetchFindingRetests } from '../../api/runtime';
-import { apiClient } from '../../api/client';
+import { batchAssignFindings, batchFindingDisposition, updateFinding, fetchFindingAssignees } from '../../api/runtime';
+import { apiClient, errorMessage } from '../../api/client';
 import type { FindingQueryOptions } from '../../api/client';
 import { CollectionNotice } from '../../api/CollectionNotice';
 import { TitleWithHelp } from '../../components/HelpTip';
-import { pollWhileVisible } from '../../api/polling';
+import { usePageState, useQuery } from '../../api/query';
 
 import { riskLabels, methodLabels, confidenceLabels, isVerifiedFinding } from './presentation';
 import { FindingFilters, FindingSort, FindingView, readFindingFilters, writeFindingFilters } from './filters';
 import { FindingFilterBar } from './FilterBar';
 import { FindingGroups } from './FindingGroups';
-import { detailText, detailList, detailIdentifiers, selectedFindingForDrawer } from './drawer';
-import { canAcceptRisk, acceptanceInput } from './disposition';
-import { findingNoteInput } from './work';
+import { selectedFindingForDrawer } from './drawer';
+import { acceptanceInput } from './disposition';
 import { FindingSelection, batchAssignmentSelectionChanged, batchSelectionChanged, batchTransitionAllowed, updateBatchSelection } from './batch';
-import { retestIsActive, retestStatusLabel } from './retest';
+import { FindingDrawer } from './FindingDrawer';
 const { Text } = Typography;
 
 export const FindingsPage: React.FC = () => {
-  const {user}=useAuth();
-  const {token}=theme.useToken();
+  const {canWrite}=useAuth();
   const {palette}=useAppTheme();
-  const canWrite=user?.role==='admin'||user?.role==='security_engineer';
-  const [findings,setFindings]=useState<Finding[]>([]);const [findingLoading,setFindingLoading]=useState(true);const [findingError,setFindingError]=useState<string|null>(null);const [findingPage,setFindingPage]=useState(1);const [findingPageSize,setFindingPageSize]=useState(10);const [findingTotal,setFindingTotal]=useState(0);const [findingCountsSummary,setFindingCountsSummary]=useState({vulnerabilities:0,loginEntries:0,unknown:0,version:0,verified:0});const [findingRevision,setFindingRevision]=useState(0);
+  const [findingRevision,setFindingRevision]=useState(0);
   const [searchParams, setSearchParams] = useSearchParams();
   const filters = readFindingFilters(searchParams);
   const { severity: severityFilter, status: statusFilter, method: methodFilter,
@@ -81,64 +72,16 @@ export const FindingsPage: React.FC = () => {
   useEffect(() => { setGroupFindings([]); }, [view, optionsKey]);
   const [businessGroups, setBusinessGroups] = useState<string[]>([]);
   useEffect(() => { void apiClient.businessGroups().then(result => setBusinessGroups(result.items.map(item => item.name))).catch(() => setBusinessGroups([])); }, []);
-  useEffect(()=>{
-    if(view!=='flat')return;
-    const controller=new AbortController();
-    setFindingLoading(true);
-    apiClient.findingsPage(findingPage,findingPageSize,{...queryOptions,sort},controller.signal).then(result=>{
-      if(!controller.signal.aborted){setFindings(result.items);setFindingTotal(result.total);setFindingCountsSummary(result.counts);setFindingError(null);}
-    }).catch(cause=>{if(!controller.signal.aborted){setFindings([]);setFindingTotal(0);setFindingCountsSummary({vulnerabilities:0,loginEntries:0,unknown:0,version:0,verified:0});setFindingError(cause instanceof Error?cause.message:'漏洞清册加载失败');}}).finally(()=>{if(!controller.signal.aborted)setFindingLoading(false)});
-    return()=>controller.abort();
-  // queryOptions is compared through optionsKey.
-  },[view,findingPage,findingPageSize,optionsKey,sort,findingRevision]);
-  useEffect(()=>{if(findingPage!==1)setFindingPage(1)},[optionsKey,sort]);
+  const emptyCounts={vulnerabilities:0,loginEntries:0,unknown:0,version:0,verified:0};
+  const {page:findingPage,pageSize:findingPageSize,onChange:onFindingPageChange}=usePageState([optionsKey,sort],10);
+  const findingList=useQuery(signal=>apiClient.findingsPage(findingPage,findingPageSize,{...queryOptions,sort},signal),[findingPage,findingPageSize,optionsKey,sort,findingRevision],{enabled:view==='flat',errorFallback:'漏洞清册加载失败',emptyValue:{items:[],total:0,page:1,pageSize:findingPageSize,counts:emptyCounts}});
+  const findings=findingList.data?.items??[];const findingTotal=findingList.data?.total??0;const findingCountsSummary=findingList.data?.counts??emptyCounts;const findingLoading=findingList.loading;const findingError=findingList.error;
+  // Saved edits replace rows in place until the next refetch.
+  const setFindings=(update:(previous:Finding[])=>Finding[])=>findingList.setData(current=>current&&{...current,items:update(current.items)});
   const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
   const detailTrigger = useRef<HTMLElement | null>(null);
-  const [acceptReason,setAcceptReason]=useState('');
-  const [acceptUntil,setAcceptUntil]=useState('');
   const [saving,setSaving]=useState(false);
-  const [events,setEvents]=useState<FindingEvent[]>([]);
-  const [eventsError,setEventsError]=useState('');
   const [eventRevision,setEventRevision]=useState(0);
-  useEffect(()=>{
-    setAcceptReason('');setAcceptUntil('');setEvents([]);setEventsError('');
-    if(!selectedFindingId)return;
-    const controller=new AbortController();
-    const load=()=>fetchFindingEvents(selectedFindingId,controller.signal).then(result=>{if(!controller.signal.aborted){setEvents(result.items);setEventsError('')}}).catch(()=>{if(!controller.signal.aborted)setEventsError('状态记录加载失败，请稍后重试')});
-    void load();const stop=pollWhileVisible(()=>void load(),10000);
-    return ()=>{controller.abort();stop()};
-  },[selectedFindingId,eventRevision]);
-
-  const [retests,setRetests]=useState<FindingRetest[]>([]);
-  const [retestError,setRetestError]=useState('');
-  const [retestSaving,setRetestSaving]=useState(false);
-  const [retestRevision,setRetestRevision]=useState(0);
-  useEffect(()=>{
-    setRetests([]);setRetestError('');
-    if(!selectedFindingId)return;
-    const controller=new AbortController();
-    void fetchFindingRetests(selectedFindingId,controller.signal).then(result=>{if(!controller.signal.aborted)setRetests(result.items)}).catch(()=>{if(!controller.signal.aborted)setRetestError('复测记录加载失败，请稍后重试')});
-    return()=>controller.abort();
-  },[selectedFindingId,retestRevision]);
-
-  const [assignees,setAssignees]=useState<FindingAssignee[]>([]);
-  const [assignmentEvents,setAssignmentEvents]=useState<FindingAssignmentEvent[]>([]);
-  const [assigneeId,setAssigneeId]=useState('');
-  const [notes,setNotes]=useState<FindingNote[]>([]);
-  const [noteBody,setNoteBody]=useState('');
-  const [workError,setWorkError]=useState('');
-  const [workSaving,setWorkSaving]=useState(false);
-  const [workRevision,setWorkRevision]=useState(0);
-  useEffect(()=>{
-    setNotes([]);setNoteBody('');setAssignees([]);setAssignmentEvents([]);setWorkError('');
-    if(!selectedFindingId)return;
-    const controller=new AbortController();
-    void Promise.all([canWrite?fetchFindingAssignees(controller.signal):Promise.resolve({items:[] as FindingAssignee[],total:0}),fetchFindingNotes(selectedFindingId,controller.signal),fetchFindingAssignments(selectedFindingId,controller.signal)]).then(([users,result,history])=>{
-      if(!controller.signal.aborted){setAssignees(users.items);setNotes(result.items);setAssignmentEvents(history.items)}
-    }).catch(()=>{if(!controller.signal.aborted)setWorkError('指派候选或备注加载失败，请关闭详情后重试')});
-    return()=>controller.abort();
-  },[selectedFindingId,workRevision,canWrite]);
-
   const [batchAssignees,setBatchAssignees]=useState<FindingAssignee[]>([]);
   const [batchAssigneeError,setBatchAssigneeError]=useState('');
   useEffect(()=>{
@@ -147,30 +90,6 @@ export const FindingsPage: React.FC = () => {
     void fetchFindingAssignees(controller.signal).then(result=>{if(!controller.signal.aborted){setBatchAssignees(result.items);setBatchAssigneeError('')}}).catch(()=>{if(!controller.signal.aborted)setBatchAssigneeError('批量指派候选加载失败')});
     return()=>controller.abort();
   },[canWrite]);
-  const saveAssignment=async(id:string)=>{
-    setWorkSaving(true);
-    try{const item=await assignFinding(id,assigneeId);setFindings(previous=>previous.map(f=>f.id===id?item:f));setGroupFindings(previous=>previous.map(f=>f.id===id?item:f));if(view!=='flat')setFindingRevision(n=>n+1);message.success('指派已保存并记录审计')}
-    catch(e){message.error(String(e))}finally{setWorkSaving(false)}
-  };
-  const saveNote=async(id:string)=>{
-    try{const body=findingNoteInput(noteBody);setWorkSaving(true);await addFindingNote(id,body);setWorkRevision(n=>n+1);message.success('备注已追加并记录审计')}
-    catch(e){message.error(e instanceof Error?e.message:String(e))}finally{setWorkSaving(false)}
-  };
-
-  const startRetest=async(id:string)=>{
-    Modal.confirm({
-      title:'确认重新扫描该漏洞？',
-      content:'平台会复用原扫描任务的冻结目标和授权范围，并创建一条新的扫描任务。',
-      okText:'创建复测任务',cancelText:'取消',
-      onOk:async()=>{
-        setRetestSaving(true);
-        try{const result=await createFindingRetest(id);setRetests(previous=>[...previous,result.retest]);setRetestRevision(n=>n+1);message.success(`复测任务已创建：${result.task.id}`)}
-        catch(e){message.error(e instanceof Error?e.message:String(e));throw e}
-        finally{setRetestSaving(false)}
-      },
-    });
-  };
-
   const [batchSelection,setBatchSelection]=useState<FindingSelection[]>([]);
   const [batchStatus,setBatchStatus]=useState<FindingStatus>('IN_PROGRESS');
   const [batchOpen,setBatchOpen]=useState(false);
@@ -194,7 +113,7 @@ export const FindingsPage: React.FC = () => {
       setFindings(previous=>previous.map(item=>updated.get(item.id)??item));setFindingRevision(n=>n+1);
       setBatchSelection([]);setBatchOpen(false);setBatchReason('');setBatchUntil('');setEventRevision(n=>n+1);
       message.success(`已更新 ${result.updated} 项并记录审计`);
-    }catch(e){message.error(`${e instanceof Error?e.message:String(e)}；整批未保存，请核对当前状态后重新选择`)}finally{setBatchSaving(false)}
+    }catch(e){message.error(`${errorMessage(e)}；整批未保存，请核对当前状态后重新选择`)}finally{setBatchSaving(false)}
   };
   const saveBatchAssignment=async()=>{
     if(!batchAssignmentAllowed)return;
@@ -205,7 +124,7 @@ export const FindingsPage: React.FC = () => {
       setFindings(previous=>previous.map(item=>updated.get(item.id)??item));
       setBatchSelection([]);setBatchAssignOpen(false);setBatchAssigneeId('');
       message.success(`已批量指派 ${result.updated} 项并记录审计`);
-    }catch(e){message.error(`${e instanceof Error?e.message:String(e)}；整批未保存，请核对当前指派状态后重试`)}finally{setBatchAssignSaving(false)}
+    }catch(e){message.error(`${errorMessage(e)}；整批未保存，请核对当前指派状态后重试`)}finally{setBatchAssignSaving(false)}
   };
 
   const filteredFindings = findings;
@@ -218,7 +137,6 @@ export const FindingsPage: React.FC = () => {
   const openFindingDetails = (finding: Finding, trigger: HTMLElement) => {
     detailTrigger.current = trigger;
     setSelectedFindingId(finding.id);
-    setAssigneeId(finding.assigneeId??'');
   };
   const closeFindingDetails = () => setSelectedFindingId(null);
   const restoreDetailFocus = (open: boolean) => {
@@ -234,7 +152,7 @@ export const FindingsPage: React.FC = () => {
       message.warning('FIXED 必须经平台确认完整扫描、规则执行和未检出阈值，目前不可操作');
       return;
     }
-    setSaving(true);try{const item=await updateFinding(id,newStatus,acceptance);setFindings(prev=>prev.map(f=>f.id===id?item:f));setGroupFindings(prev=>prev.map(f=>f.id===id?item:f));setFindingRevision(n=>n+1);setEventRevision(n=>n+1);message.success('状态已保存并记录审计');}catch(e){message.error(String(e));}finally{setSaving(false)}
+    setSaving(true);try{const item=await updateFinding(id,newStatus,acceptance);setFindings(prev=>prev.map(f=>f.id===id?item:f));setGroupFindings(prev=>prev.map(f=>f.id===id?item:f));setFindingRevision(n=>n+1);setEventRevision(n=>n+1);message.success('状态已保存并记录审计');}catch(e){message.error(errorMessage(e));}finally{setSaving(false)}
   };
 
   const summaryCounts = view === 'flat' ? findingCountsSummary : groupSummary?.counts ?? findingCountsSummary;
@@ -295,7 +213,7 @@ export const FindingsPage: React.FC = () => {
             const key=String(current?.columnKey??'');
             updateFilters({sort:(current?.order?(current.order==='ascend'?key:'-'+key):'-severity') as FindingSort});
           }}
-          pagination={{current:findingPage,pageSize:findingPageSize,total:findingTotal,showSizeChanger:true,pageSizeOptions:[10,20,50,100],showTotal:total=>`共 ${total} 项`,onChange:(page,size)=>{if(size!==findingPageSize){setFindingPageSize(size);setFindingPage(1)}else setFindingPage(page)}}}
+          pagination={{current:findingPage,pageSize:findingPageSize,total:findingTotal,showSizeChanger:true,pageSizeOptions:[10,20,50,100],showTotal:total=>`共 ${total} 项`,onChange:onFindingPageChange}}
           scroll={{x:1210}}
           columns={[
             {title:'等级',key:'severity',dataIndex:'severity',width:96,sorter:true,sortOrder:sortOrder('severity'),sortDirections:['descend','ascend'],render:(s: FindingSeverity)=><SeverityTag value={s} />},
@@ -387,135 +305,9 @@ export const FindingsPage: React.FC = () => {
           <div style={{maxHeight:180,overflowY:'auto',overflowWrap:'anywhere'}}>{batchSelection.map(item=><div key={item.id}><Text code>{item.id}</Text> · 当前 {item.expectedAssigneeId||'未指派'}</div>)}</div>
         </Space>
       </Modal>
-      <Drawer
-        title="发现项详情"
-        open={Boolean(selectedFinding)}
-        onClose={closeFindingDetails}
-        afterOpenChange={restoreDetailFocus}
-        width="min(760px, 100vw)"
-        keyboard
-        maskClosable
-        styles={{ body: { overflowX: 'hidden' } }}
-      >
-        {selectedFinding && (
-          <Space direction="vertical" size={20} style={{ width: '100%', minWidth: 0 }}>
-            <Typography.Title level={4} style={{ margin: 0, overflowWrap: 'anywhere' }}>
-              {detailText(selectedFinding.title)}
-            </Typography.Title>
-            <Space wrap>
-              <SeverityTag value={selectedFinding.severity} />
-              <FindingStatusTag value={selectedFinding.status} />
-              <Tag color={selectedFinding.synthetic ? 'blue' : 'default'}>
-                {selectedFinding.synthetic == null ? '模拟标记：未提供' : selectedFinding.synthetic ? '模拟结果' : '非模拟结果'}
-              </Tag>
-            </Space>
-            {selectedFinding.detectMethod === 'version' && <Alert type="warning" showIcon message="该结果基于组件版本推断，建议登录主机核查补丁或使用主机本地扫描。" />}
-            {selectedFinding.contentLanguage && !['zh-CN', 'zh'].includes(selectedFinding.contentLanguage) && <Tag color="orange">内容为原文，待中文化</Tag>}
-            <Descriptions title="目标与检测依据" column={1} size="small" bordered
-              styles={{ content: { overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' } }}
-              items={[
-                { label: '目标地址', children: detailText(selectedFinding.target) },
-                { label: '端口', children: detailText(selectedFinding.port) },
-                { label: '业务组', children: detailText(selectedFinding.businessGroup) },
-                { label: '负责人', children: detailText(selectedFinding.owner) },
-                { label: '引擎', children: detailText(selectedFinding.engine) },
-                { label: '模板 / CVE', children: detailText(selectedFinding.templateOrCve) },
-                { label: '检测方式', children: detailText(selectedFinding.detectMethod && methodLabels[selectedFinding.detectMethod]) },
-                { label: '置信度', children: detailText(selectedFinding.confidence && confidenceLabels[selectedFinding.confidence]) },
-                { label: '风险类型', children: detailText(selectedFinding.riskType && riskLabels[selectedFinding.riskType]) },
-                { label: '漏洞分类', children: detailText(selectedFinding.vulnCategory) },
-                { label: 'CVSS', children: detailText(selectedFinding.cvssScore) },
-                { label: '组件', children: detailText(selectedFinding.component) },
-                { label: '软件包', children: detailText(selectedFinding.package) },
-                { label: '安装版本', children: detailText(selectedFinding.installedVersion) },
-                { label: '修复版本', children: detailText(selectedFinding.fixedVersion) },
-                { label: '内容语言', children: detailText(selectedFinding.contentLanguage) },
-              ].map((item, key) => ({ ...item, key }))}
-            />
-            {[
-              { label: '描述', value: detailText(selectedFinding.description) },
-              { label: '影响', value: detailText(selectedFinding.impact) },
-              { label: '修复建议', value: detailText(selectedFinding.solution) },
-              { label: '证据', value: detailText(selectedFinding.evidence) },
-              { label: '匹配路径', value: detailText(selectedFinding.matchedPath) },
-              { label: '外部编号', value: detailIdentifiers(selectedFinding.identifiers) },
-              { label: '参考资料', value: detailList(selectedFinding.references) },
-            ].map(field => (
-              <section key={field.label} style={{ width: '100%', minWidth: 0 }}>
-                <Typography.Title level={5} style={{ marginTop: 0 }}>{field.label}</Typography.Title>
-                <div tabIndex={0} role="region" aria-label={`${field.label}全文`}
-                  style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 240, overflowY: 'auto', padding: 12, background: token.colorFillQuaternary, border: `1px solid ${token.colorBorderSecondary}`, borderRadius: token.borderRadius }}>
-                  {field.value}
-                </div>
-              </section>
-            ))}
-            <Descriptions title="时间与未检出计数" column={1} size="small" bordered
-              styles={{ content: { overflowWrap: 'anywhere' } }}
-              items={[
-                { label: '首次检出', children: detailText(selectedFinding.firstSeen) },
-                { label: '最近检出', children: detailText(selectedFinding.lastSeen) },
-                { label: '修复时间', children: detailText(selectedFinding.resolvedAt) },
-                { label: '连续未检出次数', children: detailText(selectedFinding.consecutiveMisses) },
-              ].map((item, key) => ({ ...item, key }))}
-            />
-            <section style={{width:'100%'}}>
-              <Typography.Title level={5}>风险处置</Typography.Title>
-              {selectedFinding.status==='ACCEPTED_RISK' && <Space direction="vertical" style={{width:'100%'}}>
-                <Text style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>接受原因：{detailText(selectedFinding.acceptedReason)}</Text>
-                <Text>到期时间：{detailText(selectedFinding.acceptedUntil)}</Text>
-              <Button loading={saving} disabled={!canWrite} onClick={()=>void handleUpdateStatus(selectedFinding.id,'OPEN')}>撤销接受风险</Button>
-              </Space>}
-              {canAcceptRisk(selectedFinding.status)&&<Space direction="vertical" style={{width:'100%'}}>
-                <label htmlFor="accept-risk-reason">接受原因（最多 500 UTF-8 字节）</label>
-                <Input.TextArea id="accept-risk-reason" value={acceptReason} onChange={e=>setAcceptReason(e.target.value)} autoSize={{minRows:2,maxRows:6}} disabled={saving||!canWrite} />
-                <label htmlFor="accept-risk-until">到期时间（本地时间，未来 365 天内）</label>
-                <Input id="accept-risk-until" type="datetime-local" value={acceptUntil} onChange={e=>setAcceptUntil(e.target.value)} disabled={saving||!canWrite} />
-                <Button loading={saving} disabled={!canWrite} onClick={()=>{try{void handleUpdateStatus(selectedFinding.id,'ACCEPTED_RISK',acceptanceInput(acceptReason,acceptUntil))}catch(e){message.error(e instanceof Error?e.message:'接受风险输入无效')}}}>接受风险</Button>
-              </Space>}
-              {selectedFinding.status==='FIXED'&&<Text type="secondary">修复状态由完整扫描判定。</Text>}
-            </section>
-            <section style={{width:'100%'}}>
-              <Typography.Title level={5}>漏洞指派与备注</Typography.Title>
-              <Space direction="vertical" style={{width:'100%'}}>
-                <Text>当前处置人：{selectedFinding.assigneeName||selectedFinding.assigneeId||'未指派'}</Text>
-                {workError&&<Alert type="error" message={workError} />}
-                <label htmlFor="finding-assignee">处置人（可清除指派）</label>
-                <Select id="finding-assignee" aria-label="漏洞处置人" allowClear style={{width:'100%'}} value={assigneeId||undefined} onChange={value=>setAssigneeId(value??'')} options={assignees.map(item=>({value:item.id,label:item.name}))} disabled={workSaving||!canWrite||Boolean(workError)} placeholder="未指派" />
-                <Button loading={workSaving} disabled={!canWrite||Boolean(workError)||assigneeId===(selectedFinding.assigneeId??'')} onClick={()=>void saveAssignment(selectedFinding.id)}>保存指派</Button>
-                {assignmentEvents.length?<Timeline items={assignmentEvents.map(event=>({key:event.id,children:<Space direction="vertical" size={2}><Text>指派：{event.fromAssigneeId||'未指派'} → {event.toAssigneeId||'未指派'}</Text><Text type="secondary">{event.createdAt} · 操作者 {event.actor}</Text></Space>}))}/>:<Text type="secondary">暂无指派历史</Text>}
-                <label htmlFor="finding-note">追加备注（最多 2000 UTF-8 字节，单行纯文本）</label>
-                <Input id="finding-note" value={noteBody} onChange={event=>setNoteBody(event.target.value)} disabled={workSaving||!canWrite} />
-                <Button loading={workSaving} disabled={!canWrite||!noteBody.trim()} onClick={()=>void saveNote(selectedFinding.id)}>追加备注</Button>
-                {notes.length?<Timeline items={notes.map(note=>({key:note.id,children:<Space direction="vertical" size={2}><Text type="secondary">{note.createdAt} · {note.actorName||note.actor}</Text><Text style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{note.body}</Text></Space>}))}/>:<Text type="secondary">暂无备注</Text>}
-              </Space>
-            </section>
-            <section style={{width:'100%'}}>
-              <Typography.Title level={5}>漏洞复测</Typography.Title>
-              {retestError&&<Alert type="error" message={retestError} />}
-              <Space direction="vertical" style={{width:'100%'}}>
-                <Text type="secondary">复测只复用原任务冻结的目标、端口策略和授权，不会接受新的扫描目标。</Text>
-                <Button type="primary" loading={retestSaving} disabled={!canWrite||selectedFinding.synthetic===true||selectedFinding.status==='FALSE_POSITIVE'||retests.some(retestIsActive)} onClick={()=>void startRetest(selectedFinding.id)}>重新扫描该漏洞</Button>
-                {retests.length?<Timeline items={retests.map(item=>({key:item.id,children:<Space direction="vertical" size={2}><Text>{retestStatusLabel(item.status)} · 任务 {item.taskId}</Text><Text type="secondary">{item.createdAt} · {item.actor}</Text></Space>}))}/>:<Text type="secondary">暂无复测记录</Text>}
-              </Space>
-            </section>
-            <section style={{width:'100%'}}>
-              <Typography.Title level={5}>状态变更记录</Typography.Title>
-              {eventsError&&<Alert type="error" message={eventsError} />}
-              {events.length?<Timeline items={events.map(event=>({key:event.id,children:<Space direction="vertical" size={2}><Text>{event.fromStatus} → {event.toStatus}</Text><Text type="secondary">{event.createdAt} · {event.actor}</Text>{event.reason&&<Text style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{event.reason}</Text>}</Space>}))}/>:<Text type="secondary">暂无状态变更记录</Text>}
-            </section>
-            <Descriptions title="关联标识" column={1} size="small" bordered
-              styles={{ content: { overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' } }}
-              items={[
-                { label: '发现项 ID', children: detailText(selectedFinding.id) },
-                { label: '稳定指纹', children: detailText(selectedFinding.fingerprint) },
-                { label: '资产 ID', children: detailText(selectedFinding.assetId) },
-                { label: '任务 ID', children: detailText(selectedFinding.taskId) },
-                { label: '制品 ID', children: detailText(selectedFinding.artifactId) },
-              ].map((item, key) => ({ ...item, key }))}
-            />
-          </Space>
-        )}
-      </Drawer>
+      <FindingDrawer selectedFinding={selectedFinding ?? null} canWrite={canWrite} saving={saving} eventRevision={eventRevision}
+        onClose={closeFindingDetails} afterOpenChange={restoreDetailFocus} onUpdateStatus={handleUpdateStatus}
+        onFindingUpdated={item => { setFindings(previous => previous.map(f => f.id === item.id ? item : f)); setGroupFindings(previous => previous.map(f => f.id === item.id ? item : f)); if (view !== 'flat') setFindingRevision(n => n + 1); }} />
     </div>
   );
 };

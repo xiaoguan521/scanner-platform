@@ -1,11 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { DataTable } from '../../components/DataState';
-import { Alert, Button, Card, Checkbox, DatePicker, Drawer, Dropdown, Empty, Form, Input, message, Progress, Select, Space, Tag, Typography, Upload } from 'antd';
+import { Alert, Button, Checkbox, DatePicker, Drawer, Dropdown, Empty, Form, Input, message, Progress, Select, Space, Upload } from 'antd';
 import { TitleWithHelp } from '../../components/HelpTip';
 import type { Dayjs } from 'dayjs';
 import { DownloadOutlined, FileTextOutlined, SettingOutlined, UploadOutlined } from '@ant-design/icons';
 import { useCollection } from '../../api/hooks';
-import { apiClient, requestJSON } from '../../api/client';
+import { apiClient, requestJSON, errorMessage } from '../../api/client';
 import { CollectionNotice } from '../../api/CollectionNotice';
 import { pollIntervals, pollWhileVisible } from '../../api/polling';
 import { useAuth } from '../../auth/AuthProvider';
@@ -21,7 +21,6 @@ const stateNames = { QUEUED: '排队中', GENERATING: '生成中', READY: '就�
 const formatNames = { html: 'HTML', xlsx: 'Excel', docx: 'Word', pdf: 'PDF', csv: 'CSV（漏洞明细）', json: 'JSON（完整快照）' };
 const endpoint = '/api/v1/reports';
 const templatesEndpoint = '/api/v1/report-templates';
-const { Text } = Typography;
 
 // Report task targets can be a bare IP (automatic scan) or an IP:port
 // (HTTP checks). Both must map to the same registered asset.
@@ -38,9 +37,9 @@ function reportTargetHost(raw: string): string {
 }
 
 export const ReportsPage: React.FC = () => {
-  const { user } = useAuth();
+  const { canWrite } = useAuth();
   const { palette } = useAppTheme();
-  const canWrite = user?.role === 'admin' || user?.role === 'security_engineer';
+  
   const { data: assets, loading: assetsLoading, error: assetsError } = useCollection('assets', '', true, pollIntervals.reference);
   const { data: tasks, loading: tasksLoading, error: tasksError } = useCollection('tasks', '', true, pollIntervals.reference);
   const [templates, setTemplates] = useState<ReportTemplate[]>([]);
@@ -85,7 +84,7 @@ export const ReportsPage: React.FC = () => {
         includeTemplates ? requestJSON<{ items: ReportTemplate[] }>(templatesEndpoint, 'GET', undefined, signal) : undefined,
       ]);
       if (!signal?.aborted) { setJobs(reports.items); setReportTotal(reports.total); if (nextTemplates) setTemplates(nextTemplates.items); setError(null); }
-    } catch (cause) { if (!signal?.aborted) setError(cause instanceof Error ? cause.message : '报告服务不可用'); }
+    } catch (cause) { if (!signal?.aborted) setError(errorMessage(cause,'报告服务不可用')); }
     finally { if (!signal?.aborted) setReportLoading(false); }
   }, [reportPage, reportPageSize, reportSearch, reportStatus, reportFormat]);
   useEffect(() => { const controller = new AbortController(); void reload(controller.signal, true); return () => controller.abort(); }, [reload]);
@@ -97,11 +96,11 @@ export const ReportsPage: React.FC = () => {
     const scope: ReportScope = { assetId, businessGroup, taskId, from: range?.[0]?.startOf('day').toISOString(), to: range?.[1]?.endOf('day').toISOString() };
     setBusy(true);
     try { await requestJSON(endpoint, 'POST', { templateId, format, scope }); message.success('已冻结数据快照，报告将在后台生成'); await reload(); }
-    catch (cause) { message.error(cause instanceof Error ? cause.message : '生成失败'); }
+    catch (cause) { message.error(errorMessage(cause,'生成失败')); }
     finally { setBusy(false); }
   };
-  const retry = async (job: ReportJob) => { try { await requestJSON(`${endpoint}/${encodeURIComponent(job.id)}/retry`, 'POST'); message.success('已使用原快照重新排队'); await reload(); } catch (cause) { message.error(String(cause)); } };
-  const exportFormat = async (job: ReportJob, nextFormat: string) => { try { await requestJSON(`${endpoint}/${encodeURIComponent(job.id)}/formats`, 'POST', { format: nextFormat }); message.success('已使用相同数据快照生成其他格式'); await reload(); } catch (cause) { message.error(String(cause)); } };
+  const retry = async (job: ReportJob) => { try { await requestJSON(`${endpoint}/${encodeURIComponent(job.id)}/retry`, 'POST'); message.success('已使用原快照重新排队'); await reload(); } catch (cause) { message.error(errorMessage(cause)); } };
+  const exportFormat = async (job: ReportJob, nextFormat: string) => { try { await requestJSON(`${endpoint}/${encodeURIComponent(job.id)}/formats`, 'POST', { format: nextFormat }); message.success('已使用相同数据快照生成其他格式'); await reload(); } catch (cause) { message.error(errorMessage(cause)); } };
   const editTemplate = () => { if (!selectedTemplate) return; form.setFieldsValue({ ...selectedTemplate, enabledSections: Object.keys(sections).filter(k => selectedTemplate.sections[k] !== false) }); setLogo(selectedTemplate.logo); setEditing(true); };
   const saveTemplate = async () => {
     try { const values = await form.validateFields(); const { enabledSections, ...fields } = values; const body = { ...fields, logo: logo ?? '', sections: Object.fromEntries(Object.keys(sections).map(key => [key, enabledSections.includes(key)])) }; await requestJSON(`${templatesEndpoint}/${encodeURIComponent(templateId)}`, 'PUT', body); setEditing(false); message.success('模板已保存，新报告将使用更新后的模板'); await reload(); }

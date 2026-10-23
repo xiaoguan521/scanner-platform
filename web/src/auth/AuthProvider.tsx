@@ -1,13 +1,29 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { Alert, Button, Card, Form, Input, Spin, Typography, theme } from 'antd';
 import { apiClient, ApiRequestError } from '../api/client';
-import type { User } from '../types';
+import type { User, UserRole } from '../types';
 
-interface AuthState {
+/** What the signed-in role may do in the UI; the Server enforces the same rules. */
+export interface Permissions {
+  /** Create and change scans, assets, findings, rules, reports and knowledge. */
+  canWrite: boolean;
+  /** Review scope and port requests. */
+  canReview: boolean;
+  /** Users, system settings, scan policy, node credentials and deletions. */
+  isAdmin: boolean;
+}
+export function permissionsFor(role?: UserRole): Permissions {
+  return {
+    canWrite: role === 'admin' || role === 'security_engineer',
+    canReview: role === 'admin' || role === 'ops_approver',
+    isAdmin: role === 'admin',
+  };
+}
+interface AuthState extends Permissions {
   user: User | null;
   logout: () => Promise<void>;
 }
-const Context = createContext<AuthState>({user:null,logout:async()=>{}});
+const Context = createContext<AuthState>({user:null,logout:async()=>{},...permissionsFor()});
 export const useAuth = () => useContext(Context);
 
 export const AuthProvider: React.FC<{children:React.ReactNode}> = ({children}) => {
@@ -27,7 +43,7 @@ export const AuthProvider: React.FC<{children:React.ReactNode}> = ({children}) =
     return ()=>window.removeEventListener('scanner-session-expired',expired);
   },[]);
   const logout=async()=>{try{await apiClient.logout();}finally{setUser(null);}};
-  const state=useMemo(()=>({user,logout}),[user]);
+  const state=useMemo(()=>({user,logout,...permissionsFor(user?.role)}),[user]);
   if(loading) return <div style={{display:'grid',placeItems:'center',height:'100vh'}}><Spin size="large" /></div>;
   if(!user) return (
     <div style={{minHeight:'100vh',display:'grid',placeItems:'center',background:token.colorBgLayout,padding:20}}>

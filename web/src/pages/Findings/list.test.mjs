@@ -7,8 +7,8 @@ const client = await readFile(new URL('../../api/client.ts', import.meta.url), '
 assert.match(client, /findingsPage\(page:number,pageSize:number/);
 assert.ok(client.includes("return requestJSON<FindingPageResponse<Finding>>('/api/v1/findings?'+params.toString()"));
 assert.match(page, /apiClient\.findingsPage\(findingPage,findingPageSize/);
-assert.match(page, /setFindingTotal\(result\.total\)/);
-assert.match(page, /setFindingCountsSummary\(result\.counts\)/);
+assert.match(page, /findingTotal=findingList\.data\?\.total/);
+assert.match(page, /findingCountsSummary=findingList\.data\?\.counts/);
 assert.match(page, /summaryCounts\.vulnerabilities/);
 assert.match(page, /apiClient\.findingGroups|<FindingGroups\b/);
 assert.match(page, /pagination=\{\{current:findingPage,pageSize:findingPageSize,total:findingTotal/);

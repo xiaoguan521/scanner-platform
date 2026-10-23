@@ -6,7 +6,7 @@ import { AutoGrid, PageHeader, Panel } from '../../components/Page';
 import { useAppTheme } from '../../context/ThemeContext';
 import type { Tone } from '../../theme/palette';
 import { TitleWithHelp } from '../../components/HelpTip';
-import { apiClient } from '../../api/client';
+import { apiClient, errorMessage } from '../../api/client';
 import { useAuth } from '../../auth/AuthProvider';
 import type { NotificationDeliveryList, NotificationSettings, SystemSettings } from '../../types';
 
@@ -14,8 +14,8 @@ const timeZones: SystemSettings['timeZone'][] = ['Asia/Shanghai', 'UTC', 'Americ
 
 export const SettingsPage: React.FC = () => {
   const { palette } = useAppTheme();
-  const { user } = useAuth();
-  const canEdit = user?.role === 'admin';
+  const { isAdmin } = useAuth();
+  const canEdit = isAdmin;
   const [form] = Form.useForm<SystemSettings>();
   const [notificationForm] = Form.useForm<NotificationSettings>();
   const [settings, setSettings] = useState<SystemSettings | null>(null);
@@ -43,7 +43,7 @@ export const SettingsPage: React.FC = () => {
         setDeliveries(deliveryList);
       }
     }).catch(err => {
-      if (active) setError(err instanceof Error ? err.message : '系统设置读取失败');
+      if (active) setError(errorMessage(err,'系统设置读取失败'));
     });
     return () => { active = false; };
   }, []);
@@ -56,7 +56,7 @@ export const SettingsPage: React.FC = () => {
       setError('');
       message.success('系统设置已保存；新登录会话将使用新的时长');
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '系统设置保存失败');
+      message.error(errorMessage(err,'系统设置保存失败'));
     } finally {
       setBusy(false);
     }
@@ -72,7 +72,7 @@ export const SettingsPage: React.FC = () => {
       setError('');
       message.success(saved.webhookEnabled ? 'Webhook 通知已启用' : 'Webhook 通知已关闭');
     } catch (err) {
-      message.error(err instanceof Error ? err.message : 'Webhook 设置保存失败');
+      message.error(errorMessage(err,'Webhook 设置保存失败'));
     } finally {
       setBusy(false);
     }

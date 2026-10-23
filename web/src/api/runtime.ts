@@ -1,4 +1,5 @@
 import { requestBlob, requestJSON } from './client';
+import { toApiError } from './errors';
 import type { ScanPlan, ScanPlanInput, ScanTask, TaskInput, Schedule, ScheduleRun, Finding, FindingEvent, FindingAssignee, FindingAssignmentEvent, FindingNote, FindingRetest, RuleJob, CustomRule, KnowledgeEntry, TaskLog } from '../types';
 
 export const createTask = (input:TaskInput) => requestJSON<ScanTask>('/api/v1/tasks','POST',input);
@@ -31,7 +32,7 @@ export async function importRules(file:File):Promise<RuleJob> {
   if(file.size>256*1024*1024) throw new Error('ZIP 大小不能超过 256 MiB');
   const body=new FormData(); body.append('bundle',file);
   const response=await fetch('/api/v1/rules/import',{method:'POST',headers:{'X-Requested-With':'XMLHttpRequest'},credentials:'same-origin',body});
-  if(!response.ok) throw new Error('上传失败，请检查登录状态、权限及 ZIP 大小');
+  if(!response.ok) throw await toApiError(response,{413:'ZIP 大小不能超过 256 MiB'},'上传失败，请检查登录状态、权限及 ZIP 大小');
   return response.json() as Promise<RuleJob>;
 }
 

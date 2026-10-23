@@ -3,7 +3,7 @@ import { Alert, Button, Empty, List, message } from 'antd';
 import { PageHeader, Panel } from '../../components/Page';
 import { useAppTheme } from '../../context/ThemeContext';
 import { CheckOutlined, ReloadOutlined } from '@ant-design/icons';
-import { apiClient } from '../../api/client';
+import { apiClient, errorMessage } from '../../api/client';
 import { NotificationSeverityTag } from '../../components/Semantic';
 import type { Notification } from '../../types';
 
@@ -26,7 +26,7 @@ export const NotificationsPage: React.FC = () => {
       setTotal(next.total);
       setError('');
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : '通知读取失败');
+      setError(errorMessage(cause,'通知读取失败'));
     } finally {
       setBusy(false);
     }
@@ -39,7 +39,7 @@ export const NotificationsPage: React.FC = () => {
       await apiClient.markNotificationRead(item.id);
       await reload();
     } catch (cause) {
-      message.error(cause instanceof Error ? cause.message : '通知状态更新失败');
+      message.error(errorMessage(cause,'通知状态更新失败'));
     }
   };
 
@@ -48,7 +48,7 @@ export const NotificationsPage: React.FC = () => {
       await apiClient.markAllNotificationsRead();
       await reload();
     } catch (cause) {
-      message.error(cause instanceof Error ? cause.message : '通知状态更新失败');
+      message.error(errorMessage(cause,'通知状态更新失败'));
     }
   };
 

@@ -1,22 +1,24 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { DataTable } from '../../components/DataState';
-import { ScheduleStatusTag, TaskStatusTag, taskStatusMeta } from '../../components/Semantic';
-import { Alert, Button, Card, Checkbox, Collapse, Descriptions, Drawer, Form, Input, InputNumber, message, Modal, Progress, Segmented, Select, Space, Spin, Steps, Tag, Typography, theme } from 'antd';
-import { DownloadOutlined, PlusOutlined } from '@ant-design/icons';
+import { TaskStatusTag, taskStatusMeta } from '../../components/Semantic';
+import { Alert, Button, Card, Checkbox, Collapse, Descriptions, Form, Input, InputNumber, message, Modal, Segmented, Select, Space, Steps, Tag, Typography, theme } from 'antd';
+import { PlusOutlined } from '@ant-design/icons';
 import { useCollection, useServerCapability } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
-import { pollIntervals, pollWhileVisible } from '../../api/polling';
-import { apiClient } from '../../api/client';
-import { archiveTask, cancelTask, createScanPlan, createTask, deleteScanPlan, deleteSchedule, deleteTask, exportTask, fetchScheduleRuns, fetchTask, fetchTaskLogs, pauseTask, restoreTask, resumeTask, saveSchedule, toggleSchedule, updateScanPlan, updateSchedule } from '../../api/runtime';
+import { pollIntervals } from '../../api/polling';
+import { usePageState, useQuery } from '../../api/query';
+import { apiClient, errorMessage } from '../../api/client';
+import { archiveTask, cancelTask, createTask, deleteScanPlan, deleteSchedule, deleteTask, pauseTask, restoreTask, resumeTask, saveSchedule, toggleSchedule, updateSchedule } from '../../api/runtime';
 import { useAuth } from '../../auth/AuthProvider';
-import type { CustomRule, PortProbeRange, ScanPlan, ScanPlanInput, ScanTask, Schedule, ScheduleRun, TaskInput, ScanPolicy, TaskLog } from '../../types';
+import type { PortProbeRange, ScanPlan, ScanTask, Schedule, TaskInput, ScanPolicy } from '../../types';
 
 import { parsePortRanges, showRanges, coversAllPorts, presetLabels, summarizePorts, compressPorts, previewProbePorts } from './policy';
-import { progressPercent, progressPhases } from './progress';
 import { taskTargetSummary } from './targets';
 import { applicationStatuses } from './coverage';
-import { isTerminalTask } from './phases';
-import { TaskDetail } from './TaskDetail';
+import { TaskDetailDrawer } from './TaskDetailDrawer';
+import { ScheduleHistoryModal } from './ScheduleHistoryModal';
+import { ScanPlanEditor, type PlanEditorTarget } from './ScanPlanEditor';
+import { renderTaskProgress } from './TaskProgress';
 import { assertTaskSubmission, isAutoTaskWizard, wizardStepFields } from './wizard';
 const dayOptions=['周日','周一','周二','周三','周四','周五','周六'].map((label,value)=>({label,value}));
 const ApplicationCoverage:React.FC<{task:ScanTask}>=({task})=><>
@@ -24,30 +26,28 @@ const ApplicationCoverage:React.FC<{task:ScanTask}>=({task})=><>
   {task.applicationResults?.map(app=><Typography.Text key={app.alias} type={['collection_failed','analysis_failed'].includes(app.status)?'danger':undefined}>应用 {app.alias}：{applicationStatuses[app.status]??'状态未知'}；已分析 {app.analyzedCount} / 选中 {app.selectedCount} 个文件</Typography.Text>)}
 </>;
 type Values={engine:'auto'|'synthetic'|'nuclei'|'trivy'|'zap'|'port-probe';scheme:'http'|'https';inputPath:string;inputKind:'filesystem'|'image-archive'|'rootfs'|'artifact';targets:string[];assetId:string;scanPlan:string;portPreset:'common'|'custom'|'common-and-custom'|'registered'|'full';intensity:'gentle'|'standard'|'aggressive';portRanges:string;portExclusions:string;opsApproved:boolean;customRuleIds:string[];mode:'now'|'schedule';name:string;nextRun:string;intervalMinutes:number;window:boolean;weekdays:number[];start:string;end:string;timeZone:string};
-type PlanEditorValues=ScanPlanInput;
 function validateProbeRanges(text?:string):void{
   const ranges=parsePortRanges(text);
   if(ranges.length===0) throw new Error('此模式至少填写一个端口或端口范围');
 }
 export const TasksPage:React.FC=()=>{
   const {token}=theme.useToken();
-  const {user}=useAuth();const canWrite=user?.role==='admin'||user?.role==='security_engineer';const canDelete=user?.role==='admin';
+  const {canWrite,isAdmin:canDelete}=useAuth();
   const [showArchived,setShowArchived]=useState(false);
   // Simulated tasks are a local-development capability; hide them unless the Server enables it.
   const syntheticEnabled=useServerCapability('synthetic-worker');
-  const [tasks,setTasks]=useState<ScanTask[]>([]);const [taskLoading,setTaskLoading]=useState(true);const [taskError,setTaskError]=useState<string|null>(null);const [taskPage,setTaskPage]=useState(1);const [taskPageSize,setTaskPageSize]=useState(10);const [taskTotal,setTaskTotal]=useState(0);const [taskStatusCounts,setTaskStatusCounts]=useState<Record<string,number>>({});const [taskRevision,setTaskRevision]=useState(0);
   const {data:assets}=useCollection('assets');
   const {data:scanPlans,setData:setScanPlans,loading:scanPlansLoading,error:scanPlansError}=useCollection('scan-plans');
   const {data:customRules}=useCollection('custom-rules');
   const {data:schedules,setData:setSchedules,loading:scheduleLoading,error:scheduleError}=useCollection('schedules','',true,pollIntervals.schedules);
   const [policy,setPolicy]=useState<ScanPolicy|null>(null);const [policyError,setPolicyError]=useState('');
-  useEffect(()=>{const controller=new AbortController();apiClient.scanPolicy().then(setPolicy).catch(e=>setPolicyError(String(e)));return()=>controller.abort();},[]);
+  useEffect(()=>{const controller=new AbortController();apiClient.scanPolicy().then(setPolicy).catch(e=>setPolicyError(errorMessage(e)));return()=>controller.abort();},[]);
   const [open,setOpen]=useState(false);const [busy,setBusy]=useState(false);const [form]=Form.useForm<Values>();
-  const [planEditorOpen,setPlanEditorOpen]=useState(false);const [planEditorBusy,setPlanEditorBusy]=useState(false);const [editingPlan,setEditingPlan]=useState<ScanPlan|null>(null);const [planForm]=Form.useForm<PlanEditorValues>();
+  const [planTarget,setPlanTarget]=useState<PlanEditorTarget|null>(null);
   const [wizardStep,setWizardStep]=useState(0);
   const [editingSchedule,setEditingSchedule]=useState<Schedule|null>(null);
-  const [historySchedule,setHistorySchedule]=useState<Schedule|null>(null);const [scheduleRunPage,setScheduleRunPage]=useState(1);const [scheduleRuns,setScheduleRuns]=useState<ScheduleRun[]>([]);const [scheduleRunTotal,setScheduleRunTotal]=useState(0);const [scheduleRunLoading,setScheduleRunLoading]=useState(false);const [scheduleRunError,setScheduleRunError]=useState('');
-  const [detailTask,setDetailTask]=useState<ScanTask|null>(null);const [detailLogs,setDetailLogs]=useState<TaskLog[]>([]);const [detailLoading,setDetailLoading]=useState(false);const [detailError,setDetailError]=useState('');const [detailExporting,setDetailExporting]=useState<'json'|'csv'|null>(null);
+  const [historySchedule,setHistorySchedule]=useState<Schedule|null>(null);
+  const [detailTask,setDetailTask]=useState<ScanTask|null>(null);
   const [taskQuery,setTaskQuery]=useState('');const [taskFilter,setTaskFilter]=useState('');const [statusFilter,setStatusFilter]=useState('all');const [engineFilter,setEngineFilter]=useState('all');const [taskSort,setTaskSort]=useState<'-created_at'|'created_at'>('-created_at');
   const engine=Form.useWatch('engine',form)??'auto';const mode=Form.useWatch('mode',form);const useWindow=Form.useWatch('window',form);const portPreset=Form.useWatch('portPreset',form)??'common';const selectedPlan=Form.useWatch('scanPlan',form)??'quick';
   const wizard=isAutoTaskWizard({engine,mode},Boolean(editingSchedule));
@@ -57,19 +57,10 @@ export const TasksPage:React.FC=()=>{
     if(!wizard||!selectedAsset||!policy)return null;
     try{return previewProbePorts(selectedAsset,{preset:portPreset,ranges:['custom','common-and-custom'].includes(portPreset)?parsePortRanges(watchedValues?.portRanges):[],exclusions:parsePortRanges(watchedValues?.portExclusions)},policy);}catch{return null;}
   },[wizard,selectedAsset,policy,portPreset,watchedValues?.portRanges,watchedValues?.portExclusions]);
-  useEffect(()=>{
-    const controller=new AbortController();let inFlight=false;
-    const load=(initial=false)=>{
-      if(inFlight)return;
-      inFlight=true;if(initial)setTaskLoading(true);
-      apiClient.tasksPage(taskPage,taskPageSize,{search:taskFilter,status:statusFilter,engine:engineFilter,archived:showArchived?'true':'false',sort:taskSort},controller.signal).then(result=>{
-        if(!controller.signal.aborted){setTasks(result.items);setTaskTotal(result.total);setTaskStatusCounts(result.statusCounts);setTaskError(null);}
-      }).catch(cause=>{if(!controller.signal.aborted){setTasks([]);setTaskTotal(0);setTaskStatusCounts({});setTaskError(cause instanceof Error?cause.message:'扫描任务加载失败');}}).finally(()=>{inFlight=false;if(!controller.signal.aborted)setTaskLoading(false);});
-    };
-    load(true);const stop=pollWhileVisible(()=>load(),pollIntervals.activeTask);
-    return()=>{controller.abort();stop();};
-  },[taskPage,taskPageSize,taskFilter,statusFilter,engineFilter,showArchived,taskSort,taskRevision]);
-  useEffect(()=>{if(taskPage!==1)setTaskPage(1)},[taskFilter,statusFilter,engineFilter,showArchived,taskSort]);
+  const taskListFilters={search:taskFilter,status:statusFilter,engine:engineFilter,archived:(showArchived?'true':'false') as 'true'|'false',sort:taskSort};
+  const {page:taskPage,pageSize:taskPageSize,onChange:onTaskPageChange}=usePageState(taskListFilters,10);
+  const taskList=useQuery(signal=>apiClient.tasksPage(taskPage,taskPageSize,taskListFilters,signal),[taskPage,taskPageSize,taskListFilters],{pollMs:pollIntervals.activeTask,errorFallback:'扫描任务加载失败',emptyValue:{items:[],total:0,page:1,pageSize:taskPageSize,statusCounts:{}}});
+  const tasks=taskList.data?.items??[];const taskTotal=taskList.data?.total??0;const taskStatusCounts=taskList.data?.statusCounts??{};const taskLoading=taskList.loading;const taskError=taskList.error;const reloadTasks=taskList.reload;
   useEffect(()=>{const timer=window.setTimeout(()=>setTaskFilter(taskQuery.trim()),300);return()=>window.clearTimeout(timer);},[taskQuery]);
   // Status counts double as quick filters; QUEUED groups every waiting status.
   const queuedCount=(['PENDING','WAITING_WINDOW','PAUSED_WINDOW'] as const).reduce((sum,status)=>sum+(taskStatusCounts[status]??0),0);
@@ -91,51 +82,13 @@ export const TasksPage:React.FC=()=>{
     return {value:target,label:target+'（已审批）'};
   }));
   useEffect(()=>{if(engine==='port-probe'&&mode==='schedule')form.setFieldValue('mode','now');},[engine,mode,form]);
-  useEffect(()=>{
-    const controller=new AbortController();
-    if(!historySchedule)return()=>controller.abort();
-    setScheduleRunLoading(true);setScheduleRunError('');
-    fetchScheduleRuns(historySchedule.id,scheduleRunPage,controller.signal).then(response=>{if(!controller.signal.aborted){setScheduleRuns(response.items);setScheduleRunTotal(response.total);}}).catch(cause=>{if(!controller.signal.aborted)setScheduleRunError(cause instanceof Error?cause.message:'历史运行记录加载失败');}).finally(()=>{if(!controller.signal.aborted)setScheduleRunLoading(false);});
-    return()=>controller.abort();
-  },[historySchedule,scheduleRunPage]);
-  // Running tasks refresh every 3 seconds while the detail is open; finished ones load once.
-  const detailTerminal=detailTask?isTerminalTask(detailTask.status):true;
-  const [detailRefreshing,setDetailRefreshing]=useState(false);
-  const detailLoadedId=useRef('');
-  useEffect(()=>{
-    if(!detailTask)return;
-    const id=detailTask.id;
-    const controller=new AbortController();let inFlight=false;
-    const load=()=>{
-      if(inFlight)return;
-      inFlight=true;
-      const initial=detailLoadedId.current!==id;
-      if(initial){setDetailLoading(true);setDetailError('');}else setDetailRefreshing(true);
-      Promise.all([fetchTask(id,controller.signal),fetchTaskLogs(id,controller.signal)]).then(([task,logs])=>{
-        if(!controller.signal.aborted){detailLoadedId.current=id;setDetailTask(task);setDetailLogs(logs.items);setDetailError('');}
-      }).catch(cause=>{if(!controller.signal.aborted)setDetailError(cause instanceof Error?cause.message:'任务详情加载失败');}).finally(()=>{inFlight=false;if(!controller.signal.aborted){setDetailLoading(false);setDetailRefreshing(false);}});
-    };
-    load();
-    const stopPolling=detailTerminal?undefined:pollWhileVisible(load,pollIntervals.activeTask);
-    return()=>{controller.abort();stopPolling?.();};
-  },[detailTask?.id,detailTerminal]);
   const confirmFull=()=>new Promise<boolean>(resolve=>Modal.confirm({title:'确认全端口探测',content:'将对这台主机的 TCP 1–65535 端口发起连接（排除项会跳过）。按每次连接超时 1 秒、并发 16 粗略估算约 69 分钟；实际时间取决于速率、超时和响应，服务识别与漏洞检测会额外耗时。可能增加目标连接数及日志量，请确认维护窗口和授权范围。',okText:'确认全端口范围',cancelText:'返回修改',onOk:()=>resolve(true),onCancel:()=>resolve(false)}));
   const choosePlan=(plan:ScanPlan)=>{form.setFieldsValue({scanPlan:plan.id,...plan.defaults});};
   const openPlanEditor=(plan:ScanPlan,copy:boolean)=>{
     if(!canWrite){message.info('当前账号没有管理自定义扫描方案的权限');return;}
-    setEditingPlan(copy?null:plan);
-    planForm.setFieldsValue({title:copy?`${plan.title}（自定义）`:plan.title,summary:plan.summary,detail:plan.detail,defaults:{...plan.defaults,customRuleIds:[...(plan.defaults.customRuleIds??[])]},sourceId:plan.kind==='PRESET'?plan.id:plan.sourceId});
-    setPlanEditorOpen(true);
+    setPlanTarget({plan,copy});
   };
-  const savePlan=async(values:PlanEditorValues)=>{
-    setPlanEditorBusy(true);
-    try{
-      const saved=editingPlan?await updateScanPlan(editingPlan.id,values):await createScanPlan(values);
-      setScanPlans(prev=>editingPlan?prev.map(item=>item.id===saved.id?saved:item):[...prev,saved]);
-      setPlanEditorOpen(false);setEditingPlan(null);planForm.resetFields();message.success(editingPlan?'自定义扫描方案已更新':'自定义扫描方案已保存');
-    }catch(cause){message.error(cause instanceof Error?cause.message:'保存扫描方案失败');}finally{setPlanEditorBusy(false);}
-  };
-  const removePlan=(plan:ScanPlan)=>Modal.confirm({title:'删除自定义扫描方案',content:`删除“${plan.title}”后不会影响已经创建的任务；之后不能再从方案卡片选择它。`,okText:'删除',okButtonProps:{danger:true},cancelText:'取消',onOk:async()=>{try{await deleteScanPlan(plan.id);setScanPlans(prev=>prev.filter(item=>item.id!==plan.id));if(selectedPlan===plan.id){const quick=scanPlans.find(item=>item.id==='quick');if(quick)choosePlan(quick);}message.success('自定义扫描方案已删除');}catch(cause){message.error(cause instanceof Error?cause.message:'删除扫描方案失败');throw cause;}}});
+  const removePlan=(plan:ScanPlan)=>Modal.confirm({title:'删除自定义扫描方案',content:`删除“${plan.title}”后不会影响已经创建的任务；之后不能再从方案卡片选择它。`,okText:'删除',okButtonProps:{danger:true},cancelText:'取消',onOk:async()=>{try{await deleteScanPlan(plan.id);setScanPlans(prev=>prev.filter(item=>item.id!==plan.id));if(selectedPlan===plan.id){const quick=scanPlans.find(item=>item.id==='quick');if(quick)choosePlan(quick);}message.success('自定义扫描方案已删除');}catch(cause){message.error(errorMessage(cause,'删除扫描方案失败'));throw cause;}}});
   const create=async(values:Values)=>{
     if(busy)return;
     setBusy(true);
@@ -159,25 +112,16 @@ export const TasksPage:React.FC=()=>{
           const saved=await saveSchedule(scheduleInput);setSchedules(prev=>[saved,...prev]);
           message.success('定时任务已保存，到点由平台创建任务');
         }
-      }else{const task=await createTask(input);setTaskRevision(value=>value+1);message.success(task.status==='WAITING_WINDOW'?'已创建，等待允许的时间窗':'任务已入队');}
+      }else{const task=await createTask(input);reloadTasks();message.success(task.status==='WAITING_WINDOW'?'已创建，等待允许的时间窗':'任务已入队');}
       setOpen(false);setEditingSchedule(null);form.resetFields();
-    }catch(e){message.error(e instanceof Error?e.message:'创建失败');}finally{setBusy(false);}
+    }catch(e){message.error(errorMessage(e,'创建失败'));}finally{setBusy(false);}
   };
-  const stop=async(id:string)=>{try{await cancelTask(id);setTaskRevision(value=>value+1);message.success('任务已取消，不会写入成功结果');}catch(e){message.error(String(e));}};
-  const pause=async(task:ScanTask)=>Modal.confirm({title:'暂停扫描任务',content:`暂停 ${task.id} 后，Worker 会在下一次心跳停止执行，任务不会因时间窗自动恢复。之后可在详情中手动恢复。`,okText:'暂停',cancelText:'继续执行',onOk:async()=>{try{await pauseTask(task.id);setTaskRevision(value=>value+1);setDetailTask(prev=>prev?.id===task.id?{...prev,status:'PAUSED'}:prev);message.success('任务已暂停');}catch(e){message.error(e instanceof Error?e.message:String(e));throw e;}}});
-  const resume=async(task:ScanTask)=>{try{const updated=await resumeTask(task.id);setTaskRevision(value=>value+1);setDetailTask(prev=>prev?.id===task.id?{...prev,status:updated.status}:prev);message.success('任务已恢复到队列，平台会重新校验时间窗和规则状态');}catch(e){message.error(e instanceof Error?e.message:String(e));}};
-  const openTaskDetail=(task:ScanTask)=>{setDetailTask(task);setDetailLogs([]);setDetailError('');};
-  const downloadTaskResult=async(format:'json'|'csv')=>{
-    if(!detailTask)return;
-    setDetailExporting(format);
-    try{
-      const blob=await exportTask(detailTask.id,format);
-      const url=URL.createObjectURL(blob);const anchor=document.createElement('a');anchor.href=url;anchor.download=`task-result.${format}`;document.body.appendChild(anchor);anchor.click();anchor.remove();URL.revokeObjectURL(url);
-      message.success(`任务结果已导出为 ${format.toUpperCase()}`);
-    }catch(cause){message.error(cause instanceof Error?cause.message:'任务结果导出失败');}finally{setDetailExporting(null);}
-  };
-  const setArchived=async(id:string,archived:boolean)=>{try{if(archived)await archiveTask(id);else await restoreTask(id);setTaskRevision(value=>value+1);message.success(archived?'任务已归档':'任务已恢复到清册');}catch(e){message.error(e instanceof Error?e.message:String(e));}};
-  const removeTask=(task:ScanTask)=>Modal.confirm({title:'彻底删除扫描任务',content:`将永久删除任务 ${task.id}。仅允许删除已结束且没有关联发现项的任务；此操作不可撤销，已生成报告快照和审计记录会保留。`,okText:'彻底删除',okButtonProps:{danger:true},cancelText:'取消',onOk:async()=>{try{await deleteTask(task.id);setTaskRevision(value=>value+1);message.success('扫描任务已彻底删除');}catch(e){message.error(e instanceof Error?e.message:String(e));throw e;}}});
+  const stop=async(id:string)=>{try{await cancelTask(id);reloadTasks();message.success('任务已取消，不会写入成功结果');}catch(e){message.error(errorMessage(e));}};
+  const pause=async(task:ScanTask)=>Modal.confirm({title:'暂停扫描任务',content:`暂停 ${task.id} 后，Worker 会在下一次心跳停止执行，任务不会因时间窗自动恢复。之后可在详情中手动恢复。`,okText:'暂停',cancelText:'继续执行',onOk:async()=>{try{await pauseTask(task.id);reloadTasks();setDetailTask(prev=>prev?.id===task.id?{...prev,status:'PAUSED'}:prev);message.success('任务已暂停');}catch(e){message.error(errorMessage(e));throw e;}}});
+  const resume=async(task:ScanTask)=>{try{const updated=await resumeTask(task.id);reloadTasks();setDetailTask(prev=>prev?.id===task.id?{...prev,status:updated.status}:prev);message.success('任务已恢复到队列，平台会重新校验时间窗和规则状态');}catch(e){message.error(errorMessage(e));}};
+  const openTaskDetail=(task:ScanTask)=>setDetailTask(task);
+  const setArchived=async(id:string,archived:boolean)=>{try{if(archived)await archiveTask(id);else await restoreTask(id);reloadTasks();message.success(archived?'任务已归档':'任务已恢复到清册');}catch(e){message.error(errorMessage(e));}};
+  const removeTask=(task:ScanTask)=>Modal.confirm({title:'彻底删除扫描任务',content:`将永久删除任务 ${task.id}。仅允许删除已结束且没有关联发现项的任务；此操作不可撤销，已生成报告快照和审计记录会保留。`,okText:'彻底删除',okButtonProps:{danger:true},cancelText:'取消',onOk:async()=>{try{await deleteTask(task.id);reloadTasks();message.success('扫描任务已彻底删除');}catch(e){message.error(errorMessage(e));throw e;}}});
   const openCreate=(selectedMode:'now'|'schedule')=>{
     setEditingSchedule(null);setWizardStep(0);
     form.resetFields();
@@ -197,19 +141,7 @@ export const TasksPage:React.FC=()=>{
     form.setFieldsValue({engine:taskEngine,scheme:task.scheme==='https'?'https':'http',inputPath:task.inputPath??'',inputKind:(task.inputKind as Values['inputKind'])??'filesystem',targets:task.chunks?.flatMap(chunk=>chunk.targets)??[],assetId:task.assetId??'',scanPlan:'standard',portPreset:portConfig?.preset??'common',intensity:portConfig?.intensity??'gentle',portRanges:rangeText(portConfig?.ranges),portExclusions:rangeText(portConfig?.exclusions),opsApproved:false,mode:'now',window:Boolean(task.timeWindows?.length),weekdays:window?.weekdays??[0,1,2,3,4,5,6],start:window?.start??'09:00',end:window?.end??'18:00',timeZone:window?.timeZone??'Asia/Shanghai'});
     setWizardStep(0);setEditingSchedule(null);setOpen(true);
   };
-  const removeSchedule=(schedule:Schedule)=>Modal.confirm({title:'删除定时任务',content:`删除“${schedule.name}”后将停止后续调度，已创建的扫描任务和结果会保留。`,okText:'删除',okButtonProps:{danger:true},cancelText:'取消',onOk:async()=>{try{await deleteSchedule(schedule.id);setSchedules(prev=>prev.filter(item=>item.id!==schedule.id));message.success('定时任务已删除');}catch(cause){message.error(cause instanceof Error?cause.message:'删除失败');throw cause;}}});
-  const renderProgress=(task:ScanTask)=>{
-    const current=task.progress;
-    if(task.status==='COMPLETED')return <div><Typography.Text type="success">扫描完成</Typography.Text><Progress percent={100} size="small" status="success"/></div>;
-    if(current){
-      const percent=progressPercent(current);
-      const status=task.status==='FAILED'||task.status==='CANCELED'?'exception':task.status==='RUNNING'?'active':'normal';
-      const detail=current.total>0?` ${current.completed.toLocaleString()} / ${current.total.toLocaleString()}`:' 进行中';
-      return <div><Typography.Text>{progressPhases[current.phase]??'扫描'}{detail}</Typography.Text><Progress percent={percent} size="small" status={status}/></div>;
-    }
-    if(task.status==='RUNNING')return <Space size={6}><Spin size="small"/><Typography.Text>Worker 执行中，等待进度上报</Typography.Text></Space>;
-    return `${task.completedChunks} / ${task.totalChunks}`;
-  };
+  const removeSchedule=(schedule:Schedule)=>Modal.confirm({title:'删除定时任务',content:`删除“${schedule.name}”后将停止后续调度，已创建的扫描任务和结果会保留。`,okText:'删除',okButtonProps:{danger:true},cancelText:'取消',onOk:async()=>{try{await deleteSchedule(schedule.id);setSchedules(prev=>prev.filter(item=>item.id!==schedule.id));message.success('定时任务已删除');}catch(cause){message.error(errorMessage(cause,'删除失败'));throw cause;}}});
   return <div style={{display:'flex',flexDirection:'column',gap:16}}>
     <CollectionNotice loading={taskLoading||scheduleLoading||scanPlansLoading} error={taskError||scheduleError||scanPlansError}/>
     <Card title="扫描任务" extra={<Space wrap>
@@ -223,23 +155,20 @@ export const TasksPage:React.FC=()=>{
         <Button onClick={()=>{setShowArchived(value=>!value);setEngineFilter('all');}}>{showArchived?'返回任务清册':'查看归档'}</Button>
         <Segmented aria-label="按状态快速筛选" value={statusQuick.some(item=>item.value===statusFilter)?statusFilter:''} onChange={value=>setStatusFilter(String(value))} options={statusQuick.map(item=>({value:item.value,label:`${item.label} ${item.count}`}))}/>
       </Space>
-      <DataTable<ScanTask> dataSource={tasks} rowKey="id" loading={taskLoading} tableLayout="fixed" scroll={{x:1600}} onChange={(_pagination,_filters,sorter,extra)=>{if(extra.action!=='sort')return;const current=Array.isArray(sorter)?sorter[0]:sorter;setTaskSort(current?.order==='ascend'?'created_at':'-created_at');}} locale={{emptyText:taskFilter||statusFilter!=='all'||engineFilter!=='all'?'没有符合筛选条件的任务':showArchived?'暂无归档任务':'暂无任务，请从右上角创建扫描任务或定时任务'}} pagination={{current:taskPage,pageSize:taskPageSize,total:taskTotal,showSizeChanger:true,pageSizeOptions:[10,20,50],showTotal:total=>`共 ${total} 个任务`,onChange:(page,size)=>{if(size!==taskPageSize){setTaskPageSize(size);setTaskPage(1)}else setTaskPage(page)}}}
+      <DataTable<ScanTask> dataSource={tasks} rowKey="id" loading={taskLoading} tableLayout="fixed" scroll={{x:1600}} onChange={(_pagination,_filters,sorter,extra)=>{if(extra.action!=='sort')return;const current=Array.isArray(sorter)?sorter[0]:sorter;setTaskSort(current?.order==='ascend'?'created_at':'-created_at');}} locale={{emptyText:taskFilter||statusFilter!=='all'||engineFilter!=='all'?'没有符合筛选条件的任务':showArchived?'暂无归档任务':'暂无任务，请从右上角创建扫描任务或定时任务'}} pagination={{current:taskPage,pageSize:taskPageSize,total:taskTotal,showSizeChanger:true,pageSizeOptions:[10,20,50],showTotal:total=>`共 ${total} 个任务`,onChange:onTaskPageChange}}
         expandable={{expandedRowRender:t=><Space direction="vertical"><Typography.Text>下发目标：{(()=>{const all=t.chunks?.flatMap(c=>c.targets)??[];return all.length>20?`${all.slice(0,20).join('、')} ……（共 ${all.length} 个）`:all.join('、')||'无';})()}</Typography.Text>{(t.engines?.[0]==='port-probe'||t.engines?.[0]==='auto')&&<><Typography.Text>探测配置：{presetLabels[t.portProbeConfig?.preset??'common']}；范围 {showRanges(t.portProbeConfig?.ranges)}；任务排除 {showRanges(t.portProbeConfig?.exclusions)}；合并排除 {showRanges(t.effectiveExclusions??t.portProbeConfig?.exclusions)}；隔离端口 {summarizePorts(t.quarantinedPorts)}；强度 {({gentle:'温和',standard:'标准',aggressive:'积极'})[t.portProbeConfig?.intensity??'gentle']}</Typography.Text><Typography.Text>实际探测：{t.portProbePorts?.length??0} 个 TCP 端口；发现开放候选：{t.portProbeResults?.length??0} 个{t.portProbeResults?.length?`（${t.portProbeResults.slice(0,20).map(p=>p.port).join(', ')}${t.portProbeResults.length>20?' …':''}）`:''}</Typography.Text>{t.engines[0]==='auto'&&<><Typography.Text>HTTP(S) 服务：{t.serviceResults?.filter(item=>item.kind==='HTTP').length??0} 个；自定义规则：{t.customRuleCount??0} 条</Typography.Text><Typography.Text>Linux 系统包：{t.systemScanStatus??'等待 Worker 回报'}</Typography.Text><ApplicationCoverage task={t}/><Typography.Text type="secondary">开放端口候选仅用于这次明确授权的范围，不会自动登记成长期授权端口。</Typography.Text></>}</>}{t.inputKind&&<Typography.Text>离线输入：{t.inputKind==='rootfs'?'Linux 系统包':t.inputKind==='image-archive'?'Docker / OCI 镜像':t.inputKind==='artifact'?'已部署 JAR / Go 文件':'应用依赖清单'} · {t.inputPath}</Typography.Text>}<Typography.Text>跳过目标：{t.skippedTargets?.join('、')||'无'}</Typography.Text><Typography.Text>规则版本：{t.ruleVersion||'无需外部规则包'}</Typography.Text>{t.error&&<Alert type="error" message={t.error}/>}</Space>}}
         columns={[
           {title:'任务 ID',dataIndex:'id',width:200,ellipsis:true},
           {title:'执行方式',width:140,render:(_,t)=><Tag color={t.synthetic?'default':'blue'}>{t.synthetic?'模拟 Worker':t.engines[0]==='auto'?'自动综合扫描':t.engines[0]==='port-probe'?'历史 TCP 探测':t.engines.join('、').toUpperCase()}</Tag>},
           {title:'目标',width:220,render:(_,t)=>{const summary=taskTargetSummary(t);return <Space direction="vertical" size={0} style={{minWidth:0,maxWidth:'100%'}}><Typography.Text code ellipsis={{tooltip:summary.primary}}>{summary.primary}</Typography.Text><Typography.Text type="secondary" style={{fontSize:12}}>{summary.detail}</Typography.Text></Space>;}},
-          {title:'进度',width:220,render:(_,t)=>renderProgress(t)},
+          {title:'进度',width:220,render:(_,t)=>renderTaskProgress(t)},
           {title:'状态',dataIndex:'status',width:150,render:(s:string,t)=><Space wrap><TaskStatusTag value={s}/>{t.archived&&<Tag>已归档</Tag>}</Space>},
           {title:'创建时间',dataIndex:'createdAt',width:180,sorter:true,sortDirections:['descend','ascend'],sortOrder:taskSort==='created_at'?'ascend':'descend',render:(v:string)=>v?new Date(v).toLocaleString():'—'},
           {title:'本地截止时间',dataIndex:'hardDeadline',width:190,render:(v:string)=>v?new Date(v).toLocaleString():'—'},
           {title:'操作',width:470,render:(_,t)=>{const terminal=['COMPLETED','CANCELED','FAILED'].includes(t.status);return <Space wrap><Button size="small" onClick={()=>openTaskDetail(t)}>详情</Button>{!terminal&&t.status!=='PAUSED'&&<Button size="small" disabled={!canWrite} onClick={()=>void pause(t)}>暂停</Button>}{t.status==='PAUSED'&&<Button size="small" type="primary" disabled={!canWrite} onClick={()=>void resume(t)}>恢复</Button>}{!terminal&&<Button size="small" danger disabled={!canWrite} onClick={()=>void stop(t.id)}>取消</Button>}{terminal&&<Button size="small" disabled={!canWrite} onClick={()=>void setArchived(t.id,!t.archived)}>{t.archived?'恢复':'归档'}</Button>}{terminal&&<Button size="small" disabled={!canWrite} onClick={()=>copyTask(t)}>按此配置新建</Button>}{terminal&&canDelete&&t.findingCount===0&&<Button size="small" danger onClick={()=>removeTask(t)}>彻底删除</Button>}{terminal&&canDelete&&t.findingCount>0&&<Tag>有关联发现，仅可归档</Tag>}</Space>}},
         ]}/>
     </Card>
-    <Drawer title={detailTask?`任务详情：${detailTask.id}`:'任务详情'} open={Boolean(detailTask)} width="min(1040px, 100vw)" onClose={()=>{setDetailTask(null);detailLoadedId.current='';}} destroyOnClose>
-      {detailTask&&<TaskDetail task={detailTask} logs={detailLogs} loading={detailLoading} refreshing={detailRefreshing} error={detailError} canWrite={canWrite} exporting={detailExporting} progress={renderProgress(detailTask)}
-        onPause={()=>void pause(detailTask)} onResume={()=>void resume(detailTask)} onStop={()=>void stop(detailTask.id)} onExport={format=>void downloadTaskResult(format)}/>}
-    </Drawer>
+    <TaskDetailDrawer task={detailTask} onTaskChange={setDetailTask} onClose={()=>setDetailTask(null)} canWrite={canWrite} onPause={task=>void pause(task)} onResume={task=>void resume(task)} onStop={id=>void stop(id)}/>
     <Card title="定时任务" extra={<Typography.Text type="secondary">间隔 0 表示仅运行一次；错过的重复任务不会集中补跑</Typography.Text>}>
       <DataTable<Schedule> dataSource={schedules} rowKey="id" loading={scheduleLoading} tableLayout="fixed" scroll={{x:1050}} locale={{emptyText:'暂无定时任务。创建时填写首次运行时间；间隔 0 表示只运行一次。'}} columns={[
         {title:'名称',dataIndex:'name'},
@@ -248,9 +177,9 @@ export const TasksPage:React.FC=()=>{
         {title:'状态',render:(_,s)=><Tag color={s.enabled?'green':'default'}>{s.enabled?'启用':'停用 / 单次已触发'}</Tag>},
         {title:'最近任务 / 错误',render:(_,s)=>s.lastError||s.lastTaskId||'尚未触发'},
         {title:'操作',width:360,render:(_,s)=><Space wrap>
-          <Button size="small" disabled={!canWrite} onClick={async()=>{try{await toggleSchedule(s.id,!s.enabled);setSchedules(prev=>prev.map(item=>item.id===s.id?{...item,enabled:!s.enabled}:item));message.success('定时任务状态已保存');}catch(e){message.error(String(e));}}}>{s.enabled?'停用':'启用'}</Button>
-          <Button size="small" disabled={!canWrite} onClick={async()=>{if(s.portProbe&&(s.portProbe.preset==='full'||coversAllPorts(s.portProbe.ranges??[]))&&!(await confirmFull()))return;try{await createTask({synthetic:s.synthetic,engine:s.engine,scheme:s.scheme,inputPath:s.inputPath,inputKind:s.inputKind,assetId:s.assetId,portProbe:s.portProbe,customRuleIds:s.customRuleIds,targets:s.targets,timeWindows:s.timeWindows});message.success('已另建一条任务，仍遵守时间窗');}catch(e){message.error(String(e));}}}>手动运行</Button>
-          <Button size="small" onClick={()=>{setScheduleRunPage(1);setHistorySchedule(s);}}>历史运行</Button>
+          <Button size="small" disabled={!canWrite} onClick={async()=>{try{await toggleSchedule(s.id,!s.enabled);setSchedules(prev=>prev.map(item=>item.id===s.id?{...item,enabled:!s.enabled}:item));message.success('定时任务状态已保存');}catch(e){message.error(errorMessage(e));}}}>{s.enabled?'停用':'启用'}</Button>
+          <Button size="small" disabled={!canWrite} onClick={async()=>{if(s.portProbe&&(s.portProbe.preset==='full'||coversAllPorts(s.portProbe.ranges??[]))&&!(await confirmFull()))return;try{await createTask({synthetic:s.synthetic,engine:s.engine,scheme:s.scheme,inputPath:s.inputPath,inputKind:s.inputKind,assetId:s.assetId,portProbe:s.portProbe,customRuleIds:s.customRuleIds,targets:s.targets,timeWindows:s.timeWindows});message.success('已另建一条任务，仍遵守时间窗');}catch(e){message.error(errorMessage(e));}}}>手动运行</Button>
+          <Button size="small" onClick={()=>setHistorySchedule(s)}>历史运行</Button>
           <Button size="small" disabled={!canWrite} onClick={()=>openScheduleEdit(s)}>修改</Button>
           <Button size="small" danger disabled={!canWrite} onClick={()=>removeSchedule(s)}>删除</Button>
         </Space>},
@@ -302,33 +231,7 @@ export const TasksPage:React.FC=()=>{
         {(engine==='auto'||engine==='port-probe')&&<div hidden={wizard&&wizardStep!==3} style={{marginTop:16}}><Form.Item name="opsApproved" valuePropName="checked" rules={[{validator:(_,value)=>value?Promise.resolve():Promise.reject(new Error('请确认运维授权和四层转发排除情况'))}]}><Checkbox>我已获得运维对这台主机和所选 TCP 端口范围的探测授权，并已排除已知的 Nginx 四层转发端口</Checkbox></Form.Item></div>}
       </Form>
     </Modal>
-    <Modal title={editingPlan?'编辑自定义扫描方案':'复制为自定义扫描方案'} open={planEditorOpen} width={680} onCancel={()=>{if(planEditorBusy)return;setPlanEditorOpen(false);setEditingPlan(null);planForm.resetFields();}} onOk={()=>planForm.submit()} confirmLoading={planEditorBusy} destroyOnClose maskClosable={!planEditorBusy}>
-      <Form<PlanEditorValues> form={planForm} layout="vertical" onFinish={savePlan} initialValues={{defaults:{portPreset:'common',intensity:'gentle',portRanges:'',portExclusions:'',customRuleIds:[]}}}>
-        <Form.Item name="sourceId" hidden><Input /></Form.Item>
-        <Form.Item name="title" label="方案名称" rules={[{required:true,message:'请输入方案名称'},{max:80,message:'方案名称不能超过 80 个字符'}]}><Input maxLength={80}/></Form.Item>
-        <Form.Item name="summary" label="一句话说明" rules={[{required:true,message:'请输入一句话说明'},{max:200,message:'说明不能超过 200 个字符'}]}><Input maxLength={200}/></Form.Item>
-        <Form.Item name="detail" label="检测范围与影响" rules={[{required:true,message:'请说明检测范围和影响'},{max:600,message:'说明不能超过 600 个字符'}]}><Input.TextArea rows={3} maxLength={600}/></Form.Item>
-        <Space wrap style={{display:'flex'}} align="start">
-          <Form.Item name={['defaults','portPreset']} label="探测范围" rules={[{required:true}]} style={{minWidth:260}}><Select options={Object.entries(presetLabels).map(([value,label])=>({value,label}))}/></Form.Item>
-          <Form.Item name={['defaults','intensity']} label="扫描强度" rules={[{required:true}]} style={{minWidth:220}}><Select options={[{value:'gentle',label:'温和'},{value:'standard',label:'标准'},{value:'aggressive',label:'积极'}]}/></Form.Item>
-        </Space>
-        <Form.Item noStyle shouldUpdate={(previous,current)=>previous.defaults?.portPreset!==current.defaults?.portPreset}>{({getFieldValue})=>{
-          const preset=getFieldValue(['defaults','portPreset']);
-          return ['custom','common-and-custom'].includes(preset)?<Form.Item name={['defaults','portRanges']} label="自定义 TCP 端口范围" rules={[{required:true,message:'自定义范围方案必须填写端口范围'}]} extra="英文逗号分隔，例如 22, 8080-8090。平台保存和创建任务时都会再次校验。"><Input placeholder="例如 22,18080"/></Form.Item>:null;
-        }}</Form.Item>
-        <Form.Item name={['defaults','portExclusions']} label="默认排除端口或范围" extra="可留空；系统、资产和任务排除仍会在创建任务时合并。"><Input placeholder="例如 443,8000-8010"/></Form.Item>
-        <Form.Item name={['defaults','customRuleIds']} label="默认自定义规则" extra="只保存已启用规则的选择；规则状态和权限仍由平台在创建任务时复核。"><Select mode="multiple" allowClear showSearch optionFilterProp="label" options={customRules.filter(rule=>rule.enabled).map(rule=>({value:rule.id,label:`${rule.name} · ${rule.severity}`}))} maxTagCount="responsive" placeholder="留空表示全部启用规则"/></Form.Item>
-      </Form>
-    </Modal>
-    <Modal title={`定时任务历史运行${historySchedule?`：${historySchedule.name}`:''}`} open={Boolean(historySchedule)} onCancel={()=>setHistorySchedule(null)} footer={<Button onClick={()=>setHistorySchedule(null)}>关闭</Button>} width={780}>
-      {scheduleRunError&&<Alert type="error" showIcon message="历史运行记录加载失败" description={scheduleRunError}/>}
-      <DataTable<ScheduleRun> rowKey="id" loading={scheduleRunLoading} dataSource={scheduleRuns} locale={{emptyText:'暂无运行记录'}} pagination={{current:scheduleRunPage,pageSize:50,total:scheduleRunTotal,hideOnSinglePage:true,showSizeChanger:false,onChange:page=>setScheduleRunPage(page)}} columns={[
-        {title:'触发时间',dataIndex:'triggeredAt',width:190,render:(value:string)=>new Date(value).toLocaleString()},
-        {title:'状态',dataIndex:'status',width:150,render:(value:string)=><ScheduleStatusTag value={value}/>},
-        {title:'任务 ID',dataIndex:'taskId',width:240,ellipsis:true,render:(value:string)=>value||'—'},
-        {title:'错误',dataIndex:'error',ellipsis:true,render:(value:string)=>value||'—'},
-      ]}/>
-      <Typography.Paragraph type="secondary" style={{marginBottom:0}}>历史记录只展示触发时间、任务状态和任务标识；任务结果仍在扫描任务清册及漏洞页面查看。删除定时计划不会删除这份历史。</Typography.Paragraph>
-    </Modal>
+    <ScanPlanEditor target={planTarget} customRules={customRules} onClose={()=>setPlanTarget(null)} onSaved={(saved,replaced)=>setScanPlans(prev=>replaced?prev.map(item=>item.id===saved.id?saved:item):[...prev,saved])}/>
+    <ScheduleHistoryModal schedule={historySchedule} onClose={()=>setHistorySchedule(null)}/>
   </div>;
 };

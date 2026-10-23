@@ -1,11 +1,11 @@
 import { AssetImport } from './AssetImport';
 import React, { useEffect, useMemo, useState } from 'react';
 import { DataTable } from '../../components/DataState';
-import { Alert, Button, Card, Form, Input, message, Modal, Select, Space, Tag, Typography, Drawer, Descriptions, Checkbox, Row, Col } from 'antd';
+import { Alert, Button, Form, Input, message, Modal, Select, Space, Tag, Typography, Drawer, Checkbox, Row, Col } from 'antd';
 import type { FormInstance } from 'antd';
 import { DownloadOutlined, PlusOutlined } from '@ant-design/icons';
 import type { Asset, AssetProfile, Finding } from '../../types';
-import { apiClient } from '../../api/client';
+import { apiClient, errorMessage } from '../../api/client';
 import type { AssetInsight } from '../../api/client';
 import { pollIntervals, pollWhileVisible } from '../../api/polling';
 import { useCollection } from '../../api/hooks';
@@ -37,9 +37,9 @@ const ProfileFields:React.FC=()=> <><Row gutter={12}>{profileFields.map(f=><Col 
 const profileInput=(input:AssetProfile):AssetProfile=>Object.fromEntries([...profileFields.map(f=>[f.key,input[f.key]??'']),['isCore',Boolean(input.isCore)]]);
 const boolLabel=(v:boolean|null|undefined)=>v===true?'是':v===false?'否':'未知';
 export const AssetsPage: React.FC = () => {
-  const {user} = useAuth();
+  const {user, canWrite} = useAuth();
   const {palette} = useAppTheme();
-  const canEdit = user?.role === 'admin' || user?.role === 'security_engineer';
+  const canEdit = canWrite;
   const [filter,setFilter] = useState('');
   const [assetPage,setAssetPage] = useState(1);
   const [assetPageSize,setAssetPageSize] = useState(10);
@@ -71,7 +71,7 @@ export const AssetsPage: React.FC = () => {
       if(controller.signal.aborted)return;
       setAssets(result.items);setAssetTotal(result.total);setAssetError(null);
     }).catch(cause=>{
-      if(!controller.signal.aborted){setAssets([]);setAssetTotal(0);setAssetError(cause instanceof Error?cause.message:'资产清册加载失败');}
+      if(!controller.signal.aborted){setAssets([]);setAssetTotal(0);setAssetError(errorMessage(cause,'资产清册加载失败'));}
     }).finally(()=>{if(!controller.signal.aborted)setAssetLoading(false)});
     return()=>controller.abort();
   },[assetPage,assetPageSize,filter,assetRevision]);
@@ -89,7 +89,7 @@ export const AssetsPage: React.FC = () => {
       inFlight=true;if(initial)setInsightLoading(true);
       apiClient.assetInsights(assetIds.split(','),controller.signal).then(result=>{
         if(!controller.signal.aborted){setInsights(new Map(result.items.map(item=>[item.assetId,item])));setInsightError(null);}
-      }).catch(cause=>{if(!controller.signal.aborted)setInsightError(cause instanceof Error?cause.message:'资产扫描摘要加载失败');}).finally(()=>{inFlight=false;if(!controller.signal.aborted)setInsightLoading(false);});
+      }).catch(cause=>{if(!controller.signal.aborted)setInsightError(errorMessage(cause,'资产扫描摘要加载失败'));}).finally(()=>{inFlight=false;if(!controller.signal.aborted)setInsightLoading(false);});
     };
     load(true);const stop=pollWhileVisible(()=>load(),pollIntervals.assetInsights);
     return()=>{controller.abort();stop();};
@@ -104,7 +104,7 @@ export const AssetsPage: React.FC = () => {
       setAssets(prev=>prev.map(item=>item.id===asset.id?{...item,reachabilityStatus:result.status,reachabilityCheckedAt:result.checkedAt}:item));
       message[result.status==='REACHABLE'?'success':'warning'](result.status==='REACHABLE'?'收到目标 Ping 响应':'未收到 Ping 响应；目标可能屏蔽 ICMP');
     } catch(cause) {
-      message.error(cause instanceof Error?cause.message:'可达性检测失败');
+      message.error(errorMessage(cause,'可达性检测失败'));
     } finally {setCheckingAsset('');}
   };
   const testFormAddress = async(form:FormInstance<AssetForm>,kind:AssetForm['kind'],source:'create'|'edit') => {
@@ -116,7 +116,7 @@ export const AssetsPage: React.FC = () => {
       const result=await apiClient.testAssetAddress(address);
       const text=result.status==='REACHABLE'?'收到目标 Ping 响应':result.status==='NO_RESPONSE'?'未收到 Ping 响应；目标可能屏蔽 ICMP':'Ping 检测不可用';
       message[result.status==='REACHABLE'?'success':'warning'](`${text}（${address}）`);
-    } catch(cause) {message.error(cause instanceof Error?cause.message:'连通性测试失败');}
+    } catch(cause) {message.error(errorMessage(cause,'连通性测试失败'));}
     finally {setTestingForm('');}
   };
   const deleteAsset = (asset:Asset) => Modal.confirm({
@@ -129,7 +129,7 @@ export const AssetsPage: React.FC = () => {
         setAssetRevision(value=>value+1);
         if(candidateAsset?.id===asset.id)setCandidateAsset(null);
         message.success('资产已删除');
-      } catch(cause) {message.error(cause instanceof Error?cause.message:'删除失败');throw cause;}
+      } catch(cause) {message.error(errorMessage(cause,'删除失败'));throw cause;}
     },
   });
   const candidateRows = useMemo<CandidateRow[]>(()=>{
@@ -162,7 +162,7 @@ export const AssetsPage: React.FC = () => {
       link.remove();
       window.setTimeout(()=>URL.revokeObjectURL(url),0);
       message.success(filter.trim()?'已导出当前筛选资产':'已导出资产清单');
-    } catch(cause) {message.error(cause instanceof Error?cause.message:'资产导出失败');}
+    } catch(cause) {message.error(errorMessage(cause,'资产导出失败'));}
     finally {setExporting(false);}
   };
 
@@ -175,7 +175,7 @@ export const AssetsPage: React.FC = () => {
       message.success('资产与明确输入的端口已保存；跳过端口不会下发给 Worker');
       setAssetRevision(value=>value+1);setCreateOpen(false);createForm.resetFields();
       if(asset.kind==='host') void checkReachability(asset);
-    } catch(e) {message.error(e instanceof Error?e.message:'登记失败');}
+    } catch(e) {message.error(errorMessage(e,'登记失败'));}
     finally {setSaving(false);}
   };
   const update = async (input: AssetForm) => {
@@ -190,7 +190,7 @@ export const AssetsPage: React.FC = () => {
       setEditing(null);
       message.success(addressChanged?'资产 IP 已更新；旧授权已撤销，需重新申请审批':'资产信息已保存；原有端口审批已重置');
       if(addressChanged&&result.kind==='host') void checkReachability(result);
-    }catch(e){message.error(e instanceof Error?e.message:'更新失败');}
+    }catch(e){message.error(errorMessage(e,'更新失败'));}
     finally{setSaving(false);}
   };
   const releaseQuarantine=async()=>{
@@ -201,7 +201,7 @@ export const AssetsPage: React.FC = () => {
       setQuarantines(prev=>prev.map(q=>q.assetId===releaseTarget.assetId&&q.port===releaseTarget.port?{...q,status:'RELEASED'}:q));
       setAssets(prev=>prev.map(a=>a.id===releaseTarget.assetId?{...a,quarantinedPorts:a.quarantinedPorts?.filter(p=>p!==releaseTarget.port),services:a.services?.map(s=>s.port===releaseTarget.port?{...s,quarantined:false}:s)}:a));
       setReleaseTarget(null);setReleaseReason('');message.success('隔离已解除并记录审计；排除和扫描授权仍独立生效');
-    }catch(e){message.error(e instanceof Error?e.message:'解除失败');}finally{setSaving(false);}
+    }catch(e){message.error(errorMessage(e,'解除失败'));}finally{setSaving(false);}
   };
   const requestSelectedCandidates = async() => {
     if(!candidateAsset)return;
@@ -216,7 +216,7 @@ export const AssetsPage: React.FC = () => {
       setCandidateAsset({...candidateAsset,requestedPorts});
       setSelectedCandidatePorts([]);
       message.success(`已提交 ${ports.length} 个端口申请，请到“授权与时间窗”由运维审批`);
-    } catch(cause) {message.error(cause instanceof Error?cause.message:'端口申请失败');}
+    } catch(cause) {message.error(errorMessage(cause,'端口申请失败'));}
     finally {setRequestingCandidates(false);}
   };
 

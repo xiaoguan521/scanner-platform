@@ -5,6 +5,7 @@ const [page, client] = await Promise.all([
   readFile(new URL('./index.tsx', import.meta.url), 'utf8'),
   readFile(new URL('../../api/client.ts', import.meta.url), 'utf8'),
 ]);
+const errors = await readFile(new URL('../../api/errors.ts', import.meta.url), 'utf8');
 
 assert.match(client, /nodesPage<T>\(page:number,pageSize:number/);
 assert.match(client, /registerNode\(input:Pick<NodeLifecycle/);
@@ -14,8 +15,8 @@ assert.match(client, /nodeLifecycleEvents\(id:string/);
 assert.match(client, /rulesPage<T>\(page:number,pageSize:number/);
 assert.match(client, /ruleJobsPage<T>\(page:number,pageSize:number/);
 assert.match(client, /customRulesPage<T>\(page:number,pageSize:number/);
-assert.match(client, /invalid_node_list_query/);
-assert.match(client, /invalid_rule_list_query/);
+assert.match(errors, /invalid_node_list_query/);
+assert.match(errors, /invalid_rule_list_query/);
 assert.match(page, /apiClient\.nodesPage<NodeInfo>\(nodePage,nodePageSize/);
 assert.match(page, /登记节点/);
 assert.match(page, /showNodeLifecycle/);

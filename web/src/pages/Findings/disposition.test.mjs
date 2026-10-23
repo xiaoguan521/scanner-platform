@@ -10,7 +10,7 @@ const now=Date.parse('2026-01-01T00:00:00Z');
 assert.deepEqual(acceptanceInput(' 原因 ','2026-01-02T08:00:00+08:00',now),{reason:'原因',acceptedUntil:'2026-01-02T00:00:00.000Z'});
 for(const reason of ['', ' ', 'a\nb', '\u0000', '中'.repeat(167)])assert.throws(()=>acceptanceInput(reason,'2026-01-02T00:00:00Z',now));
 for(const until of ['','invalid','2025-12-31T00:00:00Z','2027-01-02T00:00:00Z'])assert.throws(()=>acceptanceInput('reason',until,now));
-const page=await readFile(new URL('./index.tsx',import.meta.url),'utf8');
+const page=await readFile(new URL('./index.tsx',import.meta.url),'utf8')+await readFile(new URL('./FindingDrawer.tsx',import.meta.url),'utf8');
 assert.ok(page.includes('fetchFindingEvents(selectedFindingId,controller.signal)'));
 assert.ok(page.includes('event.reason}</Text>'));
 assert.ok(!page.includes('dangerouslySetInnerHTML'));

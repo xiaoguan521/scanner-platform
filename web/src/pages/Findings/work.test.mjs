@@ -8,7 +8,7 @@ assert.equal(findingNoteInput(' note '),'note');
 assert.equal(findingNoteInput('中'.repeat(666)+'ab').length,668);
 for(const body of ['', ' ', '\tnote', 'note\n', 'a\u2028b', 'a\u2029b', 'a\u0000b', '中'.repeat(667)])assert.throws(()=>findingNoteInput(body));
 assert.equal(findingNoteInput('<script>plain text</script>'),'<script>plain text</script>');
-const page=await readFile(new URL('./index.tsx',import.meta.url),'utf8');
+const page=await readFile(new URL('./index.tsx',import.meta.url),'utf8')+await readFile(new URL('./FindingDrawer.tsx',import.meta.url),'utf8');
 assert.ok(page.includes('fetchFindingNotes(selectedFindingId,controller.signal)'));
 assert.ok(page.includes('setNotes(result.items)'));
 assert.ok(page.includes('selectedFinding.assigneeName||selectedFinding.assigneeId'));
