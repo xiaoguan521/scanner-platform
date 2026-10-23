@@ -8,6 +8,13 @@ import (
 )
 
 type httpBudgetKey struct{}
+
+// maxHTTPRequestsPerTarget bounds read-only GETs against one authorized
+// target per task. It must cover the curated detection template set (nuclei
+// allows up to a few thousand bundled templates) plus the baseline header
+// checks and the preflight root GET; the request rate still paces them.
+const maxHTTPRequestsPerTarget = 8000
+
 type httpBudget struct {
 	mu              sync.Mutex
 	next            time.Time

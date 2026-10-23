@@ -18,6 +18,13 @@ import (
 	"scanner-platform/internal/taskflow"
 )
 
+// Template limits per task. maxHTTPRequestsPerTarget must stay above
+// maxTemplatesPerTask, since every template issues one GET per target.
+const (
+	maxBundledTemplates = 5000
+	maxTemplatesPerTask = 5200
+)
+
 type Template struct {
 	ID   string `json:"id"`
 	Info struct {
@@ -130,8 +137,8 @@ func (r *Runner) nuclei(ctx context.Context, task taskflow.Task, dir string) ([]
 			return nil, fmt.Errorf("duplicate template ID")
 		}
 		count++
-		if count > 5000 {
-			return nil, fmt.Errorf("bundled rule profile allows at most 5000 templates")
+		if count > maxBundledTemplates {
+			return nil, fmt.Errorf("bundled rule profile allows at most %d templates", maxBundledTemplates)
 		}
 		if err := os.WriteFile(filepath.Join(destination, t.ID+".json"), data, 0600); err != nil {
 			return nil, err
@@ -150,7 +157,7 @@ func (r *Runner) nuclei(ctx context.Context, task taskflow.Task, dir string) ([]
 			return nil, fmt.Errorf("duplicate custom template ID")
 		}
 		count++
-		if count > 5200 {
+		if count > maxTemplatesPerTask {
 			return nil, fmt.Errorf("bundled and custom template limit exceeded")
 		}
 		if err := os.WriteFile(filepath.Join(destination, t.ID+".json"), data, 0600); err != nil {

@@ -80,7 +80,7 @@ func TestScopeProxyRejectsUnlistedAuthorities(t *testing.T) {
 	for _, test := range []struct {
 		raw  string
 		code int
-	}{{target.URL, 204}, {"http://192.0.2.12:80/", 403}, {"http://example.com:80/", 403}, {target.URL + "/other", 403}} {
+	}{{target.URL, 204}, {"http://192.0.2.12:80/", 403}, {"http://example.com:80/", 403}, {target.URL + "/other", 204}} {
 		response, err := client.Get(test.raw)
 		if err != nil {
 			t.Fatal(err)
@@ -91,7 +91,17 @@ func TestScopeProxyRejectsUnlistedAuthorities(t *testing.T) {
 			t.Fatalf("status %d for %s", response.StatusCode, test.raw)
 		}
 	}
-	if called != 1 {
+	// A non-GET method is still denied as request_not_allowed.
+	post, err := client.Post(target.URL, "text/plain", strings.NewReader(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.Copy(io.Discard, post.Body)
+	post.Body.Close()
+	if post.StatusCode != 403 {
+		t.Fatalf("non-GET method not denied: %d", post.StatusCode)
+	}
+	if called != 2 {
 		t.Fatalf("unexpected target calls: %d", called)
 	}
 	blocked, failed, summary := proxy.blockedSummary()

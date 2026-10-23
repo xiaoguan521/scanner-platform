@@ -37,11 +37,11 @@ make dev       # 启动网页、Server、Worker、Updater
 4. 观察任务从待领取到执行中、已完成；发现项页查看引擎、目标、匹配路径和说明。失败任务可展开查看提示，细节在 `runtime/worker/scan-*/engine.log`；ZAP 另有私有启动日志。
 5. 可设置时间窗、定时运行或取消任务。Worker 轮询取消状态并终止子进程；到期中止，不把部分结果当完整成功。扫描无匹配时可完成且不制造发现项；连接失败、解析失败和引擎失败会显示失败。
 
-Nuclei 当前默认四项基线：缺少 `X-Content-Type-Options`、缺少 CSP、缺少 `X-Frame-Options`、公开 Server 响应头。部分条目只具信息价值，需要结合应用用途判断。仅接受受限 JSON 模板：单次根路径 GET，以及字词/正则/状态匹配；不执行原始请求、请求体、动态载荷、代码、浏览器、DNS、网络协议或工作流。上游完整 YAML 漏洞模板库尚未接入，不能把本次结果解释为完整 CVE 覆盖。
+Nuclei 规则由三部分组成：内置的四项响应头基线（缺少 `X-Content-Type-Options`、缺少 CSP、缺少 `X-Frame-Options`、公开 Server 响应头）、规则包中从固定版本 nuclei-templates 筛选出的只读检测模板（见 [离线漏洞数据](offline-vulnerability-data.md)），以及平台内维护的自定义规则（见 [自定义规则](custom-rules.md)）。部分条目只具信息价值，需要结合应用用途判断。所有模板都必须是受限 JSON：每个模板只对目标的一个固定同源路径发一次 GET，再做字词/正则/状态匹配；不执行原始请求、请求体、动态载荷、代码、浏览器、DNS、网络协议或工作流。每个任务最多 5000 个规则包模板、合计 5200 个（含自定义规则）。筛选后的模板库仍不等于完整 CVE 覆盖，不能把本次结果解释为全部漏洞都已检查。
 
 规则包的 `engine_compatibility` 以固定引擎版本为准：Nuclei `3.11.1`、Trivy `0.76.0`。Updater 激活前检查版本范围和 Trivy `metadata.json` 的 `Version`；带 Java 索引的包还检查 Java 数据库 schema。范围或 schema 不匹配的包只保留为未验证清单，不能激活，Worker 执行前也会拒绝。
 
-Nuclei 使用 `-fhr` 将重定向限制在同一主机，禁用 OAST、httpx 探测和更新，默认每秒 5 请求、并发 1。根请求与代理只接受明确的数字 IP:端口。3.11.1 中 `-fhr` 与 `-dr` 互斥，因此只传 `-fhr`，避免引擎拒绝启动；实测帮助与执行结果见验证记录。
+Nuclei 使用 `-fhr` 将重定向限制在同一主机，禁用 OAST、httpx 探测和更新，默认每秒 5 请求、并发 1。根请求与代理只接受明确的数字 IP:端口。HTTP 流量经范围代理转发：只放行发往已授权 IP:端口的 GET（任意同源路径和查询参数），其他方法、其他主机和带凭据的地址一律拒绝，代理不跟随重定向；HTTPS 经 CONNECT 隧道转发到同一授权端点，路径由上面的模板校验约束。每个任务对每个目标最多 8000 次 HTTP 请求，覆盖 5200 个模板、预检、ZAP 根请求和 4 项配置检查，余量用于同主机重定向；请求速率仍按上面的设置。默认每秒 5 请求时，5000 个模板对单个目标约需 17 分钟，设置时间窗和截止时间时需留足。3.11.1 中 `-fhr` 与 `-dr` 互斥，因此只传 `-fhr`，避免引擎拒绝启动；实测帮助与执行结果见验证记录。
 
 ZAP 由 Go 先读取指定根地址响应（不跟随重定向、单响应上限 2 MiB），随后以 HAR 导入，执行 passiveScan 和 JSON 报告。没有爬虫或主动扫描任务，插件只保留这条被动流水线及其依赖。使用 `-silent -notel` 关闭未请求的联网行为。实现依据：[HAR 导入](https://www.zaproxy.org/docs/desktop/addons/import-export/automation/)、[ZAP 命令行](https://www.zaproxy.org/docs/desktop/cmdline/)。固定分发包中的 exim 0.16.0 只支持导入记录响应，不支持新版文档中的 `sendRequests` 参数，代码未传该参数。
 

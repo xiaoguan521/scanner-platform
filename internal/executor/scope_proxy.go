@@ -208,9 +208,13 @@ func (p *scopeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(client, remote)
 		return
 	}
-	if r.URL.Scheme != "http" || r.Method != http.MethodGet || r.URL.Path != "" && r.URL.Path != "/" || r.URL.RawQuery != "" {
+	// Read-only GET to any same-origin path on the authorized target. The scope
+	// gate (authorizeRequest, above) still restricts the host:port; path and
+	// query are allowed so curated detection templates can probe specific
+	// endpoints. Method stays GET-only so the engine cannot mutate the target.
+	if r.URL.Scheme != "http" || r.Method != http.MethodGet {
 		p.recordDenial("request_not_allowed")
-		http.Error(w, "only root GET baseline requests allowed", 403)
+		http.Error(w, "only read-only GET requests allowed", 403)
 		return
 	}
 	request := r.Clone(r.Context())

@@ -882,3 +882,10 @@
 - 新增 `web/e2e/accessibility.spec.mjs`：登录后只读打开 14 个页面，深色、浅色各扫描一次 WCAG 2.1 A/AA 规则；严重（serious/critical）问题与 `web/e2e/a11y-baseline.json` 对比，出现新规则即失败；修复后用 `SCANNER_E2E_A11Y_UPDATE=1` 刷新基线。`src/e2e-contract.test.mjs` 约束该用例不点击、不填写、不发起写请求。
 - 首次扫描发现的对比度、进度条名称、行选择框标签问题已修复。基线中剩余 3 类来自 antd 内部实现：表格测量行 `aria-hidden-focus`、横向滚动容器 `scrollable-region-focusable`、表单内 Select 的 `aria-required`（`aria-allowed-attr`）。
 - 验证：在本机临时 Server（隔离 SQLite、示例数据）上实际运行该用例并连续两次得到相同基线；尚未在隔离实验环境的 `make test-browser` 中运行。
+
+## 2026-10-23：范围代理放行同源路径与 HTTP 请求预算
+
+- 背景：`67768a4` 允许模板和自定义规则访问固定同源路径、模板上限提到 5200，但 HTTP 范围代理仍只放行根路径 GET、每目标请求预算仍为 160，导致纯 HTTP 目标上带路径的模板被拒、完整规则包耗尽预算，HTTP 阶段被标记为不完整。
+- 修改：`internal/executor/scope_proxy.go` 对已授权 IP:端口放行任意同源路径与查询参数的 GET，非 GET 仍以 `request_not_allowed` 拒绝；`maxHTTPRequestsPerTarget` 由 160 提到 8000，速率限制不变；模板上限改为 `maxBundledTemplates` / `maxTemplatesPerTask` 常量。涉及硬规则 4.1-1/2（范围仍只限明确 IP:端口）、4.2-10（模板白名单校验不变）、4.6-26（只读 GET，无请求体）。已人工逐行审查。
+- 验证：`go vet ./internal/executor`、`go test -race ./internal/executor ./internal/rules`；`TestScopeProxyRejectsUnlistedAuthorities` 覆盖非根路径放行、范围外主机拒绝、POST 拒绝，`TestHTTPBudgetCoversTemplateLimit` 约束预算不低于模板上限加固定请求。
+- 待执行：`LAB_ENV=isolated go test -tags=lab ./internal/executor` 在真实引擎和回环靶机上验证带路径模板的检出与代理拒绝计数；未在隔离实验环境运行。

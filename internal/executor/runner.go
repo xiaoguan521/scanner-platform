@@ -168,7 +168,7 @@ func (r *Runner) Execute(ctx context.Context, task taskflow.Task) ([]taskflow.De
 	if r.Timeout == 0 {
 		r.Timeout = 10
 	}
-	ctx = withHTTPBudget(ctx, r.Rate, 160)
+	ctx = withHTTPBudget(ctx, r.Rate, maxHTTPRequestsPerTarget)
 	switch task.Engines[0] {
 	case "nuclei":
 		return r.nuclei(ctx, task, dir)

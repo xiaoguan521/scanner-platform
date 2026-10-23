@@ -32,7 +32,7 @@ func (r *Runner) AutoScan(ctx context.Context, task taskflow.Task) (taskflow.Aut
 	if r.Rate > 0 && r.Rate < rate {
 		rate = r.Rate
 	}
-	ctx = withHTTPBudget(ctx, rate, 160)
+	ctx = withHTTPBudget(ctx, rate, maxHTTPRequestsPerTarget)
 	probeTask := task
 	probeTask.Engines = []string{"port-probe"}
 	open, err := r.ProbePorts(ctx, probeTask)

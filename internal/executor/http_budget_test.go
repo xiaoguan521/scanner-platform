@@ -27,6 +27,20 @@ func TestSharedBudgetStopsPreflightBeforeAnotherConnection(t *testing.T) {
 		t.Fatal("request crossed the budget")
 	}
 }
+
+// Each template sends one GET per target, on top of the nuclei preflight root
+// GET, the ZAP root fetch and the four native web configuration checks. A
+// budget below that would fail every full-size rule bundle; the remaining
+// headroom covers same-host redirects that nuclei follows with -fhr.
+func TestHTTPBudgetCoversTemplateLimit(t *testing.T) {
+	const fixedRequestsPerTarget = 1 + 1 + 4
+	if maxBundledTemplates > maxTemplatesPerTask {
+		t.Fatalf("bundled limit %d exceeds per-task limit %d", maxBundledTemplates, maxTemplatesPerTask)
+	}
+	if need := maxTemplatesPerTask + fixedRequestsPerTarget; maxHTTPRequestsPerTarget < need {
+		t.Fatalf("HTTP budget %d cannot cover %d templates plus %d fixed requests", maxHTTPRequestsPerTarget, maxTemplatesPerTask, fixedRequestsPerTarget)
+	}
+}
 func TestSilentOpenPortIsQuarantinedAfterBoundedIdentification(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
