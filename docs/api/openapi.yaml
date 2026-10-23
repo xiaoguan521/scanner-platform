@@ -2,7 +2,7 @@
 openapi: 3.0.3
 info:
   title: Scanner Platform local business API
-  version: 0.7.0
+  version: 0.8.0
   description: 'Same-origin local development API. UI mutations require X-Requested-With:
     XMLHttpRequest and admin/security_engineer unless stated otherwise. Accounts use
     HttpOnly session cookies. Worker/Updater endpoints are node protocols; when node
@@ -736,6 +736,35 @@ paths:
           description: Address is not an allowed numeric IP
         '403':
           description: Insufficient role
+  "/api/v1/assets/insights":
+    get:
+      summary: Scan and risk summaries for listed assets
+      description: Returns, in the requested order, each asset's active finding count (FIXED and FALSE_POSITIVE excluded), up to 50 active findings by severity, its latest port-probe or automatic scan with open ports, and up to 20 recent non-simulated tasks with the stable system-scan code. Unknown IDs return empty lists.
+      parameters:
+      - in: query
+        name: ids
+        required: true
+        description: Comma-separated asset IDs, 1-100 after removing duplicates, each at most 160 bytes. No other query parameters are accepted.
+        schema: {type: string}
+      responses:
+        '200':
+          description: One insight per requested asset
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, total]
+                properties:
+                  items:
+                    type: array
+                    items: {"$ref": "#/components/schemas/AssetInsight"}
+                  total: {type: integer}
+        '400':
+          description: invalid_asset_insight_query
+        '401':
+          description: Missing session
+      security:
+      - sessionCookie: []
   "/api/v1/assets/{id}":
     patch:
       tags:
@@ -997,6 +1026,12 @@ paths:
         schema:
           type: string
           enum: [all, expiring, expired]
+      - in: query
+        name: q
+        schema:
+          type: string
+          maxLength: 160
+        description: Search the scope host/CIDR or asset ID (LIKE with escaped wildcards).
       responses:
         '200':
           description: Scope applications; response shape depends on whether pagination parameters are present
@@ -1343,7 +1378,8 @@ paths:
         required: false
         schema:
           type: string
-          enum: [PENDING, WAITING_WINDOW, RUNNING, PAUSED, PAUSED_WINDOW, COMPLETED, FAILED, CANCELED]
+          enum: [PENDING, WAITING_WINDOW, RUNNING, PAUSED, PAUSED_WINDOW, COMPLETED, FAILED, CANCELED, QUEUED]
+        description: QUEUED is a filter-only group of PENDING, WAITING_WINDOW and PAUSED_WINDOW; tasks never carry it as their own status.
       - in: query
         name: engine
         required: false
@@ -1476,6 +1512,11 @@ paths:
         schema:
           type: string
           maxLength: 160
+      - "$ref": "#/components/parameters/FindingCVEFilter"
+      - "$ref": "#/components/parameters/FindingPackageFilter"
+      - "$ref": "#/components/parameters/FindingEngineFilter"
+      - "$ref": "#/components/parameters/FindingFixableFilter"
+      - "$ref": "#/components/parameters/FindingTaskFilter"
       - in: query
         name: sort
         required: false
@@ -1500,6 +1541,53 @@ paths:
                       type: integer
                   required: [items, total]
                 - "$ref": "#/components/schemas/FindingPage"
+      security:
+      - sessionCookie: []
+  "/api/v1/findings/groups":
+    get:
+      summary: Findings grouped by CVE or software package
+      description: Applies exactly the findings-list filters (every findings-list query parameter except sort), then groups the matches. Groups are ordered by highest severity, then size, then key. Findings without a CVE/template ID or package are counted in ungrouped. Drill into a group with the cve= or package= filter on the findings list.
+      parameters:
+      - in: query
+        name: by
+        required: true
+        schema: {type: string, enum: [cve, package]}
+      - in: query
+        name: page
+        schema: {type: integer, minimum: 1, default: 1}
+      - in: query
+        name: page_size
+        schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+      - in: query
+        name: q
+        schema: {type: string, maxLength: 160}
+      - in: query
+        name: severity
+        schema: {type: string, enum: [CRITICAL, HIGH, MEDIUM, LOW, INFO]}
+      - in: query
+        name: status
+        schema: {type: string, enum: [OPEN, REOPENED, IN_PROGRESS, FIXED, FALSE_POSITIVE, ACCEPTED_RISK]}
+      - in: query
+        name: businessGroup
+        schema: {type: string, maxLength: 160}
+      - in: query
+        name: assetId
+        schema: {type: string, maxLength: 160}
+      - "$ref": "#/components/parameters/FindingCVEFilter"
+      - "$ref": "#/components/parameters/FindingPackageFilter"
+      - "$ref": "#/components/parameters/FindingEngineFilter"
+      - "$ref": "#/components/parameters/FindingFixableFilter"
+      - "$ref": "#/components/parameters/FindingTaskFilter"
+      responses:
+        '200':
+          description: One page of groups plus totals over all matching findings
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/FindingGroupPage"}
+        '400':
+          description: invalid_finding_group_query (unknown by, repeated parameter, sort supplied, or an invalid findings-list filter)
+        '401':
+          description: Missing session
       security:
       - sessionCookie: []
   "/api/v1/nodes":
@@ -1870,6 +1958,68 @@ paths:
                     total: {type: integer}
                   required: [items, total]
                 - "$ref": "#/components/schemas/CustomRulePage"
+      security:
+      - sessionCookie: []
+    post:
+      summary: Create a custom read-only HTTP rule
+      description: Admin or security_engineer with X-Requested-With. The Server compiles the rule into the only supported Nuclei profile (one same-origin read-only GET plus local matchers) and audits the change.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"$ref": "#/components/schemas/CustomRule"}
+      responses:
+        '201':
+          description: Created rule with its compiled template
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/CustomRule"}
+        '400':
+          description: invalid_custom_rule
+        '409':
+          description: custom_rule_conflict (ID already exists)
+      security:
+      - sessionCookie: []
+  "/api/v1/custom-rules/{id}":
+    parameters:
+    - in: path
+      name: id
+      required: true
+      schema: {type: string, maxLength: 100}
+    put:
+      summary: Replace a custom read-only HTTP rule
+      description: Admin or security_engineer with X-Requested-With. A body id, when present, must equal the path id.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"$ref": "#/components/schemas/CustomRule"}
+      responses:
+        '200':
+          description: Updated rule with its compiled template
+          content:
+            application/json:
+              schema: {"$ref": "#/components/schemas/CustomRule"}
+        '400':
+          description: invalid_custom_rule or custom_rule_id_mismatch
+        '409':
+          description: custom_rule_conflict
+      security:
+      - sessionCookie: []
+    delete:
+      summary: Delete a custom read-only HTTP rule
+      description: Admin or security_engineer with X-Requested-With. Existing tasks keep the templates they were created with.
+      responses:
+        '200':
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: {type: string, enum: [DELETED]}
+        '409':
+          description: custom_rule_conflict
       security:
       - sessionCookie: []
   "/api/v1/auth/setup":
@@ -3566,6 +3716,31 @@ components:
         application/json:
           schema:
             "$ref": "#/components/schemas/APIError"
+  parameters:
+    FindingCVEFilter:
+      in: query
+      name: cve
+      schema: {type: string, maxLength: 160}
+      description: Exact CVE or template ID (the group key of by=cve).
+    FindingPackageFilter:
+      in: query
+      name: package
+      schema: {type: string, maxLength: 160}
+      description: Exact package name (the group key of by=package).
+    FindingEngineFilter:
+      in: query
+      name: engine
+      schema: {type: string, enum: [nuclei, trivy, zap, knowledge, synthetic]}
+    FindingFixableFilter:
+      in: query
+      name: fixable
+      schema: {type: boolean, default: false}
+      description: Only findings with a fixed version.
+    FindingTaskFilter:
+      in: query
+      name: taskId
+      schema: {type: string, maxLength: 160}
+      description: Only findings reported by this task.
   schemas:
     APIError:
       type: object
@@ -3858,6 +4033,82 @@ components:
           maximum: 100
         counts:
           "$ref": "#/components/schemas/FindingListCounts"
+    SystemScanCode:
+      type: string
+      description: Stable code the Server derives from systemScanStatus (taskflow.SystemScanCode); "unknown" for unrecognized text, omitted when no status was reported.
+      enum: [not_started, not_configured, port_out_of_scope, port_closed, client_missing, host_key_mismatch, auth_failed, python_missing, collection_failed, invalid_snapshot, trivy_unavailable, unsupported_os, trivy_failed, completed, unknown]
+    FindingGroup:
+      type: object
+      required: [key, count, maxSeverity, statusCounts, assetCount, lastSeen]
+      properties:
+        key: {type: string, description: CVE/template ID or package name}
+        title: {type: string}
+        count: {type: integer, minimum: 1}
+        maxSeverity: {type: string, enum: [CRITICAL, HIGH, MEDIUM, LOW, INFO]}
+        statusCounts:
+          type: object
+          additionalProperties: {type: integer}
+        assetCount: {type: integer, minimum: 0}
+        packages: {type: array, maxItems: 10, items: {type: string}}
+        cveCount: {type: integer, minimum: 0}
+        installedVersions: {type: array, maxItems: 10, items: {type: string}}
+        fixedVersions: {type: array, maxItems: 10, items: {type: string}}
+        lastSeen: {type: string, format: date-time}
+    FindingGroupPage:
+      type: object
+      required: [items, total, page, pageSize, findings, ungrouped, counts]
+      properties:
+        items:
+          type: array
+          items: {"$ref": "#/components/schemas/FindingGroup"}
+        total: {type: integer, description: Number of groups}
+        page: {type: integer}
+        pageSize: {type: integer}
+        findings: {type: integer, description: Findings matching the filters}
+        ungrouped: {type: integer, description: Matching findings without a key for this dimension}
+        counts: {"$ref": "#/components/schemas/FindingListCounts"}
+    AssetInsight:
+      type: object
+      required: [assetId, activeFindingCount, activeFindings, recentTasks]
+      properties:
+        assetId: {type: string}
+        activeFindingCount: {type: integer, minimum: 0}
+        activeFindings:
+          type: array
+          maxItems: 50
+          items:
+            type: object
+            required: [id, severity, title, status, engine, lastSeen]
+            properties:
+              id: {type: string}
+              severity: {type: string}
+              title: {type: string}
+              status: {type: string}
+              engine: {type: string}
+              templateOrCve: {type: string}
+              lastSeen: {type: string, format: date-time}
+        latestProbe:
+          type: object
+          required: [id, status, createdAt, openPorts]
+          properties:
+            id: {type: string}
+            status: {type: string}
+            createdAt: {type: string, format: date-time}
+            openPorts: {type: array, items: {type: integer, minimum: 1, maximum: 65535}}
+        recentTasks:
+          type: array
+          maxItems: 20
+          items:
+            type: object
+            required: [id, engines, status, findingCount, createdAt]
+            properties:
+              id: {type: string}
+              engines: {type: array, items: {type: string}}
+              status: {type: string}
+              findingCount: {type: integer, minimum: 0}
+              createdAt: {type: string, format: date-time}
+              finishedAt: {type: string, format: date-time}
+              systemScanCode: {"$ref": "#/components/schemas/SystemScanCode"}
     FindingListCounts:
       type: object
       required: [vulnerabilities, loginEntries, unknown, version, verified]
@@ -4566,6 +4817,8 @@ components:
         systemScanStatus:
           type: string
           description: Fixed Worker result status for optional local SSH package collection; includes an explicit not-started state when automatic scanning fails or stops before package collection, and never contains credentials or raw remote output.
+        systemScanCode:
+          "$ref": "#/components/schemas/SystemScanCode"
         applicationScanStatus:
           "$ref": "#/components/schemas/ApplicationScanStatus"
         applicationResults:
@@ -5320,6 +5573,11 @@ components:
         values: {type: array, maxItems: 8, items: {type: string, maxLength: 256}}
         statusCodes: {type: array, items: {type: integer, minimum: 100, maximum: 599}}
         enabled: {type: boolean}
+        path:
+          type: string
+          maxLength: 245
+          pattern: "^(/[A-Za-z0-9._~%:@!$&'()*+,;=/?-]*)?$"
+          description: Same-origin request path starting with /; empty means the root path. Compiled to {{BaseURL}}<path> (at most 256 bytes); one read-only GET only.
         template: {type: string}
     CustomRulePage:
       type: object

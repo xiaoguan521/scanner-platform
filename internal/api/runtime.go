@@ -62,8 +62,10 @@ func NewRuntimeHandlerWithUI(store repo.RuntimeBackend, fallback http.Handler, u
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		runtimeJSON(w, http.StatusOK, map[string]string{"state": "ready", "mode": mode})
 	})
-	capabilities := []string{"database", "task-dispatch", "synthetic-worker", "web-ui", "authentication", "user-management", "asset-registry", "approval-reviews", "schedules", "rule-import", "rule-activation", "nuclei-http-baseline", "trivy-offline", "zap-passive", "bounded-tcp-port-probe", "asset-inventory", "version-matching", "async-reports", "detection-metadata"}
-	unavailable := []string{"engine-validation", "rule-signatures", "harbor"}
+	// rule-signatures: bundles are verified when the Updater has trusted keys.
+	// engine-validation: activation and Worker runs check engine compatibility.
+	capabilities := []string{"database", "task-dispatch", "synthetic-worker", "web-ui", "authentication", "user-management", "asset-registry", "approval-reviews", "schedules", "rule-import", "rule-activation", "rule-signatures", "engine-validation", "nuclei-http-baseline", "trivy-offline", "zap-passive", "bounded-tcp-port-probe", "asset-inventory", "version-matching", "async-reports", "detection-metadata"}
+	unavailable := []string{"harbor"}
 	if provider, ok := store.(interface{ UnavailableRuntimeCapabilities() []string }); ok {
 		blocked := provider.UnavailableRuntimeCapabilities()
 		blockedSet := make(map[string]bool, len(blocked))

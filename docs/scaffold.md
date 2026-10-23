@@ -8,11 +8,11 @@
 
 | 入口 | 预期职责 | 当前能力 |
 | --- | --- | --- |
-| `cmd/server` | UI API、节点 API、调度和唯一数据库连接方 | `--status`、手动启用只读本地调试 API |
-| `cmd/updater` | 规则验签、发布、回收 | 只有 `--status`；真实激活/删除未开启 |
+| `cmd/server` | UI API、节点 API、调度和唯一数据库连接方 | 可用：完整 Web UI 与 API、调度、可选独立 TLS 节点监听；默认 SQLite，可显式选择 PostgreSQL |
+| `cmd/updater` | 规则验签、发布、回收 | 可用：领取规则作业、导入（配置可信公钥时验签）、引擎兼容性检查、激活与防回滚、`--prepare-engines`、`--import-bundle-file` |
 | `cmd/worker` | 领取任务、租约、围栏、执行引擎 | 普通模式可领取真实任务；Linux 显式 `--fence --once` 时先安装专属 namespace 围栏并以 uid 10001 执行子进程，隔离实验仍待验收 |
 | `cmd/portable` | 单进程便携版（Server、Worker、Updater 同进程，内嵌网页，SQLite，仅回环） | 可用：启动、`--status`、`prepare`；见 [portable.md](portable.md) |
-| `web/src/pages/Users` | 未来的用户与权限管理 | 仅样例列表/角色展示，所有账号写入及权限调整禁用；Server `GET /api/v1/users` 现为 501 |
+| `web/src/pages/Users` | 用户与权限管理 | 可用：创建用户、修改角色与启停、管理员重置密码 |
 
 `internal/bootstrap` 定义统一启动参数、节点 TLS/令牌和 Linux 围栏入口；`internal/api` 与 `internal/repo` 已提供 SQLite/显式 PostgreSQL 运行时。本文后续的“占位/501/readyz 503”描述仅适用于最初提交时的骨架。
 
@@ -22,9 +22,8 @@
 go run ./cmd/server --status
 go run ./cmd/server --dev-ui --listen 127.0.0.1:8080
 
-# Portable: 提前建立独立的跨平台构建入口
+# 便携版：make portable 构建内嵌网页的单程序（见 portable.md）
 go run ./cmd/portable --status
-go run ./cmd/portable --dev-ui --listen 127.0.0.1:8081
 ```
 
 只读诊断地址为 `GET /healthz`、`GET /readyz`、`GET /api/v1/system/status`、`GET /api/v1/system/capabilities`。其中 `readyz` **始终返回 HTTP 503**，直到后续安全能力全部实现。业务 API 当前统一返回 `501 Not Implemented`，既不会发起扫描，也不会伪造漏洞数据。开发模式只允许**数字型 loopback IP 地址**，拒绝 `0.0.0.0`、公网地址和主机名。
@@ -43,4 +42,4 @@ go run ./cmd/portable --dev-ui --listen 127.0.0.1:8081
 **当前任何入口都不提供业务数据库访问、网络扫描、规则升级或规则删除能力。**
 ## 当前已接入的本地账号管理
 
-`sec-server --dev-ui` 现在可以使用 SQLite 登录、创建用户和修改角色/启停状态，仅在 loopback 开放。初次启动与密码安全输入方式见 [`quickstart.md`](quickstart.md)。Node API、扫描器及规则更新仍然关闭；`sec-portable` 仍只有占位功能。
+`sec-server --dev-ui` 现在可以使用 SQLite 登录、创建用户和修改角色/启停状态，仅在 loopback 开放。初次启动与密码安全输入方式见 [`quickstart.md`](quickstart.md)。（以上为当时记录；Node API、扫描和规则更新现已接入，`sec-portable` 已是可用的单程序便携版，见 [`portable.md`](portable.md)。）
