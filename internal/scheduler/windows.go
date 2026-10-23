@@ -48,13 +48,19 @@ func ValidateWindows(windows []Window) error {
 	return nil
 }
 
+// MaxTaskDuration bounds a task that has no time window. It is a safety cap on
+// one run, not a scan budget: a full-port scan of a host plus service checks
+// and package analysis can take hours, and a short cap would stop the Worker,
+// have the Server reject the late report and restart the task from scratch.
+const MaxTaskDuration = 12 * time.Hour
+
 // AllowedUntil uses the starting weekday for overnight windows. The end is exclusive.
 func AllowedUntil(windows []Window, now time.Time) (time.Time, bool, error) {
 	if err := ValidateWindows(windows); err != nil {
 		return time.Time{}, false, err
 	}
 	if len(windows) == 0 {
-		return now.Add(15 * time.Minute), true, nil
+		return now.Add(MaxTaskDuration), true, nil
 	}
 	var deadline time.Time
 	for _, w := range windows {

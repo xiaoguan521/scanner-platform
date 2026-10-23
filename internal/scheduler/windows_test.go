@@ -42,3 +42,14 @@ func TestWindowBoundariesAndOvernight(t *testing.T) {
 		}
 	}
 }
+
+func TestAllowedUntilWithoutWindowAllowsLongScans(t *testing.T) {
+	now := time.Date(2026, 10, 23, 9, 0, 0, 0, time.UTC)
+	end, allowed, err := AllowedUntil(nil, now)
+	if err != nil || !allowed {
+		t.Fatalf("no window must always allow: allowed=%v err=%v", allowed, err)
+	}
+	if got := end.Sub(now); got != MaxTaskDuration || got < 2*time.Hour {
+		t.Fatalf("hard deadline without a window = %s, want the generous max run time", got)
+	}
+}
