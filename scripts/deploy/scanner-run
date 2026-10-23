@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Starts one standard-edition component with the fixed layout under the
+# install directory. systemd units call this; it never scans by itself.
+#   scanner-run server|worker|updater
+set -euo pipefail
+PREFIX="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$PREFIX"
+
+# config/scanner.conf holds only non-secret settings (LISTEN=127.0.0.1:8080).
+LISTEN="127.0.0.1:8080"
+if [[ -r config/scanner.conf ]]; then
+  value="$(sed -n 's/^LISTEN=//p' config/scanner.conf | tail -n 1)"
+  [[ -n "$value" ]] && LISTEN="$value"
+fi
+
+case "${1:-}" in
+  server)
+    exec ./sec-server --listen "$LISTEN" --db runtime/platform.db --ui-dir web/dist \
+      --report-dir runtime/reports --node-token-file secrets/node-tokens
+    ;;
+  worker)
+    args=(--server "http://$LISTEN" --id worker-local --node-token-file secrets/worker.token
+      --bin-dir bin --rules-dir vuln-data --inputs-dir runtime/inputs --runtime-dir runtime/worker)
+    # Linux package collection is enabled by placing config/ssh-config.json.
+    if [[ -f config/ssh-config.json ]]; then
+      args+=(--ssh-config config/ssh-config.json)
+    fi
+    exec ./sec-worker "${args[@]}"
+    ;;
+  updater)
+    args=(--server "http://$LISTEN" --id updater-local --node-token-file secrets/updater.token
+      --rules-dir vuln-data --bin-dir bin --db-cache runtime/engine-data/trivy)
+    # Signed rule bundles are verified with every key in config/trusted-rule-keys.
+    for key in config/trusted-rule-keys/*.pem; do
+      [[ -f "$key" ]] && args+=(--trusted-rule-public-key "$key")
+    done
+    exec ./sec-updater "${args[@]}"
+    ;;
+  *)
+    echo "usage: scanner-run server|worker|updater" >&2
+    exit 2
+    ;;
+esac

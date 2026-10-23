@@ -21,6 +21,9 @@ sec-portable/
 
 ## 使用
 
+最省事的做法：在能上网的机器上运行 `scripts/deploy/fetch_release.sh --edition portable --platform <平台>`，它会下载便携版和漏洞库并整理好文件夹；之后双击包里的 `start-windows.bat`、`start-macos.command` 或 `start-linux.sh` 即可（没有漏洞库时先运行对应的 `prepare-data-*` 脚本）。详见 [一键部署](deploy-quickstart.md)。下面是逐步说明。
+
+
 1. 在可联网的机器上准备漏洞库（只下载和打包，不扫描）：
 
    ```bash

@@ -197,6 +197,8 @@ jobs:
 
       - name: Include package quickstart and offline data directories
         shell: bash
+        env:
+          TARGET_GOOS: ${{ matrix.goos }}
         run: |
           set -euo pipefail
           cp docs/offline-package.md build_output/README.md
@@ -204,6 +206,14 @@ jobs:
           cp docs/engines.md docs/linux-server-scan.md docs/offline-vulnerability-data.md docs/portable.md docs/ssh-collection.md build_output/docs/
           cp scripts/collect_linux_inputs.py build_output/tools/
           mkdir -p build_output/runtime/inputs build_output/vuln-data build_output/config/trusted-rule-keys
+          cp scripts/deploy/fetch_release.sh build_output/tools/
+          if [[ "$TARGET_GOOS" == linux ]]; then
+            # One-command standard-edition install on Linux + systemd.
+            install -m 755 scripts/deploy/install.sh build_output/install.sh
+            install -m 755 -D scripts/deploy/scanner-run build_output/libexec/scanner-run
+            install -m 755 scripts/deploy/scanctl build_output/tools/scanctl
+            cp docs/deploy-quickstart.md build_output/QUICKSTART.md
+          fi
 
       - name: Package artifacts and checksums
         shell: bash

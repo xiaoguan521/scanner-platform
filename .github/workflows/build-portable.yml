@@ -137,11 +137,14 @@ jobs:
 
       - name: Assemble package layout
         shell: bash
+        env:
+          TARGET_GOOS: ${{ matrix.goos }}
         run: |
           set -euo pipefail
           python3 scripts/assemble_portable.py \
             --binary "$BINARY" \
             --engines build_output/bin \
+            --os "$TARGET_GOOS" \
             --output package/sec-portable
 
       - name: Archive and checksum

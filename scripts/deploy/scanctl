@@ -1,0 +1,260 @@
+#!/usr/bin/env bash
+# scanctl: day-to-day management of the standard edition installed by
+# install.sh (Linux + systemd). It never scans and never prints secrets.
+set -euo pipefail
+
+PREFIX="${SCANNER_PREFIX:-/opt/scanner-platform}"
+SERVICE_USER="${SCANNER_USER:-secscan}"
+SERVICES=(sec-server sec-worker sec-updater)
+
+say() { printf '%s\n' "$*"; }
+die() { printf '错误：%s\n' "$*" >&2; exit 1; }
+need_root() { [[ $EUID -eq 0 ]] || die "请用 sudo 运行：sudo scanctl $*"; }
+as_service() { runuser -u "$SERVICE_USER" -- "$@"; }
+listen() {
+  local value=""
+  [[ -r "$PREFIX/config/scanner.conf" ]] && value="$(sed -n 's/^LISTEN=//p' "$PREFIX/config/scanner.conf" | tail -n 1)"
+  printf '%s' "${value:-127.0.0.1:8080}"
+}
+
+usage() {
+  cat <<'USAGE'
+用法：scanctl <命令>
+
+  status                    服务、网页、引擎和规则状态
+  logs [-f] [行数]          三个服务的日志（-f 持续跟踪）
+  start | stop | restart    启动 / 停止 / 重启全部服务
+  update-data <路径>        更新漏洞库：vulnerability-data 目录、.zip 或 .tar.gz
+  prepare-data [--with-java-db]
+                            在本机联网下载并激活漏洞库（不扫描）
+  ssh-config <ssh-config.json> --known-hosts <文件> [--key <私钥>]...
+                            安装网页「SSH 采集配置」生成的配置并重启 Worker
+  add-rule-key <公钥.pem>   添加规则包签名公钥（导入/激活签名规则包时校验）
+  backup [目录]             停服备份数据库、报告、配置和令牌（默认 /var/backups/scanner-platform）
+  tunnel                    显示从你的电脑访问网页的 SSH 隧道命令
+USAGE
+}
+
+cmd_status() {
+  local name state ok=1
+  say "安装目录：$PREFIX"
+  for name in "${SERVICES[@]}"; do
+    state="$(systemctl is-active "$name" 2>/dev/null || true)"
+    printf '  %-12s %s\n' "$name" "${state:-unknown}"
+    [[ "$state" == active ]] || ok=0
+  done
+  if curl --noproxy '*' --silent --fail --max-time 3 "http://$(listen)/readyz" >/dev/null; then
+    say "  网页/API     就绪（http://$(listen)/）"
+  else
+    say "  网页/API     未响应"
+    ok=0
+  fi
+  if [[ -f "$PREFIX/vuln-data/CURRENT" ]]; then
+    say "  漏洞库版本   $(tr -d '[:space:]' < "$PREFIX/vuln-data/CURRENT")"
+  else
+    say "  漏洞库版本   未准备（运行 scanctl update-data 或 scanctl prepare-data）"
+    ok=0
+  fi
+  local engines
+  engines="$(cd "$PREFIX" && ./sec-worker --status --bin-dir bin --rules-dir vuln-data 2>/dev/null || true)"
+  if [[ -n "$engines" ]] && command -v python3 >/dev/null; then
+    printf '%s' "$engines" | python3 -c 'import json,sys
+for e in json.load(sys.stdin).get("engines", []):
+    if e.get("name") == "zap" and not e.get("installed"):
+        continue  # optional passive engine
+    print("  引擎         %s %s：%s" % (e.get("name"), e.get("version", ""), e.get("message", "")))' 2>/dev/null || say "  引擎         $engines"
+  elif [[ -n "$engines" ]]; then
+    say "  引擎         $engines"
+  fi
+  if [[ -f "$PREFIX/config/ssh-config.json" ]]; then say "  SSH 采集     已配置（config/ssh-config.json）"; else say "  SSH 采集     未配置（可选）"; fi
+  if [[ $ok -eq 1 ]]; then say "状态：正常"; else say "状态：有问题，运行 scanctl logs 查看原因"; return 1; fi
+}
+
+cmd_logs() {
+  local follow=() lines=200
+  for arg in "$@"; do
+    case "$arg" in
+      -f) follow=(-f) ;;
+      *[!0-9]*) die "行数必须是数字" ;;
+      *) lines="$arg" ;;
+    esac
+  done
+  journalctl -u sec-server -u sec-worker -u sec-updater -n "$lines" --no-pager ${follow[@]+"${follow[@]}"}
+}
+
+wait_ready() {
+  for _ in $(seq 1 60); do
+    curl --noproxy '*' --silent --fail --max-time 2 "http://$(listen)/readyz" >/dev/null && return 0
+    sleep 1
+  done
+  return 1
+}
+
+cmd_start() {
+  need_root start
+  systemctl start sec-server
+  wait_ready || die "Server 60 秒内没有就绪，运行 scanctl logs 查看原因"
+  systemctl start sec-worker sec-updater
+  say "已启动"
+}
+cmd_stop() { need_root stop; systemctl stop sec-worker sec-updater sec-server; say "已停止"; }
+cmd_restart() { need_root restart; systemctl stop sec-worker sec-updater sec-server; cmd_start; }
+
+# Accepts the GitHub artifact as a directory, .zip or .tar.gz; verifies
+# SHA256SUMS when present and swaps vuln-data/ while Worker/Updater are stopped.
+cmd_update_data() {
+  need_root update-data
+  local source="${1:-}" restart=1
+  [[ "${2:-}" == "--no-restart" ]] && restart=0
+  [[ -n "$source" && -e "$source" ]] || die "请指定漏洞库路径：scanctl update-data <vulnerability-data 目录/.zip/.tar.gz>"
+  local root
+  WORK="$(mktemp -d)"
+  trap 'rm -rf "${WORK:-}"' EXIT
+  local work="$WORK"
+  case "$source" in
+    *.zip)
+      if command -v unzip >/dev/null; then unzip -q "$source" -d "$work"
+      elif command -v python3 >/dev/null; then python3 -m zipfile -e "$source" "$work"
+      else die "解压 .zip 需要 unzip 或 python3（apt install unzip / yum install unzip），也可以先在别处解压再传目录"; fi
+      root="$work" ;;
+    *.tar.gz|*.tgz) tar -xzf "$source" -C "$work"; root="$work" ;;
+    *) root="$(cd "$source" && pwd)" ;;
+  esac
+  # Accept the artifact root, a folder one level above it, or vuln-data itself.
+  if [[ ! -d "$root/vuln-data" ]]; then
+    if [[ -f "$root/CURRENT" ]]; then
+      mkdir -p "$work/wrapped" && cp -a "$root" "$work/wrapped/vuln-data" && root="$work/wrapped"
+    else
+      local inner
+      inner="$(find "$root" -mindepth 2 -maxdepth 2 -type d -name vuln-data | head -n 1)"
+      [[ -n "$inner" ]] || die "在 $source 中找不到 vuln-data/ 目录"
+      root="$(dirname "$inner")"
+    fi
+  fi
+  [[ -f "$root/vuln-data/CURRENT" ]] || die "漏洞库缺少 CURRENT 文件，包不完整"
+  if [[ -f "$root/SHA256SUMS" ]]; then
+    say "校验 SHA-256..."
+    (cd "$root" && sha256sum --quiet -c SHA256SUMS) || die "SHA-256 校验失败，包可能损坏或被篡改"
+  else
+    say "提示：没有 SHA256SUMS，跳过校验"
+  fi
+  local was_active=0
+  systemctl is-active --quiet sec-worker && was_active=1
+  systemctl stop sec-worker sec-updater 2>/dev/null || true
+  rm -rf "$PREFIX/vuln-data.new"
+  cp -a "$root/vuln-data" "$PREFIX/vuln-data.new"
+  chown -R "$SERVICE_USER:$SERVICE_USER" "$PREFIX/vuln-data.new"
+  # Keep exactly one previous copy for a manual rollback.
+  rm -rf "$PREFIX/vuln-data.prev"
+  [[ -d "$PREFIX/vuln-data" ]] && mv "$PREFIX/vuln-data" "$PREFIX/vuln-data.prev"
+  mv "$PREFIX/vuln-data.new" "$PREFIX/vuln-data"
+  say "漏洞库已更新到 $(tr -d '[:space:]' < "$PREFIX/vuln-data/CURRENT")（上一版保留在 vuln-data.prev）"
+  if [[ $restart -eq 1 || $was_active -eq 1 ]] && systemctl is-active --quiet sec-server; then
+    systemctl start sec-worker sec-updater
+  fi
+}
+
+cmd_prepare_data() {
+  need_root prepare-data
+  say "联网下载 Trivy 漏洞库并激活本地规则（不扫描任何目标）..."
+  systemctl stop sec-worker sec-updater 2>/dev/null || true
+  (cd "$PREFIX" && as_service ./sec-updater --prepare-engines --rules-dir vuln-data --bin-dir bin --db-cache runtime/engine-data/trivy "$@") || {
+    systemctl is-active --quiet sec-server && systemctl start sec-worker sec-updater
+    die "准备失败（需要能访问互联网）。也可以在联网机器下载 vulnerability-data 后用 scanctl update-data 导入"
+  }
+  systemctl is-active --quiet sec-server && systemctl start sec-worker sec-updater
+  say "完成：漏洞库版本 $(tr -d '[:space:]' < "$PREFIX/vuln-data/CURRENT")"
+}
+
+cmd_ssh_config() {
+  need_root ssh-config
+  local config="${1:-}" known="" keys=()
+  shift || true
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --known-hosts) known="${2:-}"; shift 2 ;;
+      --key) keys+=("${2:-}"); shift 2 ;;
+      *) die "未知参数：$1" ;;
+    esac
+  done
+  [[ -f "$config" ]] || die "请指定网页下载的 ssh-config.json"
+  [[ -f "$known" ]] || die "请用 --known-hosts 指定已与运维核对过指纹的 known_hosts 文件"
+  local dir="$PREFIX/config"
+  install -d -m 750 -o "$SERVICE_USER" -g "$SERVICE_USER" "$dir" "$dir/keys"
+  install -m 640 -o "$SERVICE_USER" -g "$SERVICE_USER" "$config" "$dir/ssh-config.json.new"
+  install -m 640 -o "$SERVICE_USER" -g "$SERVICE_USER" "$known" "$dir/known_hosts"
+  local key
+  for key in ${keys[@]+"${keys[@]}"}; do
+    [[ -f "$key" ]] || die "找不到私钥 $key"
+    install -m 600 -o "$SERVICE_USER" -g "$SERVICE_USER" "$key" "$dir/keys/$(basename "$key")"
+  done
+  [[ -f "$dir/ssh-config.json" ]] && cp -p "$dir/ssh-config.json" "$dir/ssh-config.json.prev"
+  mv "$dir/ssh-config.json.new" "$dir/ssh-config.json"
+  # The Worker validates the profile on start; on rejection, show why and
+  # put the previous configuration back so scanning keeps working.
+  systemctl restart sec-worker
+  sleep 3
+  if systemctl is-active --quiet sec-worker; then
+    say "SSH 采集配置已生效。私钥路径应与配置中的 privateKeyFile 一致（如 keys/scan_ed25519）。"
+  else
+    journalctl -u sec-worker -n 20 --no-pager
+    if [[ -f "$dir/ssh-config.json.prev" ]]; then
+      mv "$dir/ssh-config.json.prev" "$dir/ssh-config.json"
+      say "已恢复上一份 SSH 配置"
+    else
+      mv "$dir/ssh-config.json" "$dir/ssh-config.json.rejected"
+      say "已停用这份配置（保存为 ssh-config.json.rejected）"
+    fi
+    systemctl restart sec-worker
+    die "Worker 拒绝了这份配置（见上方日志），修正后重新运行 scanctl ssh-config"
+  fi
+}
+
+cmd_add_rule_key() {
+  need_root add-rule-key
+  local key="${1:-}"
+  [[ -f "$key" ]] || die "请指定 PEM 公钥文件"
+  grep -q 'BEGIN PUBLIC KEY' "$key" || die "$key 不是 PUBLIC KEY PEM（只需要公钥，不要私钥）"
+  install -d -m 750 -o "$SERVICE_USER" -g "$SERVICE_USER" "$PREFIX/config/trusted-rule-keys"
+  install -m 640 -o "$SERVICE_USER" -g "$SERVICE_USER" "$key" "$PREFIX/config/trusted-rule-keys/$(basename "$key")"
+  systemctl restart sec-updater
+  say "已添加规则签名公钥并重启 Updater"
+}
+
+cmd_backup() {
+  need_root backup
+  local target="${1:-/var/backups/scanner-platform}" file
+  install -d -m 700 "$target"
+  file="$target/scanner-backup-$(date +%Y%m%d-%H%M%S).tar.gz"
+  systemctl stop sec-worker sec-updater sec-server
+  (umask 077 && tar -czf "$file" -C "$PREFIX" runtime config secrets)
+  cmd_start >/dev/null
+  say "备份完成：$file（含数据库和令牌，请妥善保管，不要放进 Git）"
+}
+
+cmd_tunnel() {
+  local ip port
+  ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  port="$(listen)"; port="${port##*:}"
+  say "在你自己的电脑上运行（窗口保持打开）："
+  say "  ssh -L ${port}:127.0.0.1:${port} ${SUDO_USER:-$USER}@${ip:-<本服务器IP>}"
+  say "然后在浏览器打开 http://127.0.0.1:${port}/"
+}
+
+command="${1:-}"
+shift || true
+case "$command" in
+  status) cmd_status ;;
+  logs) cmd_logs "$@" ;;
+  start) cmd_start ;;
+  stop) cmd_stop ;;
+  restart) cmd_restart ;;
+  update-data) cmd_update_data "$@" ;;
+  prepare-data) cmd_prepare_data "$@" ;;
+  ssh-config) cmd_ssh_config "$@" ;;
+  add-rule-key) cmd_add_rule_key "$@" ;;
+  backup) cmd_backup "$@" ;;
+  tunnel) cmd_tunnel ;;
+  ""|-h|--help|help) usage ;;
+  *) usage; exit 2 ;;
+esac

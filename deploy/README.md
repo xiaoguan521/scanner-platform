@@ -8,6 +8,8 @@
 | `make dev-postgres` | 本地或隔离环境验证 PostgreSQL 控制面 | 可直接使用，需显式选择 |
 | `deploy/compose.production.yaml` | 生产部署输入和静态安全门禁 | 可生成配置并校验；真实生产运行仍需完成运行态验收 |
 
+**只想尽快在一台内网 Linux 服务器上用起来？** 用一键脚本：`fetch_release.sh` 下载并校验发布包和漏洞库，`sudo ./install.sh` 安装为 systemd 服务，`scanctl` 负责日常管理，见 [一键部署](../docs/deploy-quickstart.md)。本手册其余部分是手工步骤和生产集群部署。
+
 本手册不提供默认账号、密钥、令牌、真实资产或真实扫描目标。所有密码、证书、令牌和 DSN 都必须由部署人员通过 owner-only 文件或 Docker secrets 提供。
 
 ## 1. 部署前准备
