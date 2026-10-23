@@ -63,12 +63,12 @@ def main():
         check(os.path.exists(os.path.join(source, entry)), f"package contains {entry}")
     check(os.path.isfile(executable(source)), "package contains the sec-portable program")
 
-    with tempfile.TemporaryDirectory(prefix="sec-portable-smoke-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="sec-portable-smoke-", ignore_cleanup_errors=True) as temporary:  # Windows may still hold bin/*.exe briefly after the process exits
         home = os.path.join(temporary, "sec-portable")
         shutil.copytree(source, home, symlinks=True)
         program = executable(home)
 
-        status = json.loads(subprocess.run([program, "--status"], check=True, capture_output=True, text=True, timeout=30).stdout)
+        status = json.loads(subprocess.run([program, "--status"], check=True, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30).stdout)
         check(status.get("mode") == "portable" and status.get("embeddedUI") is True, "--status reports the embedded web UI")
         check(status.get("networkFence") is False, "--status reports that no network fence is used")
         if not args.allow_missing_engines:
@@ -79,7 +79,7 @@ def main():
         base = f"http://127.0.0.1:{port}"
         flags = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {}
         process = subprocess.Popen([program, "--listen", f"127.0.0.1:{port}", "--no-browser"], cwd=temporary,
-                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, **flags)
+                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", **flags)
         try:
             deadline = time.time() + args.timeout
             while True:
@@ -100,7 +100,7 @@ def main():
                               headers={"X-Node-ID": "portable-worker", "Authorization": "Bearer guessed", "Content-Type": "application/json"})
             check(code == 401, "node API refuses a request without this run's token")
             second = subprocess.run([program, "--listen", f"127.0.0.1:{free_port()}", "--no-browser"],
-                                    capture_output=True, text=True, timeout=30)
+                                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
             check(second.returncode != 0 and "already" in second.stderr, "a second copy on the same directory is refused")
         finally:
             if process.poll() is None:
