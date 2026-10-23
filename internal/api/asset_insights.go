@@ -35,6 +35,8 @@ type AssetInsightTask struct {
 	FindingCount int        `json:"findingCount"`
 	CreatedAt    time.Time  `json:"createdAt"`
 	FinishedAt   *time.Time `json:"finishedAt,omitempty"`
+	// SystemScanCode is the stable SSH/system package code of automatic scans.
+	SystemScanCode string `json:"systemScanCode,omitempty"`
 }
 
 type AssetInsightProbe struct {
@@ -149,7 +151,7 @@ func buildAssetInsights(ids []string, findingItems []taskflow.Finding, tasks []t
 		if len(task.Chunks) > 0 {
 			finished = task.Chunks[0].FinishedAt
 		}
-		insight.RecentTasks = append(insight.RecentTasks, AssetInsightTask{ID: task.ID, Engines: task.Engines, Status: task.Status, FindingCount: task.FindingCount, CreatedAt: task.CreatedAt, FinishedAt: finished})
+		insight.RecentTasks = append(insight.RecentTasks, AssetInsightTask{ID: task.ID, Engines: task.Engines, Status: task.Status, FindingCount: task.FindingCount, CreatedAt: task.CreatedAt, FinishedAt: finished, SystemScanCode: taskflow.SystemScanCode(task.SystemScanStatus)})
 	}
 	for i := range items {
 		list := items[i].ActiveFindings

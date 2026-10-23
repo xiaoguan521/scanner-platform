@@ -21,7 +21,7 @@ export function applicationCoverage(status?: string): Coverage {
 const systemCodes: Record<string, Coverage> = {
   completed: { tone: 'ok', label: '已完成' },
   not_started: { tone: 'warning', label: '未开始', hint: '任务在系统包检查前已失败或中止，请查看任务日志。' },
-  not_configured: { tone: 'warning', label: '未配置 SSH 采集', hint: '在 Worker 上为该主机配置只读 SSH 档案、known_hosts 和密钥后重新扫描。' },
+  not_configured: { tone: 'warning', label: '未配置 SSH 采集', hint: '在资产列表点「SSH 采集配置」生成该主机的 Worker SSH 档案，放到 Worker 并核对 known_hosts 后重新扫描。' },
   port_out_of_scope: { tone: 'warning', label: 'SSH 端口不在范围', hint: '把配置的 SSH 端口（常见为 22）加入本次扫描范围。' },
   port_closed: { tone: 'warning', label: 'SSH 端口未开放', hint: '确认目标 SSH 服务正在监听且网络可达。' },
   client_missing: { tone: 'error', label: 'Worker 缺少 SSH 客户端', hint: '在 Worker 上安装 OpenSSH 客户端。' },

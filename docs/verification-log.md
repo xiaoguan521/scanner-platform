@@ -889,3 +889,10 @@
 - 修改：`internal/executor/scope_proxy.go` 对已授权 IP:端口放行任意同源路径与查询参数的 GET，非 GET 仍以 `request_not_allowed` 拒绝；`maxHTTPRequestsPerTarget` 由 160 提到 8000，速率限制不变；模板上限改为 `maxBundledTemplates` / `maxTemplatesPerTask` 常量。涉及硬规则 4.1-1/2（范围仍只限明确 IP:端口）、4.2-10（模板白名单校验不变）、4.6-26（只读 GET，无请求体）。已人工逐行审查。
 - 验证：`go vet ./internal/executor`、`go test -race ./internal/executor ./internal/rules`；`TestScopeProxyRejectsUnlistedAuthorities` 覆盖非根路径放行、范围外主机拒绝、POST 拒绝，`TestHTTPBudgetCoversTemplateLimit` 约束预算不低于模板上限加固定请求。
 - 待执行：`LAB_ENV=isolated go test -tags=lab ./internal/executor` 在真实引擎和回环靶机上验证带路径模板的检出与代理拒绝计数；未在隔离实验环境运行。
+
+## 2026-10-23：资产页 SSH 采集配置生成
+
+- 资产列表新增“SSH 采集配置”，资产详情新增“生成 SSH 采集配置”：选择已登记主机，填写 SSH 端口、只读账号、认证方式（SSH Agent / Worker 本机私钥文件路径）和最多 8 个应用目录，在浏览器内生成 Worker 本地 `ssh-config.json`，可复制或下载，并给出需人工核对指纹的 `ssh-keyscan` 命令。不新增任何上传或存储：Server、数据库和 API 仍不接收 SSH 设置、密钥或密码，Worker 仍禁用密码认证。
+- `web/src/pages/Assets/sshProfile.ts` 复刻 `internal/sshcollect` 的加载校验（规范数字 IP、端口、账号格式、agent/private-key、本地路径、应用别名与目录规则、数量上限）。共享夹具 `internal/sshcollect/testdata/ui-generated-ssh-config.json`：前端测试要求生成结果与之逐字一致，`TestLoadAcceptsWebGeneratedConfig` 要求 Worker 原样加载。前端测试同时约束生成器不调用 API、不写浏览器存储、不含密码或私钥内容输入。
+- 资产洞察接口 `recentTasks` 增加 `systemScanCode`，资产列表“最近扫描”显示最近一次自动扫描的 SSH 采集状态；“未配置 SSH 采集”提示改为指向生成器。
+- 验证：`go test -race ./internal/sshcollect ./internal/api`、前端全部 `*.test.mjs`、`tsc`、生产构建；在本机临时 Server（示例数据）上实际操作生成器并核对输出。未在真实 Worker 和目标主机上执行 SSH 采集。

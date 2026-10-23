@@ -1,0 +1,26 @@
+{
+  "knownHostsFile": "known_hosts",
+  "targets": [
+    {
+      "ip": "192.0.2.10",
+      "sshPort": 22,
+      "user": "scanner_ro",
+      "auth": "agent",
+      "apps": [
+        {
+          "alias": "orders",
+          "directory": "/opt/example-orders",
+          "includeJava": true,
+          "includeGo": false
+        }
+      ]
+    },
+    {
+      "ip": "2001:db8::11",
+      "sshPort": 2222,
+      "user": "scanner_ro",
+      "auth": "private-key",
+      "privateKeyFile": "keys/scan_ed25519"
+    }
+  ]
+}

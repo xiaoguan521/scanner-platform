@@ -1,5 +1,5 @@
 import type { AssetImportPreview } from '../pages/Assets/import';
-import type { Asset, AssetImportHistory, AuthorizedScope, Finding, NodeCredential, NodeInfo, NodeLifecycle, NodeLifecycleEvent, NotificationList, NotificationListPage, NotificationSettings, NotificationDeliveryList, PortQuarantine, RuleBundle, ScanTask, User, UserRole, PortRequest, TimeWindow, ApprovalDecision, Schedule, RuleJob, CustomRule, AssetProfile, KnowledgeEntry, DetectionCapability, VulnerabilityCategory, ScanPolicy, ScanPlan, SystemSettings, BusinessGroup } from '../types';
+import type { Asset, SystemScanCode, AssetImportHistory, AuthorizedScope, Finding, NodeCredential, NodeInfo, NodeLifecycle, NodeLifecycleEvent, NotificationList, NotificationListPage, NotificationSettings, NotificationDeliveryList, PortQuarantine, RuleBundle, ScanTask, User, UserRole, PortRequest, TimeWindow, ApprovalDecision, Schedule, RuleJob, CustomRule, AssetProfile, KnowledgeEntry, DetectionCapability, VulnerabilityCategory, ScanPolicy, ScanPlan, SystemSettings, BusinessGroup } from '../types';
 
 import { toApiError } from './errors';
 export { ApiRequestError, errorMessage } from './errors';
@@ -24,7 +24,7 @@ export interface AssetInsight {
   activeFindingCount: number;
   activeFindings: Pick<Finding,'id'|'severity'|'title'|'status'|'engine'|'templateOrCve'|'lastSeen'>[];
   latestProbe?: { id: string; status: ScanTask['status']; createdAt: string; openPorts: number[] };
-  recentTasks: { id: string; engines: string[]; status: ScanTask['status']; findingCount: number; createdAt: string; finishedAt?: string }[];
+  recentTasks: { id: string; engines: string[]; status: ScanTask['status']; findingCount: number; createdAt: string; finishedAt?: string; systemScanCode?: SystemScanCode }[];
 }
 export interface FindingQueryOptions {search?:string;severity?:string;status?:string;method?:string;confidence?:string;risk?:string;engine?:string;onlyVerified?:boolean;fixable?:boolean;businessGroup?:string;assetId?:string;cve?:string;package?:string;taskId?:string}
 function findingQueryParams(options:FindingQueryOptions):URLSearchParams {

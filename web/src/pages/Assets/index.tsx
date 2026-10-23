@@ -16,6 +16,8 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../../auth/AuthProvider';
 import { FindingStatusTag, Mono, SeverityTag, StatCard, StatusPill, TaskStatusTag } from '../../components/Semantic';
 import { AutoGrid, PageHeader, Panel } from '../../components/Page';
+import { SshProfileModal } from './SshProfileModal';
+import { systemCoverage } from '../Tasks/coverage';
 import { useAppTheme } from '../../context/ThemeContext';
 import type { Tone } from '../../theme/palette';
 
@@ -54,6 +56,8 @@ export const AssetsPage: React.FC = () => {
   const [detailId,setDetailId]=useState('');const detailAsset=assets.find(a=>a.id===detailId);
   const [releaseTarget,setReleaseTarget]=useState<{assetId:string;port:number}|null>(null);const [releaseReason,setReleaseReason]=useState('');
   const [createOpen,setCreateOpen] = useState(false);
+  // Hosts the SSH config generator opens with; null keeps it closed.
+  const [sshProfileIds,setSshProfileIds] = useState<string[]|null>(null);
   const [editing,setEditing] = useState<Asset|null>(null);
   const [candidateAsset,setCandidateAsset] = useState<Asset|null>(null);
   const [selectedCandidatePorts,setSelectedCandidatePorts] = useState<React.Key[]>([]);
@@ -227,6 +231,7 @@ export const AssetsPage: React.FC = () => {
       extra={<>
         <Button icon={<DownloadOutlined/>} loading={exporting} onClick={()=>void exportAssets()}>导出 CSV</Button>
         <AssetImport disabled={!canEdit} onImported={async()=>{reloadAssets()}}/>
+        <Button onClick={()=>setSshProfileIds([])}>SSH 采集配置</Button>
         <Button type="primary" icon={<PlusOutlined/>} disabled={!canEdit} onClick={()=>setCreateOpen(true)}>登记资产</Button>
       </>}
     />
@@ -270,6 +275,7 @@ export const AssetsPage: React.FC = () => {
             return <div style={{display:'flex',flexDirection:'column',gap:4,alignItems:'flex-start'}}>
               {latest&&<span style={{display:'flex',alignItems:'center',gap:6}}><TaskStatusTag value={latest.status}/><span style={small}>{formatTime(latest.finishedAt??latest.createdAt)}</span></span>}
               {probe&&probe.status!=='COMPLETED'&&!latest&&<TaskStatusTag value={probe.status}/>}
+              {asset.kind==='host'&&(()=>{const code=insight?.recentTasks.find(task=>task.systemScanCode)?.systemScanCode;if(!code)return null;const ssh=systemCoverage(undefined,code);return <span title={ssh.hint}><StatusPill tone={ssh.tone}>SSH · {ssh.label}</StatusPill></span>;})()}
               {candidates>0&&<Button type="link" size="small" style={{padding:0,height:'auto'}} onClick={()=>{setCandidateAsset(asset);setCandidateFilter('');setSelectedCandidatePorts([]);}}>{candidates} 个开放候选 · 查看与批量申请</Button>}
             </div>;
           }},
@@ -300,6 +306,7 @@ export const AssetsPage: React.FC = () => {
           <Space wrap>
             {detailAsset.kind==='host'&&<Button loading={checkingAsset===detailAsset.id} onClick={()=>void checkReachability(detailAsset)}>检测可达性</Button>}
             <Button disabled={!canEdit} onClick={()=>openEdit(detailAsset)}>编辑资产</Button>
+            {detailAsset.kind==='host'&&<Button onClick={()=>setSshProfileIds([detailAsset.id])}>生成 SSH 采集配置</Button>}
             {(detailInsight?.activeFindingCount??0)>0&&<Link to={`/findings?assetId=${encodeURIComponent(detailAsset.id)}`}><Button type="primary">查看 {detailInsight?.activeFindingCount} 项活动漏洞</Button></Link>}
           </Space>
         </div>
@@ -354,6 +361,7 @@ export const AssetsPage: React.FC = () => {
       <Alert type="warning" showIcon message={`解除端口 ${releaseTarget?.port??''} 的疑似转发隔离前，请确认已人工核查服务与转发配置。`} style={{marginBottom:16}}/>
       <Input.TextArea aria-label="解除原因" value={releaseReason} onChange={e=>setReleaseReason(e.target.value)} maxLength={1000} rows={3} placeholder="必填：人工核查依据和解除原因"/>
     </Modal>
+    <SshProfileModal open={sshProfileIds!==null} initialAssetIds={sshProfileIds??[]} onClose={()=>setSshProfileIds(null)}/>
     <Modal title="登记新资产" open={createOpen} width={720}
       onCancel={()=>setCreateOpen(false)} onOk={()=>createForm.submit()} okText="登记资产" okButtonProps={{loading:saving||testingForm==='create'}}>
       <Form form={createForm} layout="vertical" onFinish={create} autoComplete="off">

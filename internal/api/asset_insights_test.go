@@ -31,7 +31,7 @@ func TestBuildAssetInsights(t *testing.T) {
 	}
 	tasks := []taskflow.Task{
 		{ID: "old-probe", AssetID: "asset-1", Engines: []string{"port-probe"}, Status: "COMPLETED", CreatedAt: base, PortProbeResults: []taskflow.PortProbeResult{{Port: 22}}},
-		{ID: "new-auto", AssetID: "asset-1", Engines: []string{"auto"}, Status: "COMPLETED", CreatedAt: base.Add(2 * time.Hour), PortProbeResults: []taskflow.PortProbeResult{{Port: 80}, {Port: 443}}, Chunks: []taskflow.Chunk{{FinishedAt: &finished}}},
+		{ID: "new-auto", AssetID: "asset-1", Engines: []string{"auto"}, Status: "COMPLETED", SystemScanStatus: taskflow.SystemScanAuthFailed, CreatedAt: base.Add(2 * time.Hour), PortProbeResults: []taskflow.PortProbeResult{{Port: 80}, {Port: 443}}, Chunks: []taskflow.Chunk{{FinishedAt: &finished}}},
 		{ID: "synthetic", AssetID: "asset-1", Engines: []string{"auto"}, Status: "RUNNING", CreatedAt: base.Add(time.Hour), Synthetic: true},
 		{ID: "unrelated", AssetID: "asset-other", Engines: []string{"auto"}, Status: "RUNNING", CreatedAt: base.Add(5 * time.Hour)},
 	}
@@ -55,6 +55,9 @@ func TestBuildAssetInsights(t *testing.T) {
 	}
 	if len(first.RecentTasks) != 2 || first.RecentTasks[0].ID != "new-auto" || first.RecentTasks[0].FinishedAt == nil || first.RecentTasks[1].ID != "old-probe" {
 		t.Fatalf("recent tasks must be newest first and skip synthetic tasks: %+v", first.RecentTasks)
+	}
+	if first.RecentTasks[0].SystemScanCode != "auth_failed" || first.RecentTasks[1].SystemScanCode != "" {
+		t.Fatalf("recent tasks must carry the stable system scan code only when reported: %+v", first.RecentTasks)
 	}
 	if items[1].ActiveFindingCount != 0 || items[1].LatestProbe != nil || items[1].ActiveFindings == nil || items[1].RecentTasks == nil {
 		t.Fatalf("empty asset must have empty, non-nil lists: %+v", items[1])
