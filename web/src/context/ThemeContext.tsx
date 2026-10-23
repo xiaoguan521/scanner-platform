@@ -1,5 +1,11 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { ConfigProvider, theme as antdTheme } from 'antd';
+import zhCN from 'antd/locale/zh_CN';
+import dayjs from 'dayjs';
+import 'dayjs/locale/zh-cn';
+
+// Built-in antd texts (dialog buttons, pagination, pickers) follow the UI language.
+dayjs.locale('zh-cn');
 import { darkPalette, fontFamily, lightPalette, type Palette } from '../theme/palette';
 
 interface ThemeContextType {
@@ -47,6 +53,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   return (
     <ThemeContext.Provider value={{ isDark, palette, toggleTheme }}>
       <ConfigProvider
+        locale={zhCN}
         theme={{
           algorithm: isDark ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
           token: {

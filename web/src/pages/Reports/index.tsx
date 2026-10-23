@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { DataTable } from '../../components/DataState';
 import { Alert, Button, Checkbox, DatePicker, Drawer, Dropdown, Empty, Form, Input, message, Progress, Select, Space, Upload } from 'antd';
 import { TitleWithHelp } from '../../components/HelpTip';
@@ -7,13 +7,15 @@ import { DownloadOutlined, FileTextOutlined, SettingOutlined, UploadOutlined } f
 import { useCollection } from '../../api/hooks';
 import { apiClient, requestJSON, errorMessage } from '../../api/client';
 import { CollectionNotice } from '../../api/CollectionNotice';
-import { pollIntervals, pollWhileVisible } from '../../api/polling';
+import { pollIntervals } from '../../api/polling';
+import { usePageState, useQuery } from '../../api/query';
 import { useAuth } from '../../auth/AuthProvider';
 import { Mono, StatusPill, taskStatusMeta } from '../../components/Semantic';
 import { PageHeader, Panel } from '../../components/Page';
 import { useAppTheme } from '../../context/ThemeContext';
 import type { Tone } from '../../theme/palette';
 import { taskTargetSummary } from '../Tasks/targets';
+import { formatTime } from '../../utils/time';
 import type { ReportJob, ReportScope, ReportTemplate } from './types';
 
 const sections = { cover: '封面', overview: '综述', assets: '资产统计', 'asset-risks': '资产风险信息', 'asset-details': '资产详情', 'risk-statistics': '风险统计', 'risk-details': '风险详情', appendix: '附录' };
@@ -42,22 +44,15 @@ export const ReportsPage: React.FC = () => {
   
   const { data: assets, loading: assetsLoading, error: assetsError } = useCollection('assets', '', true, pollIntervals.reference);
   const { data: tasks, loading: tasksLoading, error: tasksError } = useCollection('tasks', '', true, pollIntervals.reference);
-  const [templates, setTemplates] = useState<ReportTemplate[]>([]);
-  const [jobs, setJobs] = useState<ReportJob[]>([]);
-  const [reportPage, setReportPage] = useState(1);
-  const [reportPageSize, setReportPageSize] = useState(10);
-  const [reportTotal, setReportTotal] = useState(0);
   const [reportSearch, setReportSearch] = useState('');
   const [reportStatus, setReportStatus] = useState('ALL');
   const [reportFormat, setReportFormat] = useState('ALL');
-  const [reportLoading, setReportLoading] = useState(true);
   const [templateId, setTemplateId] = useState('default');
   const [format, setFormat] = useState<ReportJob['format']>('xlsx');
   const [assetId, setAssetId] = useState<string>();
   const [businessGroup, setBusinessGroup] = useState<string>();
   const [taskId, setTaskId] = useState<string>();
   const [range, setRange] = useState<[Dayjs | null, Dayjs | null] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
   const [logo, setLogo] = useState<string>();
@@ -75,35 +70,31 @@ export const ReportsPage: React.FC = () => {
       task.chunks?.some(chunk => chunk.targets?.some(target =>
         hosts.has(reportTargetHost(target)))));
   }, [tasks, scopedAssets, businessGroup, assetId]);
+  const { page: reportPage, pageSize: reportPageSize, onChange: onReportPageChange } = usePageState([reportSearch, reportStatus, reportFormat], 10);
+  const templateList = useQuery(signal => requestJSON<{ items: ReportTemplate[] }>(templatesEndpoint, 'GET', undefined, signal), [], { errorFallback: '报告服务不可用' });
+  // Only queued or generating reports change on their own; poll the job list just while one exists.
+  const [hasActiveJobs, setHasActiveJobs] = useState(false);
+  const jobList = useQuery(signal => apiClient.reportsPage<ReportJob>(reportPage, reportPageSize, { search: reportSearch, status: reportStatus, format: reportFormat }, signal), [reportPage, reportPageSize, reportSearch, reportStatus, reportFormat], { pollMs: hasActiveJobs ? pollIntervals.activeTask : undefined, errorFallback: '报告服务不可用' });
+  const templates = templateList.data?.items ?? [];
+  const jobs = jobList.data?.items ?? [];
+  const reportTotal = jobList.data?.total ?? 0;
+  const reportLoading = jobList.loading;
+  const error = jobList.error ?? templateList.error;
+  useEffect(() => { setHasActiveJobs(jobs.some(job => job.status === 'QUEUED' || job.status === 'GENERATING')); }, [jobs]);
+  const reload = () => { jobList.reload(); templateList.reload(); };
   const selectedTemplate = templates.find(t => t.id === templateId);
-  const reload = useCallback(async (signal?: AbortSignal, silent = false, includeTemplates = true) => {
-    if (!silent) setReportLoading(true);
-    try {
-      const [reports, nextTemplates] = await Promise.all([
-        apiClient.reportsPage<ReportJob>(reportPage, reportPageSize, { search: reportSearch, status: reportStatus, format: reportFormat }, signal),
-        includeTemplates ? requestJSON<{ items: ReportTemplate[] }>(templatesEndpoint, 'GET', undefined, signal) : undefined,
-      ]);
-      if (!signal?.aborted) { setJobs(reports.items); setReportTotal(reports.total); if (nextTemplates) setTemplates(nextTemplates.items); setError(null); }
-    } catch (cause) { if (!signal?.aborted) setError(errorMessage(cause,'报告服务不可用')); }
-    finally { if (!signal?.aborted) setReportLoading(false); }
-  }, [reportPage, reportPageSize, reportSearch, reportStatus, reportFormat]);
-  useEffect(() => { const controller = new AbortController(); void reload(controller.signal, true); return () => controller.abort(); }, [reload]);
-  // Only queued or generating reports change on their own; poll just the job list while one exists.
-  const hasActiveJobs = jobs.some(job => job.status === 'QUEUED' || job.status === 'GENERATING');
-  useEffect(() => { if (!hasActiveJobs) return; const controller = new AbortController(); let loading = false; const load = async () => { if (loading) return; loading = true; await reload(controller.signal, true, false); loading = false; }; const stop = pollWhileVisible(() => void load(), pollIntervals.activeTask); return () => { controller.abort(); stop(); }; }, [reload, hasActiveJobs]);
-  useEffect(() => { if (reportPage !== 1) setReportPage(1); }, [reportSearch, reportStatus, reportFormat]);
   const generate = async () => {
     const scope: ReportScope = { assetId, businessGroup, taskId, from: range?.[0]?.startOf('day').toISOString(), to: range?.[1]?.endOf('day').toISOString() };
     setBusy(true);
-    try { await requestJSON(endpoint, 'POST', { templateId, format, scope }); message.success('已冻结数据快照，报告将在后台生成'); await reload(); }
+    try { await requestJSON(endpoint, 'POST', { templateId, format, scope }); message.success('已冻结数据快照，报告将在后台生成'); reload(); }
     catch (cause) { message.error(errorMessage(cause,'生成失败')); }
     finally { setBusy(false); }
   };
-  const retry = async (job: ReportJob) => { try { await requestJSON(`${endpoint}/${encodeURIComponent(job.id)}/retry`, 'POST'); message.success('已使用原快照重新排队'); await reload(); } catch (cause) { message.error(errorMessage(cause)); } };
-  const exportFormat = async (job: ReportJob, nextFormat: string) => { try { await requestJSON(`${endpoint}/${encodeURIComponent(job.id)}/formats`, 'POST', { format: nextFormat }); message.success('已使用相同数据快照生成其他格式'); await reload(); } catch (cause) { message.error(errorMessage(cause)); } };
+  const retry = async (job: ReportJob) => { try { await requestJSON(`${endpoint}/${encodeURIComponent(job.id)}/retry`, 'POST'); message.success('已使用原快照重新排队'); reload(); } catch (cause) { message.error(errorMessage(cause)); } };
+  const exportFormat = async (job: ReportJob, nextFormat: string) => { try { await requestJSON(`${endpoint}/${encodeURIComponent(job.id)}/formats`, 'POST', { format: nextFormat }); message.success('已使用相同数据快照生成其他格式'); reload(); } catch (cause) { message.error(errorMessage(cause)); } };
   const editTemplate = () => { if (!selectedTemplate) return; form.setFieldsValue({ ...selectedTemplate, enabledSections: Object.keys(sections).filter(k => selectedTemplate.sections[k] !== false) }); setLogo(selectedTemplate.logo); setEditing(true); };
   const saveTemplate = async () => {
-    try { const values = await form.validateFields(); const { enabledSections, ...fields } = values; const body = { ...fields, logo: logo ?? '', sections: Object.fromEntries(Object.keys(sections).map(key => [key, enabledSections.includes(key)])) }; await requestJSON(`${templatesEndpoint}/${encodeURIComponent(templateId)}`, 'PUT', body); setEditing(false); message.success('模板已保存，新报告将使用更新后的模板'); await reload(); }
+    try { const values = await form.validateFields(); const { enabledSections, ...fields } = values; const body = { ...fields, logo: logo ?? '', sections: Object.fromEntries(Object.keys(sections).map(key => [key, enabledSections.includes(key)])) }; await requestJSON(`${templatesEndpoint}/${encodeURIComponent(templateId)}`, 'PUT', body); setEditing(false); message.success('模板已保存，新报告将使用更新后的模板'); reload(); }
     catch (cause) { if (cause instanceof Error) message.error(cause.message); }
   };
   const muted = { color: palette.textSecondary };
@@ -112,7 +103,7 @@ export const ReportsPage: React.FC = () => {
   const fileSize = (bytes: number) => bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MiB` : `${(bytes / 1024).toFixed(1)} KiB`;
   const taskLabel = (task: (typeof availableTasks)[number]) => {
     const target = taskTargetSummary(task);
-    return `${target.primary} · ${new Date(task.createdAt).toLocaleString()} · ${taskStatusMeta[task.status as keyof typeof taskStatusMeta]?.label ?? task.status}`;
+    return `${target.primary} · ${formatTime(task.createdAt)} · ${taskStatusMeta[task.status as keyof typeof taskStatusMeta]?.label ?? task.status}`;
   };
   const scopeSummary = [
     businessGroup ? `业务组 ${businessGroup}` : '',
@@ -125,7 +116,7 @@ export const ReportsPage: React.FC = () => {
   return <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
     <PageHeader title="报告中心" description="按范围冻结一份数据快照，再导出为 Excel、Word、PDF、HTML、CSV 或 JSON"
       extra={<Button icon={<SettingOutlined />} disabled={!canWrite || !selectedTemplate} onClick={editTemplate}>配置模板</Button>} />
-    <CollectionNotice loading={(assetsLoading || tasksLoading || reportLoading) && jobs.length === 0 && templates.length === 0} error={assetsError || tasksError || error} />
+    <CollectionNotice loading={assetsLoading || tasksLoading || reportLoading} error={assetsError || tasksError || error} hasData={jobs.length > 0 || templates.length > 0} />
 
     <Panel title={<TitleWithHelp title={<span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><FileTextOutlined /><span>生成安全报告</span></span>} helpTitle="后台生成与历史记录" help="每次生成冻结一份带版本的数据快照，HTML、Excel、Word、PDF、CSV 与 JSON 使用相同数据与统计规则。CSV 为漏洞明细平面文件，JSON 为完整快照。登录入口单独统计。报告上限 64 MiB，失败可用原快照重试。"/>}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -153,12 +144,12 @@ export const ReportsPage: React.FC = () => {
       <Select aria-label="报告格式筛选" value={reportFormat} onChange={setReportFormat} style={{ width: 170 }} options={[{ value: 'ALL', label: '全部格式' }, ...Object.entries(formatNames).map(([value, label]) => ({ value, label }))]} />
       <Button onClick={() => void reload()}>刷新</Button>
     </Space>}>
-      <DataTable<ReportJob> rowKey="id" dataSource={jobs} loading={reportLoading} tableLayout="fixed" scroll={{ x: 1000 }} pagination={{ current: reportPage, pageSize: reportPageSize, total: reportTotal, showSizeChanger: true, pageSizeOptions: [10, 20, 50], showTotal: total => `共 ${total} 项`, onChange: (page, size) => { if (size !== reportPageSize) { setReportPageSize(size); setReportPage(1); } else setReportPage(page); } }} locale={{ emptyText: <Empty description="暂无报告，选择范围后生成" /> }} columns={[
+      <DataTable<ReportJob> rowKey="id" dataSource={jobs} loading={reportLoading} tableLayout="fixed" scroll={{ x: 1000 }} pagination={{ current: reportPage, pageSize: reportPageSize, total: reportTotal, showSizeChanger: true, pageSizeOptions: [10, 20, 50], showTotal: total => `共 ${total} 项`, onChange: onReportPageChange }} locale={{ emptyText: <Empty description="暂无报告，选择范围后生成" /> }} columns={[
         { title: '报告', key: 'name', render: (_: unknown, job) => <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}><span style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={job.name}>{job.name}</span><span style={small} title={`快照 ${job.snapshotId}`}>快照 <Mono>{job.snapshotId.slice(0, 12)}</Mono> · v{job.snapshotVersion}</span></div> },
         { title: '格式', key: 'format', width: 130, render: (_: unknown, job) => <StatusPill tone="neutral">{formatNames[job.format]}</StatusPill> },
         { title: '状态', key: 'status', width: 190, render: (_: unknown, job) => <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start', width: '100%' }}><StatusPill tone={stateTones[job.status]}>{stateNames[job.status]}</StatusPill>{job.status === 'GENERATING' && <Progress size="small" percent={job.progress} style={{ width: '100%', margin: 0 }} />}{job.error && <span style={{ fontSize: 12, color: palette.error, overflowWrap: 'anywhere' }}>{job.error}</span>}</div> },
         { title: '文件大小', key: 'size', width: 100, render: (_: unknown, job) => job.status === 'READY' ? <Mono>{fileSize(job.fileSize)}</Mono> : <span style={small}>—</span> },
-        { title: '创建', key: 'created', width: 180, render: (_: unknown, job) => <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}><span style={{ fontSize: 13 }}>{new Date(job.createdAt).toLocaleString()}</span><span style={{ ...small, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={job.createdBy}>{job.createdBy}</span></div> },
+        { title: '创建', key: 'created', width: 180, render: (_: unknown, job) => <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}><span style={{ fontSize: 13 }}>{formatTime(job.createdAt)}</span><span style={{ ...small, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={job.createdBy}>{job.createdBy}</span></div> },
         { title: '操作', key: 'actions', width: 220, render: (_: unknown, job) => <Space size={0} wrap>{job.status === 'READY' && <Button type="link" size="small" icon={<DownloadOutlined />} href={`${endpoint}/${encodeURIComponent(job.id)}/download`}>下载</Button>}<Dropdown disabled={!canWrite} menu={{ items: Object.entries(formatNames).filter(([key]) => key !== job.format).map(([key, label]) => ({ key, label })), onClick: ({ key }) => void exportFormat(job, key) }}><Button type="link" size="small" disabled={!canWrite}>导出其他格式</Button></Dropdown>{job.status === 'FAILED' && <Button type="link" size="small" disabled={!canWrite} onClick={() => void retry(job)}>原快照重试</Button>}</Space> },
       ]} />
     </Panel>

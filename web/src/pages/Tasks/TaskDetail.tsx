@@ -10,6 +10,7 @@ import type { ScanTask, TaskLog } from '../../types';
 import { applicationCoverage, applicationStatuses, systemCoverage, type Coverage } from './coverage';
 import { isTerminalTask, phaseLabels, phaseTones, taskPhases } from './phases';
 import { compressPorts, presetLabels, showRanges } from './policy';
+import { formatTime } from '../../utils/time';
 import { taskTargetSummary } from './targets';
 
 const intensityLabels: Record<string, string> = { gentle: '温和', standard: '标准', aggressive: '积极' };
@@ -70,8 +71,8 @@ export const TaskDetail: React.FC<{
   const app = applicationCoverage(task.applicationScanStatus);
   const kind = task.synthetic ? '模拟任务' : task.engines?.[0] === 'auto' ? '自动综合扫描' : task.engines?.[0] === 'port-probe' ? '历史 TCP 端口探测' : task.inputPath ? '离线输入扫描' : (task.engines ?? []).join('、').toUpperCase();
   const meta = [
-    `创建于 ${new Date(task.createdAt).toLocaleString()}`,
-    finishedAt && terminal ? `完成于 ${new Date(finishedAt).toLocaleString()}` : '',
+    `创建于 ${formatTime(task.createdAt)}`,
+    finishedAt && terminal ? `完成于 ${formatTime(finishedAt)}` : '',
     duration(startedAt, finishedAt) && terminal ? `用时 ${duration(startedAt, finishedAt)}` : '',
     worker ? `节点 ${worker}` : '',
     `规则版本 ${task.ruleVersion || '无需外部规则包'}`,
@@ -87,7 +88,7 @@ export const TaskDetail: React.FC<{
     ] as [string, React.ReactNode][] : []),
     ...(task.inputKind ? [['离线输入', `${task.inputKind} · ${task.inputPath ?? ''}`]] as [string, React.ReactNode][] : []),
     ['时间窗', task.timeWindows?.length ? task.timeWindows.map(window => `${window.weekdays.map(day => weekdays[day]).join('、')} ${window.start}–${window.end} · ${window.timeZone}`).join('；') : '不限时间'],
-    ['本地截止时间', task.hardDeadline ? new Date(task.hardDeadline).toLocaleString() : '—'],
+    ['本地截止时间', formatTime(task.hardDeadline,'—')],
     ['跳过目标', task.skippedTargets?.join('、') || '无'],
   ];
 
@@ -179,7 +180,7 @@ export const TaskDetail: React.FC<{
 
       <Panel flush title="只读任务日志" extra={<span style={{ color: palette.textTertiary }}>不显示原始引擎输出、凭据或请求响应</span>}>
         <DataTable<TaskLog> size="small" rowKey="id" loading={loading} dataSource={logs} pagination={{ pageSize: 10, hideOnSinglePage: true }} locale={{ emptyText: '暂无任务日志' }} columns={[
-          { title: '时间', dataIndex: 'createdAt', width: 190, render: (value: string) => <Mono style={muted}>{new Date(value).toLocaleString()}</Mono> },
+          { title: '时间', dataIndex: 'createdAt', width: 190, render: (value: string) => <Mono style={muted}>{formatTime(value)}</Mono> },
           { title: '事件', dataIndex: 'message' },
           { title: '操作者', dataIndex: 'actor', width: 150 },
         ]} />

@@ -9,6 +9,7 @@ import { AutoGrid, PageHeader, Panel } from '../../components/Page';
 import { useAppTheme } from '../../context/ThemeContext';
 import type { Severity } from '../../theme/palette';
 import { taskTargetSummary } from '../Tasks/targets';
+import { formatTime } from '../../utils/time';
 import { applicationCoverage, systemCoverage } from '../Tasks/coverage';
 
 const severities: Severity[] = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO'];
@@ -43,7 +44,7 @@ export const DashboardPage: React.FC = () => {
         description={`已登记 ${summary?.assetCount ?? 0} 台资产 · 规则版本 ${summary?.currentRule?.version ?? '尚未导入'} · 数据每 10 秒刷新`}
         extra={<Link to="/tasks"><Button type="primary">新建扫描</Button></Link>}
       />
-      <CollectionNotice loading={summaryLoading && !summary} error={summaryError || tasksError} />
+      <CollectionNotice loading={summaryLoading} error={summaryError || tasksError} hasData={Boolean(summary)} />
 
       {showQuickStart && <Panel title="快速开始" extra={<span style={muted}>完成后自动隐藏</span>}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -67,7 +68,7 @@ export const DashboardPage: React.FC = () => {
       </AutoGrid>
 
       <AutoGrid min={420}>
-        <Panel title="活动漏洞趋势" extra={<Segmented size="small" value={trendDays} onChange={value => setTrendDays(value as 7 | 30 | 90)} options={[{ label: '7 天', value: 7 }, { label: '30 天', value: 30 }, { label: '90 天', value: 90 }]} />}>
+        <Panel title="活动漏洞趋势" extra={<Segmented size="small" aria-label="趋势时间范围" value={trendDays} onChange={value => setTrendDays(value as 7 | 30 | 90)} options={[{ label: '7 天', value: 7 }, { label: '30 天', value: 30 }, { label: '90 天', value: 90 }]} />}>
           <svg viewBox="0 0 600 190" width="100%" height="190" role="img" aria-label={`近 ${trendDays} 天每日活动漏洞数，最高 ${maxTrend} 项`}>
             <g stroke={palette.borderSubtle} strokeWidth="1"><line x1="0" y1="20" x2="600" y2="20" /><line x1="0" y1="85" x2="600" y2="85" /><line x1="0" y1="150" x2="600" y2="150" /></g>
             {trend.map((point, index) => {
@@ -147,7 +148,7 @@ export const DashboardPage: React.FC = () => {
             const system = systemCoverage(task.systemScanStatus, task.systemScanCode);
             const app = applicationCoverage(task.applicationScanStatus);
             return <div key={task.id} style={{ display: 'grid', gridTemplateColumns: 'minmax(180px, 1.3fr) minmax(0, 2fr) 120px', gap: 16, alignItems: 'center', padding: '14px 20px', borderTop: rowBorder, fontSize: 13, minWidth: 640 }}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}><Mono>{target.primary}</Mono><span style={{ ...muted, fontSize: 12 }}>{new Date(task.createdAt).toLocaleString()} · {target.detail}</span></div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}><Mono>{target.primary}</Mono><span style={{ ...muted, fontSize: 12 }}>{formatTime(task.createdAt)} · {target.detail}</span></div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                 {auto ? <>
                   <Tooltip title={task.systemScanStatus}><span><StatusPill tone={system.tone}>系统包 · {system.label}</StatusPill></span></Tooltip>

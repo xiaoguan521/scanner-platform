@@ -6,6 +6,7 @@ import { FindingStatusTag, Mono, SeverityTag, findingStatusMeta } from '../../co
 import { useAppTheme } from '../../context/ThemeContext';
 import { apiClient, errorMessage } from '../../api/client';
 import type { FindingGroup, FindingGroupPage, FindingQueryOptions } from '../../api/client';
+import { formatTime } from '../../utils/time';
 import type { Finding } from '../../types';
 
 const statusOrder = ['OPEN', 'REOPENED', 'IN_PROGRESS', 'ACCEPTED_RISK', 'FALSE_POSITIVE', 'FIXED'] as const;
@@ -59,7 +60,7 @@ const GroupFindings: React.FC<{
             : { title: '软件包 / 版本', key: 'package', render: (_, f) => <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}><Mono>{f.package || '—'}</Mono><span style={{ fontSize: 12, overflowWrap: 'anywhere' }}><Mono style={muted}>{f.installedVersion || '—'}</Mono><span style={{ color: palette.textTertiary }}> → </span>{f.fixedVersion ? <Mono style={{ color: palette.success }}>{f.fixedVersion}</Mono> : <span style={{ color: palette.textTertiary }}>暂无修复版本</span>}</span></div> },
           { title: '目标', key: 'target', width: 180, render: (_, f) => <Mono style={{ overflowWrap: 'anywhere' }}>{f.target}</Mono> },
           { title: '状态', key: 'status', width: 130, render: (_, f) => <div style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'flex-start' }}><FindingStatusTag value={f.status} />{(f.assigneeName || f.assigneeId) && <span style={{ fontSize: 12, ...muted }}>{f.assigneeName || f.assigneeId}</span>}</div> },
-          { title: '最近检出', key: 'lastSeen', width: 160, render: (_, f) => <span style={{ fontSize: 12, ...muted }}>{f.lastSeen ? new Date(f.lastSeen).toLocaleString() : '—'}</span> },
+          { title: '最近检出', key: 'lastSeen', width: 160, render: (_, f) => <span style={{ fontSize: 12, ...muted }}>{formatTime(f.lastSeen,'—')}</span> },
           { title: '', key: 'action', width: 100, render: (_, f) => <Button size="small" aria-label={`查看详情：${f.title}`} onClick={event => { event.stopPropagation(); onOpen(f, event.currentTarget); }}>查看详情</Button> },
         ]}
       />

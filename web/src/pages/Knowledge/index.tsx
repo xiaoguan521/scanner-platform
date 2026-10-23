@@ -51,7 +51,7 @@ export const KnowledgePage:React.FC=()=>{
     <PageHeader title={<TitleWithHelp title="漏洞知识库" helpTitle="漏洞知识库与中文修复建议" help="支持本地 JSON 导入和自建中文内容。条目用于组件版本匹配与发现项内容补全；版本匹配结果标注为版本推断。CNNVD、CNVD 等数据源尚未接入，可人工填写外部编号。导入格式为条目数组或 {&quot;items&quot;: [...]}，每条包含 id、title、component、affectedRanges、description、impact、solution、references、identifiers、category、source、language；单文件最多 5 MiB。"/>}
       description={`共 ${total} 条知识${items.length?` · 本页中文内容 ${chinese}/${items.length}`:''}`}
       extra={<Space wrap><input ref={fileRef} type="file" accept=".json,application/json" style={{display:'none'}} onChange={e=>void importFile(e.target.files?.[0])}/><Button icon={<UploadOutlined/>} disabled={!canWrite} loading={busy} onClick={()=>fileRef.current?.click()}>导入本地 JSON</Button><Button type="primary" icon={<PlusOutlined/>} disabled={!canWrite} onClick={()=>edit()}>新增条目</Button></Space>}/>
-    <CollectionNotice loading={loading&&items.length===0} error={error??''}/>
+    <CollectionNotice loading={loading} error={error} hasData={items.length>0}/>
     <Panel flush title="知识条目" extra={<Input.Search aria-label="搜索知识条目" value={query} onChange={e=>setQuery(e.target.value)} allowClear placeholder="搜索平台编号、标题、组件或外部编号" style={{width:320}}/>}>
       <DataTable<KnowledgeEntry> rowKey="id" dataSource={items} loading={loading} tableLayout="fixed" scroll={{x:1100}} locale={{emptyText:query?'没有符合条件的知识条目':'暂无知识条目，可导入本地 JSON 或新增条目'}} pagination={{current:page,pageSize,total,showSizeChanger:true,pageSizeOptions:[15,30,60],showTotal:n=>`共 ${n} 条`,onChange:onPageChange}} columns={[
         {title:'平台编号',dataIndex:'id',width:190,ellipsis:true,render:(v:string)=><Mono title={v}>{v}</Mono>},

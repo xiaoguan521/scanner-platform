@@ -4,7 +4,8 @@ import { readFile } from 'node:fs/promises';
 
 const runtime = await readFile(new URL('../../api/runtime.ts', import.meta.url), 'utf8');
 const page = await readFile(new URL('./index.tsx', import.meta.url), 'utf8')
-  + await readFile(new URL('./ScanPlanEditor.tsx', import.meta.url), 'utf8');
+  + await readFile(new URL('./ScanPlanEditor.tsx', import.meta.url), 'utf8')
+  + await readFile(new URL('./TaskCreateModal.tsx', import.meta.url), 'utf8');
 const types = await readFile(new URL('../../types/task.ts', import.meta.url), 'utf8');
 
 for (const name of ['createScanPlan', 'updateScanPlan', 'deleteScanPlan']) {

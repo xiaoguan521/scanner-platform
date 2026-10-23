@@ -5,13 +5,15 @@ import { PlusOutlined } from '@ant-design/icons';
 import { apiClient, errorMessage } from '../../api/client';
 import { useCollection } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
-import { pollIntervals, pollWhileVisible } from '../../api/polling';
+import { pollIntervals } from '../../api/polling';
+import { usePageState, useQuery } from '../../api/query';
 import { useAuth } from '../../auth/AuthProvider';
 import { Mono, StatusPill } from '../../components/Semantic';
 import { PageHeader, Panel } from '../../components/Page';
 import { useAppTheme } from '../../context/ThemeContext';
 import type { Tone } from '../../theme/palette';
 import type { ApprovalDecision, AuthorizedScope, PortRequest, ReviewStatus, TimeWindow } from '../../types';
+import { formatTime } from '../../utils/time';
 import { scopeExpiryLabel, scopeExpiryState, type ScopeExpiryFilter } from './expiry';
 
 const weekdays = [
@@ -37,27 +39,15 @@ export const ScopesPage: React.FC = () => {
   const { user, canWrite, canReview } = useAuth();
   const { palette } = useAppTheme();
   const { data: assets } = useCollection('assets');
-  const [scopes, setScopes] = useState<AuthorizedScope[]>([]);
-  const [scopePage, setScopePage] = useState(1);
-  const [scopePageSize, setScopePageSize] = useState(10);
-  const [scopeTotal, setScopeTotal] = useState(0);
   // Unfiltered total for the summary tile; only refreshed by unfiltered loads.
   const [allScopeTotal, setAllScopeTotal] = useState<number | null>(null);
   const [selectedScopeIDs, setSelectedScopeIDs] = useState<React.Key[]>([]);
-  const [expiryCounts, setExpiryCounts] = useState({ expiring: 0, expired: 0 });
-  const [ports, setPorts] = useState<PortRequest[]>([]);
-  const [portPage, setPortPage] = useState(1);
-  const [portPageSize, setPortPageSize] = useState(10);
-  const [portTotal, setPortTotal] = useState(0);
   const [portStatus, setPortStatus] = useState('ALL');
   const [portSearch, setPortSearch] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [expiryFilter, setExpiryFilter] = useState<ScopeExpiryFilter>('all');
   const [scopeQuery, setScopeQuery] = useState('');
   const [scopeSearch, setScopeSearch] = useState('');
   useEffect(() => { const timer = window.setTimeout(() => setScopeSearch(scopeQuery.trim()), 300); return () => window.clearTimeout(timer); }, [scopeQuery]);
-  const [reloadKey, setReloadKey] = useState(0);
   const [requestOpen, setRequestOpen] = useState(false);
   const [editingScope, setEditingScope] = useState<AuthorizedScope | null>(null);
   const [reviewTarget, setReviewTarget] = useState<ReviewTarget | null>(null);
@@ -73,40 +63,25 @@ export const ScopesPage: React.FC = () => {
   const scopeStatus = (scope: AuthorizedScope): ReviewStatus | 'REVOKED' =>
     scope.status ?? (scope.isActive ? 'APPROVED' : 'PENDING');
 
+  const { page: scopePage, pageSize: scopePageSize, setPage: setScopePage, onChange: onScopePageChange } = usePageState([expiryFilter, scopeSearch], 10);
+  const { page: portPage, pageSize: portPageSize, onChange: onPortPageChange } = usePageState([portStatus, portSearch], 10);
+  const listOptions = { pollMs: pollIntervals.reference, errorFallback: '授权清册服务不可用' };
+  const scopeList = useQuery(signal => apiClient.scopesPage(scopePage, scopePageSize, expiryFilter, signal, scopeSearch), [scopePage, scopePageSize, expiryFilter, scopeSearch], listOptions);
+  const portList = useQuery(signal => apiClient.portRequestsPage(portPage, portPageSize, { status: portStatus, search: portSearch }, signal), [portPage, portPageSize, portStatus, portSearch], listOptions);
+  const scopes = scopeList.data?.items ?? [];
+  const scopeTotal = scopeList.data?.total ?? 0;
+  const expiryCounts = { expiring: scopeList.data?.expiringCount ?? 0, expired: scopeList.data?.expiredCount ?? 0 };
+  const ports = portList.data?.items ?? [];
+  const portTotal = portList.data?.total ?? 0;
+  const loading = scopeList.loading || portList.loading;
+  const error = scopeList.error ?? portList.error;
   useEffect(() => {
-    const controller = new AbortController();
-    let inFlight = false;
-    const load = (initial = false) => {
-      if (inFlight) return;
-      inFlight = true;
-      if (initial) setLoading(true);
-      Promise.all([
-        apiClient.scopesPage(scopePage, scopePageSize, expiryFilter, controller.signal, scopeSearch),
-        apiClient.portRequestsPage(portPage, portPageSize, { status: portStatus, search: portSearch }, controller.signal),
-      ]).then(([scopeResult, portResult]) => {
-        if (controller.signal.aborted) return;
-        setScopes(scopeResult.items);
-        setScopeTotal(scopeResult.total);
-        if (expiryFilter === 'all' && !scopeSearch) setAllScopeTotal(scopeResult.total);
-        setExpiryCounts({ expiring: scopeResult.expiringCount, expired: scopeResult.expiredCount });
-        setPorts(portResult.items);
-        setPortTotal(portResult.total);
-        setError(null);
-      }).catch(cause => {
-        if (!controller.signal.aborted) setError(errorMessage(cause,'授权清册服务不可用'));
-      }).finally(() => {
-        inFlight = false;
-        if (!controller.signal.aborted) setLoading(false);
-      });
-    };
-    load(true);
-    const stop = pollWhileVisible(() => load(), pollIntervals.reference);
-    return () => { controller.abort(); stop(); };
-  }, [scopePage, scopePageSize, expiryFilter, scopeSearch, portPage, portPageSize, portStatus, portSearch, reloadKey]);
-
-  useEffect(() => { if (scopePage !== 1) setScopePage(1); }, [expiryFilter, scopeSearch]);
-  useEffect(() => { if (portPage !== 1) setPortPage(1); }, [portStatus, portSearch]);
-  const refresh = () => setReloadKey(value => value + 1);
+    if (scopeList.data && expiryFilter === 'all' && !scopeSearch) setAllScopeTotal(scopeList.data.total);
+  }, [scopeList.data, expiryFilter, scopeSearch]);
+  // Saved edits replace rows in place until the next refetch.
+  const setScopes = (update: (previous: AuthorizedScope[]) => AuthorizedScope[]) => scopeList.setData(current => current && { ...current, items: update(current.items) });
+  const setPorts = (update: (previous: PortRequest[]) => PortRequest[]) => portList.setData(current => current && { ...current, items: update(current.items) });
+  const refresh = () => { scopeList.reload(); portList.reload(); };
 
   const requestScope = async (values: ScopeForm) => {
     if (!canRequest) return;
@@ -223,7 +198,7 @@ export const ScopesPage: React.FC = () => {
       description="登记主机的扫描授权、执行时间窗和端口人工审批"
       extra={<Button type="primary" icon={<PlusOutlined />} disabled={!canRequest} onClick={() => setRequestOpen(true)}>申请范围授权</Button>}
     />
-    <CollectionNotice loading={loading && scopes.length === 0 && ports.length === 0} error={error} />
+    <CollectionNotice loading={loading} error={error} hasData={scopes.length > 0 || ports.length > 0} />
     <div role="group" aria-label="按授权期限筛选" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(200px, 100%), 1fr))', gap: 12 }}>
       {tiles.map(tile => {
         const active = expiryFilter === tile.key;
@@ -252,11 +227,11 @@ export const ScopesPage: React.FC = () => {
           onChange: keys => setSelectedScopeIDs(keys),
         }}
         locale={{ emptyText: scopeSearch || expiryFilter !== 'all' ? '没有符合条件的授权' : '暂无授权，请从右上角申请范围授权' }}
-        pagination={{ current: scopePage, pageSize: scopePageSize, total: scopeTotal, showSizeChanger: true, pageSizeOptions: [10, 20, 50], showTotal: total => `共 ${total} 项`, onChange: (page, size) => { if (size !== scopePageSize) { setScopePageSize(size); setScopePage(1); } else setScopePage(page); } }}
+        pagination={{ current: scopePage, pageSize: scopePageSize, total: scopeTotal, showSizeChanger: true, pageSizeOptions: [10, 20, 50], showTotal: total => `共 ${total} 项`, onChange: onScopePageChange }}
         columns={[
           { title: '目标', key: 'target', width: 170, render: (_: unknown, scope: AuthorizedScope) => <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}><Mono>{scope.cidrOrHost}</Mono><span style={small}>上限 {scope.maxTargets} 台</span></div> },
           { title: '允许时间', key: 'windows', render: (_: unknown, scope: AuthorizedScope) => <div style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 13 }}>{scope.timeWindows.map((w, i) => <span key={i}>{w.weekdays.map(day => weekdays.find(d => d.value === day)?.label).join('、')} <Mono>{w.start}–{w.end}</Mono> <span style={small}>{w.timeZone}</span></span>)}</div> },
-          { title: '截止时间', key: 'expires', width: 190, render: (_: unknown, scope: AuthorizedScope) => { const expiry = scopeExpiryState(scope); return <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}><span style={{ fontSize: 13 }}>{scope.expiresAt ? new Date(scope.expiresAt).toLocaleString() : '未填写'}</span>{expiry !== 'NOT_APPLICABLE' && <StatusPill tone={expiryTone[expiry] ?? 'neutral'}>{scopeExpiryLabel[expiry]}</StatusPill>}</div>; } },
+          { title: '截止时间', key: 'expires', width: 190, render: (_: unknown, scope: AuthorizedScope) => { const expiry = scopeExpiryState(scope); return <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}><span style={{ fontSize: 13 }}>{formatTime(scope.expiresAt,'未填写')}</span>{expiry !== 'NOT_APPLICABLE' && <StatusPill tone={expiryTone[expiry] ?? 'neutral'}>{scopeExpiryLabel[expiry]}</StatusPill>}</div>; } },
           { title: '审批单', key: 'ticket', width: 160, render: (_: unknown, scope: AuthorizedScope) => <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>{scope.approvalTicket ? <Mono>{scope.approvalTicket}</Mono> : <span style={small}>待审批</span>}<span style={small}>{scope.approvedBy || '无审批人'}</span></div> },
           { title: '状态', key: 'status', width: 150, render: (_: unknown, scope: AuthorizedScope) => renderDecision(scopeStatus(scope), { kind: 'scope', id: scope.id, requestedBy: scope.requestedBy }) },
           { title: '操作', key: 'actions', width: 120, fixed: 'right', render: (_: unknown, scope: AuthorizedScope) => { const status = scopeStatus(scope); return <Space size={0}><Button type="link" size="small" disabled={!canRequest || status === 'REJECTED' || status === 'REVOKED'} onClick={() => editScope(scope)}>修改</Button>{status === 'APPROVED' ? <Button type="link" size="small" danger disabled={!canRequest && !canReview} onClick={() => revokeScope(scope)}>撤销</Button> : <Button type="link" size="small" danger disabled={!canRequest} onClick={() => deleteScope(scope)}>删除</Button>}</Space>; } },
@@ -270,7 +245,7 @@ export const ScopesPage: React.FC = () => {
     </Space>}>
       <DataTable<PortRequest> dataSource={ports} loading={loading} rowKey={p => p.assetId + ':' + p.port} tableLayout="fixed" scroll={{ x: 900 }}
         locale={{ emptyText: portSearch || portStatus !== 'ALL' ? '没有符合条件的端口申请' : '暂无端口申请' }}
-        pagination={{ current: portPage, pageSize: portPageSize, total: portTotal, showSizeChanger: true, pageSizeOptions: [10, 20, 50], showTotal: total => `共 ${total} 项`, onChange: (page, size) => { if (size !== portPageSize) { setPortPageSize(size); setPortPage(1); } else setPortPage(page); } }}
+        pagination={{ current: portPage, pageSize: portPageSize, total: portTotal, showSizeChanger: true, pageSizeOptions: [10, 20, 50], showTotal: total => `共 ${total} 项`, onChange: onPortPageChange }}
         columns={[
           { title: '资产地址', key: 'address', width: 170, render: (_: unknown, p: PortRequest) => <Mono>{p.address}</Mono> },
           { title: '端口', key: 'port', width: 80, render: (_: unknown, p: PortRequest) => <Mono>{p.port}</Mono> },
@@ -284,7 +259,7 @@ export const ScopesPage: React.FC = () => {
     <Modal title="批量续期授权范围" open={renewOpen} onCancel={() => { setRenewOpen(false); setRenewExpiry(''); }} onOk={() => void renewScopes()} okButtonProps={{ loading: busy, disabled: selectedScopeIDs.length === 0 }}>
       <Alert type="warning" showIcon message={`将续期 ${selectedScopeIDs.length} 条已批准授权`} description="续期会保留原目标和时间窗，但立即清除原审批并重置为待审核；不会直接延长扫描执行权限。" style={{ marginBottom: 14 }} />
       <Typography.Text strong>新的授权截止时间</Typography.Text>
-      <Input style={{ marginTop: 8 }} type="datetime-local" value={renewExpiry} onChange={event => setRenewExpiry(event.target.value)} />
+      <Input aria-label="续期后的截止时间" style={{ marginTop: 8 }} type="datetime-local" value={renewExpiry} onChange={event => setRenewExpiry(event.target.value)} />
     </Modal>
     <Modal title={editingScope ? '修改授权范围' : '申请扫描授权（单个主机 IP）'} open={requestOpen}
       onCancel={() => { setRequestOpen(false); setEditingScope(null); requestForm.resetFields(); }} onOk={() => requestForm.submit()} okButtonProps={{ loading: busy }}>

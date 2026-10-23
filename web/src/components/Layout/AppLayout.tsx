@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Layout,
   Menu,
@@ -23,6 +23,8 @@ import { SystemStatusContext, useSystemStatus } from '../../api/hooks';
 import { roleNames, StatusPill } from '../Semantic';
 import { useAuth } from '../../auth/AuthProvider';
 import { navigationLabel, visibleNavigation } from './navigation';
+import { apiClient } from '../../api/client';
+import { setDisplayTimeZone } from '../../utils/time';
 
 const { Header, Sider, Content } = Layout;
 
@@ -34,6 +36,14 @@ export const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children })
   const systemStatus = useSystemStatus();
   const { status, error } = systemStatus;
   const { user, logout } = useAuth();
+  // Pages wait for the platform time zone so every time renders in it from the
+  // start; if settings cannot be read, the browser's zone is used.
+  const [timeZoneReady, setTimeZoneReady] = useState(false);
+  useEffect(() => {
+    let active = true;
+    apiClient.systemSettings().then(settings => setDisplayTimeZone(settings.timeZone)).catch(() => undefined).finally(() => { if (active) setTimeZoneReady(true); });
+    return () => { active = false; };
+  }, []);
   const groups = visibleNavigation(user?.role);
   const icons: Record<string, React.ReactNode> = {
     overview: <DashboardOutlined />,
@@ -121,7 +131,7 @@ export const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children })
         </Header>
 
         <Content style={{ padding: '24px 32px 40px', minHeight: 280, overflowY: 'auto' }}>
-          <SystemStatusContext.Provider value={systemStatus}>{children}</SystemStatusContext.Provider>
+          <SystemStatusContext.Provider value={systemStatus}>{timeZoneReady ? children : null}</SystemStatusContext.Provider>
         </Content>
       </Layout>
     </Layout>

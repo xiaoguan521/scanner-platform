@@ -1,5 +1,5 @@
 import { AssetImport } from './AssetImport';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { DataTable } from '../../components/DataState';
 import { Alert, Button, Form, Input, message, Modal, Select, Space, Tag, Typography, Drawer, Checkbox, Row, Col } from 'antd';
 import type { FormInstance } from 'antd';
@@ -7,7 +7,8 @@ import { DownloadOutlined, PlusOutlined } from '@ant-design/icons';
 import type { Asset, AssetProfile, Finding } from '../../types';
 import { apiClient, errorMessage } from '../../api/client';
 import type { AssetInsight } from '../../api/client';
-import { pollIntervals, pollWhileVisible } from '../../api/polling';
+import { pollIntervals } from '../../api/polling';
+import { usePageState, useQuery } from '../../api/query';
 import { useCollection } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
 import { TitleWithHelp } from '../../components/HelpTip';
@@ -18,6 +19,7 @@ import { AutoGrid, PageHeader, Panel } from '../../components/Page';
 import { useAppTheme } from '../../context/ThemeContext';
 import type { Tone } from '../../theme/palette';
 
+import { formatDate, formatTime } from '../../utils/time';
 import { compressPorts, summarizePorts, expandPortRanges } from '../Tasks/policy';
 const { Text } = Typography;
 type AssetForm = AssetProfile & {kind:'host'|'image_repo';address:string;businessGroup:string;owner:string;requestedPorts?:string;skippedPorts?:string};
@@ -41,13 +43,13 @@ export const AssetsPage: React.FC = () => {
   const {palette} = useAppTheme();
   const canEdit = canWrite;
   const [filter,setFilter] = useState('');
-  const [assetPage,setAssetPage] = useState(1);
-  const [assetPageSize,setAssetPageSize] = useState(10);
-  const [assetTotal,setAssetTotal] = useState(0);
-  const [assets,setAssets] = useState<Asset[]>([]);
-  const [assetLoading,setAssetLoading] = useState(true);
-  const [assetError,setAssetError] = useState<string|null>(null);
-  const [assetRevision,setAssetRevision] = useState(0);
+  const {page:assetPage,pageSize:assetPageSize,onChange:onAssetPageChange} = usePageState(filter,10);
+  const assetList = useQuery(signal=>apiClient.assetsPage(assetPage,assetPageSize,filter,'-created_at',signal),[assetPage,assetPageSize,filter],{errorFallback:'资产清册加载失败',emptyValue:{items:[],total:0,page:1,pageSize:assetPageSize}});
+  const assets = assetList.data?.items ?? [];
+  const assetTotal = assetList.data?.total ?? 0;
+  const {loading:assetLoading,error:assetError,reload:reloadAssets} = assetList;
+  // Saved edits replace rows in place until the next refetch.
+  const setAssets = (update:(previous:Asset[])=>Asset[]) => assetList.setData(current=>current&&{...current,items:update(current.items)});
   const {data:quarantines,setData:setQuarantines} = useCollection('port-quarantines');
   const [detailId,setDetailId]=useState('');const detailAsset=assets.find(a=>a.id===detailId);
   const [releaseTarget,setReleaseTarget]=useState<{assetId:string;port:number}|null>(null);const [releaseReason,setReleaseReason]=useState('');
@@ -64,36 +66,12 @@ export const AssetsPage: React.FC = () => {
   const [editForm] = Form.useForm<AssetForm>();
   const createKind = Form.useWatch('kind',createForm) ?? 'host';
   const [testingForm,setTestingForm] = useState<'create'|'edit'|''>('');
-  useEffect(()=>{
-    const controller=new AbortController();
-    setAssetLoading(true);
-    void apiClient.assetsPage(assetPage,assetPageSize,filter,'-created_at',controller.signal).then(result=>{
-      if(controller.signal.aborted)return;
-      setAssets(result.items);setAssetTotal(result.total);setAssetError(null);
-    }).catch(cause=>{
-      if(!controller.signal.aborted){setAssets([]);setAssetTotal(0);setAssetError(errorMessage(cause,'资产清册加载失败'));}
-    }).finally(()=>{if(!controller.signal.aborted)setAssetLoading(false)});
-    return()=>controller.abort();
-  },[assetPage,assetPageSize,filter,assetRevision]);
-  useEffect(()=>{if(assetPage!==1)setAssetPage(1)},[filter]);
   // Per-asset scan and finding summaries come from the Server for the current page only.
-  const [insights,setInsights] = useState<Map<string,AssetInsight>>(new Map());
-  const [insightLoading,setInsightLoading] = useState(false);
-  const [insightError,setInsightError] = useState<string|null>(null);
   const assetIds = assets.map(asset=>asset.id).join(',');
-  useEffect(()=>{
-    if(!assetIds){setInsights(new Map());setInsightError(null);return;}
-    const controller=new AbortController();let inFlight=false;
-    const load=(initial=false)=>{
-      if(inFlight)return;
-      inFlight=true;if(initial)setInsightLoading(true);
-      apiClient.assetInsights(assetIds.split(','),controller.signal).then(result=>{
-        if(!controller.signal.aborted){setInsights(new Map(result.items.map(item=>[item.assetId,item])));setInsightError(null);}
-      }).catch(cause=>{if(!controller.signal.aborted)setInsightError(errorMessage(cause,'资产扫描摘要加载失败'));}).finally(()=>{inFlight=false;if(!controller.signal.aborted)setInsightLoading(false);});
-    };
-    load(true);const stop=pollWhileVisible(()=>load(),pollIntervals.assetInsights);
-    return()=>{controller.abort();stop();};
-  },[assetIds]);
+  const insightList = useQuery(signal=>apiClient.assetInsights(assetIds.split(','),signal),[assetIds],{enabled:Boolean(assetIds),pollMs:pollIntervals.assetInsights,errorFallback:'资产扫描摘要加载失败'});
+  const insights = useMemo(()=>new Map<string,AssetInsight>(assetIds?(insightList.data?.items??[]).map(item=>[item.assetId,item]):[]),[insightList.data,assetIds]);
+  const insightLoading = Boolean(assetIds)&&insightList.loading;
+  const insightError = assetIds?insightList.error:null;
   const detailInsight = detailAsset?insights.get(detailAsset.id):undefined;
   const rows = assets;
   const checkReachability = async(asset:Asset) => {
@@ -126,7 +104,7 @@ export const AssetsPage: React.FC = () => {
     onOk:async()=>{
       try {
         await apiClient.deleteAsset(asset.id);
-        setAssetRevision(value=>value+1);
+        reloadAssets();
         if(candidateAsset?.id===asset.id)setCandidateAsset(null);
         message.success('资产已删除');
       } catch(cause) {message.error(errorMessage(cause,'删除失败'));throw cause;}
@@ -173,7 +151,7 @@ export const AssetsPage: React.FC = () => {
       const skippedPorts=expandPortRanges(input.skippedPorts);
       const asset=await apiClient.createAsset({...input,requestedPorts,skippedPorts});
       message.success('资产与明确输入的端口已保存；跳过端口不会下发给 Worker');
-      setAssetRevision(value=>value+1);setCreateOpen(false);createForm.resetFields();
+      reloadAssets();setCreateOpen(false);createForm.resetFields();
       if(asset.kind==='host') void checkReachability(asset);
     } catch(e) {message.error(errorMessage(e,'登记失败'));}
     finally {setSaving(false);}
@@ -248,11 +226,11 @@ export const AssetsPage: React.FC = () => {
       description={`共 ${assetTotal.toLocaleString()} 个已登记资产${rows.length ? ` · 本页 ${pageRisky} 个有活动漏洞` : ''} · 只对登记并授权的资产执行检查`}
       extra={<>
         <Button icon={<DownloadOutlined/>} loading={exporting} onClick={()=>void exportAssets()}>导出 CSV</Button>
-        <AssetImport disabled={!canEdit} onImported={async()=>{setAssetRevision(value=>value+1)}}/>
+        <AssetImport disabled={!canEdit} onImported={async()=>{reloadAssets()}}/>
         <Button type="primary" icon={<PlusOutlined/>} disabled={!canEdit} onClick={()=>setCreateOpen(true)}>登记资产</Button>
       </>}
     />
-    <CollectionNotice loading={assetLoading&&rows.length===0} error={assetError}/>
+    <CollectionNotice loading={assetLoading} error={assetError} hasData={rows.length>0}/>
 
     {activeQuarantines.length > 0 && <Panel flush title={<span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>疑似四层转发隔离区 <StatusPill tone="warning">{activeQuarantines.length} 个端口</StatusPill></span>} extra={<span style={small}>隔离端口在探测和扫描时始终跳过</span>}>
       <DataTable rowKey={q=>q.assetId+'-'+q.port} dataSource={activeQuarantines} size="small" pagination={false}
@@ -265,7 +243,7 @@ export const AssetsPage: React.FC = () => {
 
     <Panel flush title={<TitleWithHelp title="资产登记台账" helpTitle="端口探测只针对已登记的单台主机" help="在任务中心可选择常用 TCP 端口或输入范围（支持 1-65535），也可填写排除端口。资产中已标记跳过或隔离的端口会自动排除。开放端口只作候选；提交申请并经运维审批后，才会出现在漏洞扫描目标中。"/>}
       extra={<Input.Search aria-label="资产搜索" placeholder="搜索地址、名称、业务组或负责人" allowClear value={filter} onChange={e=>setFilter(e.target.value)} style={{width:280}}/>}>
-      <DataTable<Asset> rowKey="id" dataSource={rows} loading={assetLoading||insightLoading} tableLayout="fixed" scroll={{x:990}} pagination={{current:assetPage,pageSize:assetPageSize,total:assetTotal,showSizeChanger:true,pageSizeOptions:[10,20,50],showTotal:total=>`共 ${total} 个资产`,onChange:(page,size)=>{if(size!==assetPageSize){setAssetPageSize(size);setAssetPage(1)}else setAssetPage(page)}}}
+      <DataTable<Asset> rowKey="id" dataSource={rows} loading={assetLoading||insightLoading} tableLayout="fixed" scroll={{x:990}} pagination={{current:assetPage,pageSize:assetPageSize,total:assetTotal,showSizeChanger:true,pageSizeOptions:[10,20,50],showTotal:total=>`共 ${total} 个资产`,onChange:onAssetPageChange}}
         columns={[
           {title:'资产',key:'address',width:190,render:(_:unknown,asset:Asset)=><div style={{display:'flex',flexDirection:'column',gap:2,minWidth:0}}>
             <Button type="link" style={{padding:0,height:'auto',textAlign:'left',alignSelf:'flex-start'}} aria-label={`查看资产画像：${asset.address}`} onClick={()=>setDetailId(asset.id)}><Mono>{asset.address}</Mono></Button>
@@ -290,7 +268,7 @@ export const AssetsPage: React.FC = () => {
             if(!latest&&!probe)return <span style={small}>尚未扫描</span>;
             const candidates=probe?.status==='COMPLETED'?probe.openPorts.length:0;
             return <div style={{display:'flex',flexDirection:'column',gap:4,alignItems:'flex-start'}}>
-              {latest&&<span style={{display:'flex',alignItems:'center',gap:6}}><TaskStatusTag value={latest.status}/><span style={small}>{new Date(latest.finishedAt??latest.createdAt).toLocaleString()}</span></span>}
+              {latest&&<span style={{display:'flex',alignItems:'center',gap:6}}><TaskStatusTag value={latest.status}/><span style={small}>{formatTime(latest.finishedAt??latest.createdAt)}</span></span>}
               {probe&&probe.status!=='COMPLETED'&&!latest&&<TaskStatusTag value={probe.status}/>}
               {candidates>0&&<Button type="link" size="small" style={{padding:0,height:'auto'}} onClick={()=>{setCandidateAsset(asset);setCandidateFilter('');setSelectedCandidatePorts([]);}}>{candidates} 个开放候选 · 查看与批量申请</Button>}
             </div>;
@@ -302,7 +280,7 @@ export const AssetsPage: React.FC = () => {
           }},
           {title:<TitleWithHelp title="可达性" helpTitle="资产可达性（ICMP）" help="新增或编辑表单可测试当前填写的数字 IP，不保存测试结果。平台启动后立即探测清册中的主机，此后每轮完成后间隔 60 秒继续；无响应不等于主机离线，也不会跳过 TCP 探测。"/>,key:'reach',width:120,render:(_:unknown,asset:Asset)=>{
             const reach=reachability(asset);
-            return <div style={{display:'flex',flexDirection:'column',gap:2,alignItems:'flex-start'}}><StatusPill tone={reach.tone}>{reach.label}</StatusPill>{asset.reachabilityCheckedAt&&<span style={small}>{new Date(asset.reachabilityCheckedAt).toLocaleString()}</span>}</div>;
+            return <div style={{display:'flex',flexDirection:'column',gap:2,alignItems:'flex-start'}}><StatusPill tone={reach.tone}>{reach.label}</StatusPill>{asset.reachabilityCheckedAt&&<span style={small}>{formatTime(asset.reachabilityCheckedAt)}</span>}</div>;
           }},
           {title:'操作',key:'actions',width:110,fixed:'right',render:(_:unknown,asset:Asset)=><Space size={0}>
             <Button type="link" size="small" disabled={!canEdit} onClick={()=>openEdit(asset)}>编辑</Button>
@@ -317,7 +295,7 @@ export const AssetsPage: React.FC = () => {
         <div style={{display:'flex',flexWrap:'wrap',alignItems:'center',justifyContent:'space-between',gap:12}}>
           <div style={{display:'flex',flexDirection:'column',gap:4}}>
             <span style={{display:'flex',flexWrap:'wrap',alignItems:'center',gap:8,fontSize:18,fontWeight:600,color:palette.text}}><Mono>{detailAsset.address}</Mono>{detailAsset.isCore&&<StatusPill tone="warning">核心资产</StatusPill>}</span>
-            <span style={small}>{detailAsset.name||'未命名'} · {detailAsset.kind==='host'?'主机':'镜像仓库'} · {detailAsset.businessGroup} · {detailAsset.owner} · 登记于 {new Date(detailAsset.createdAt).toLocaleDateString()}</span>
+            <span style={small}>{detailAsset.name||'未命名'} · {detailAsset.kind==='host'?'主机':'镜像仓库'} · {detailAsset.businessGroup} · {detailAsset.owner} · 登记于 {formatDate(detailAsset.createdAt)}</span>
           </div>
           <Space wrap>
             {detailAsset.kind==='host'&&<Button loading={checkingAsset===detailAsset.id} onClick={()=>void checkReachability(detailAsset)}>检测可达性</Button>}
@@ -328,8 +306,8 @@ export const AssetsPage: React.FC = () => {
         <AutoGrid min={180} gap={12}>
           <StatCard title="活动漏洞" value={insightError?'—':(detailInsight?.activeFindingCount??0).toLocaleString()} valueColor={(detailInsight?.activeFindingCount??0)>0?palette.severity.HIGH.fg:palette.success}/>
           <StatCard title="开放端口候选" value={detailProbe?.status==='COMPLETED'?detailProbe.openPorts.length:'—'} footer={detailProbe?.status==='COMPLETED'?(compressPorts(detailProbe.openPorts)||'无'):'尚未完成探测'}/>
-          <StatCard title="最近扫描" value={detailLatest?<TaskStatusTag value={detailLatest.status}/>:'—'} footer={detailLatest?new Date(detailLatest.finishedAt??detailLatest.createdAt).toLocaleString():'尚未扫描'}/>
-          <StatCard title="可达性" value={detailReach?<StatusPill tone={detailReach.tone}>{detailReach.label}</StatusPill>:'—'} footer={detailAsset.reachabilityCheckedAt?new Date(detailAsset.reachabilityCheckedAt).toLocaleString():'无响应不代表离线'}/>
+          <StatCard title="最近扫描" value={detailLatest?<TaskStatusTag value={detailLatest.status}/>:'—'} footer={detailLatest?formatTime(detailLatest.finishedAt??detailLatest.createdAt):'尚未扫描'}/>
+          <StatCard title="可达性" value={detailReach?<StatusPill tone={detailReach.tone}>{detailReach.label}</StatusPill>:'—'} footer={formatTime(detailAsset.reachabilityCheckedAt,'无响应不代表离线')}/>
         </AutoGrid>
         <Panel title="基本信息">
           <dl style={{margin:0,display:'grid',gridTemplateColumns:'repeat(auto-fit, minmax(260px, 1fr))',gap:'10px 24px',fontSize:13}}>
@@ -348,7 +326,7 @@ export const AssetsPage: React.FC = () => {
           {title:'软件 / 版本',width:160,render:(_,r)=>[r.software,r.version].filter(Boolean).join(' ')||'未识别'},
           {title:'技术栈',render:(_,r)=>[r.middleware,r.language,r.framework,r.database,r.application].filter(Boolean).join(' / ')||'未识别'},
           {title:'网站',width:220,render:(_,r)=><div style={{display:'flex',flexDirection:'column',gap:2,minWidth:0}}><Mono style={{overflowWrap:'anywhere'}}>{r.url||'—'}</Mono><span style={small}>{r.title||'无标题'} · TLS {boolLabel(r.tls)}</span></div>},
-          {title:'最近发现',width:160,dataIndex:'lastSeen',render:(v:string)=><span style={small}>{v?new Date(v).toLocaleString():'未知'}</span>},
+          {title:'最近发现',width:160,dataIndex:'lastSeen',render:(v:string)=><span style={small}>{formatTime(v,'未知')}</span>},
         ]}/></Panel>
         <Panel flush title="SSH 运行态服务与容器" extra={<TitleWithHelp title={<span style={small}>采集范围</span>} helpTitle="SSH 只读采集范围" help="仅展示明确授权主机通过 SSH 只读采集到的服务单元、进程名和本机 Docker/Podman 容器名、镜像引用与运行状态，不包含 PID、命令行、参数、容器内容、卷或集群工作负载。"/>}><DataTable dataSource={detailAsset.runtimeServices??[]} rowKey={r=>`${r.manager}-${r.runtime??''}-${r.name}`} size="small" pagination={(detailAsset.runtimeServices?.length??0)>10?{pageSize:10}:false} locale={{emptyText:'本次 SSH 采集没有返回运行态服务或容器'}} columns={[
           {title:'名称',dataIndex:'name',width:240,render:(v:string)=><Mono>{v}</Mono>},{title:'管理方式',dataIndex:'manager',width:140,render:(v:string)=>v==='systemd'?'systemd':v==='init'?'init 脚本':v==='process'?'进程表':'容器运行时'},{title:'运行时 / 镜像',render:(_,r)=>r.manager==='container'?<Mono>{[r.runtime,r.image].filter(Boolean).join(' · ')||'未提供'}</Mono>:'—'},{title:'状态',dataIndex:'state',width:110,render:(v:string)=>v==='running'?<StatusPill tone="ok">运行中</StatusPill>:v==='stopped'?<StatusPill tone="warning">已停止</StatusPill>:<StatusPill tone="neutral">已安装</StatusPill>},
@@ -361,14 +339,14 @@ export const AssetsPage: React.FC = () => {
           {title:'严重度',dataIndex:'severity',width:96,render:(value:string)=><SeverityTag value={value as Finding['severity']}/>},
           {title:'漏洞',key:'title',render:(_,item)=><div style={{display:'flex',flexDirection:'column',gap:2,minWidth:0}}><Mono>{item.templateOrCve}</Mono><span style={{...small,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={item.title}>{item.title}</span></div>},
           {title:'状态',dataIndex:'status',width:120,render:(value:string)=><FindingStatusTag value={value as Finding['status']}/>},
-          {title:'最近发现',dataIndex:'lastSeen',width:170,render:(value:string)=><span style={small}>{new Date(value).toLocaleString()}</span>},
+          {title:'最近发现',dataIndex:'lastSeen',width:170,render:(value:string)=><span style={small}>{formatTime(value)}</span>},
         ]}/></Panel>
         <Panel flush title="扫描历史"><DataTable<AssetInsight['recentTasks'][number]> dataSource={detailInsight?.recentTasks??[]} rowKey="id" loading={insightLoading} locale={{emptyText:'尚未发起扫描'}} pagination={{pageSize:5,hideOnSinglePage:true}} scroll={{x:800}} columns={[
           {title:'任务',dataIndex:'id',width:220,ellipsis:true,render:(value:string)=><Mono>{value}</Mono>},
           {title:'执行方式',render:(_,item)=>item.engines[0]==='auto'?'自动综合扫描':item.engines[0]==='trivy'?'离线输入扫描':item.engines.join(' / ')||'未知'},
           {title:'状态',dataIndex:'status',width:120,render:(value:string)=><TaskStatusTag value={value}/>},
           {title:'发现数',dataIndex:'findingCount',width:90,render:(value:number)=><Mono>{value}</Mono>},
-          {title:'创建时间',dataIndex:'createdAt',width:170,render:(value:string)=><span style={small}>{new Date(value).toLocaleString()}</span>},
+          {title:'创建时间',dataIndex:'createdAt',width:170,render:(value:string)=><span style={small}>{formatTime(value)}</span>},
         ]}/></Panel>
       </div>}
     </Drawer>
@@ -408,7 +386,7 @@ export const AssetsPage: React.FC = () => {
       onCancel={()=>{setCandidateAsset(null);setSelectedCandidatePorts([]);setCandidateFilter('');}}
       footer={<Space style={{width:'100%',justifyContent:'space-between'}}><Text type="secondary">已选 {selectedCandidatePorts.length} 个 · 每次最多申请 1024 个</Text><Space><Button onClick={()=>{setCandidateAsset(null);setSelectedCandidatePorts([]);setCandidateFilter('');}}>关闭</Button><Button type="primary" disabled={!canEdit||selectedCandidatePorts.length===0} loading={requestingCandidates} onClick={()=>void requestSelectedCandidates()}>申请选中端口</Button></Space></Space>}>
       <Alert type="info" showIcon style={{marginBottom:12}} message={`本次探测发现 ${candidateRows.length} 个开放候选。开放结果只是候选；所选端口会逐个提交给运维审批。`} />
-      <Input.Search allowClear placeholder="按端口号筛选" value={candidateFilter} onChange={event=>setCandidateFilter(event.target.value)} style={{marginBottom:12,maxWidth:280}}/>
+      <Input.Search aria-label="候选端口筛选" allowClear placeholder="按端口号筛选" value={candidateFilter} onChange={event=>setCandidateFilter(event.target.value)} style={{marginBottom:12,maxWidth:280}}/>
       <DataTable<CandidateRow> rowKey="port" size="small" dataSource={filteredCandidateRows} pagination={{pageSize:25,showSizeChanger:true,pageSizeOptions:[25,50,100],showTotal:(total)=>`共 ${total} 个候选`}} scroll={{y:420}}
         rowSelection={{selectedRowKeys:selectedCandidatePorts,preserveSelectedRowKeys:true,getCheckboxProps:row=>({disabled:!row.requestable||!canEdit}),onChange:keys=>{
           if(keys.length>1024){message.warning('一次最多选择 1024 个端口申请');setSelectedCandidatePorts(keys.slice(0,1024));return;}

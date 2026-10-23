@@ -59,9 +59,12 @@ export function useQuery<R>(fetcher: (signal: AbortSignal) => Promise<R>, key: r
   fetcherRef.current = fetcher;
   const emptyRef = useRef(options.emptyValue);
   const keyString = JSON.stringify(key);
+  const loadedFor = useRef('');
   useEffect(() => {
     if (!enabled) return;
-    setLoading(true);
+    // A new key or reload() shows loading; a changed poll interval does not.
+    const target = keyString + '#' + revision;
+    if (loadedFor.current !== target) { loadedFor.current = target; setLoading(true); }
     return startQuery<R>({
       fetch: signal => fetcherRef.current(signal),
       onData: next => { setData(next); setError(null); },

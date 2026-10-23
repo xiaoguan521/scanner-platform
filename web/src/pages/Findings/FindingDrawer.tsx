@@ -9,6 +9,7 @@ import { confidenceLabels, methodLabels, riskLabels } from './presentation';
 import { detailIdentifiers, detailList, detailText } from './drawer';
 import { acceptanceInput, canAcceptRisk } from './disposition';
 import { findingNoteInput } from './work';
+import { formatTime } from '../../utils/time';
 import { retestIsActive, retestStatusLabel } from './retest';
 const { Text } = Typography;
 
@@ -162,9 +163,9 @@ export const FindingDrawer: React.FC<{
           <Descriptions title="时间与未检出计数" column={1} size="small" bordered
             styles={{ content: { overflowWrap: 'anywhere' } }}
             items={[
-              { label: '首次检出', children: detailText(selectedFinding.firstSeen) },
-              { label: '最近检出', children: detailText(selectedFinding.lastSeen) },
-              { label: '修复时间', children: detailText(selectedFinding.resolvedAt) },
+              { label: '首次检出', children: formatTime(selectedFinding.firstSeen, '未提供') },
+              { label: '最近检出', children: formatTime(selectedFinding.lastSeen, '未提供') },
+              { label: '修复时间', children: formatTime(selectedFinding.resolvedAt, '未提供') },
               { label: '连续未检出次数', children: detailText(selectedFinding.consecutiveMisses) },
             ].map((item, key) => ({ ...item, key }))}
           />
@@ -172,7 +173,7 @@ export const FindingDrawer: React.FC<{
             <Typography.Title level={5}>风险处置</Typography.Title>
             {selectedFinding.status==='ACCEPTED_RISK' && <Space direction="vertical" style={{width:'100%'}}>
               <Text style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>接受原因：{detailText(selectedFinding.acceptedReason)}</Text>
-              <Text>到期时间：{detailText(selectedFinding.acceptedUntil)}</Text>
+              <Text>到期时间：{formatTime(selectedFinding.acceptedUntil, '未提供')}</Text>
             <Button loading={saving} disabled={!canWrite} onClick={()=>void handleUpdateStatus(selectedFinding.id,'OPEN')}>撤销接受风险</Button>
             </Space>}
             {canAcceptRisk(selectedFinding.status)&&<Space direction="vertical" style={{width:'100%'}}>
@@ -192,11 +193,11 @@ export const FindingDrawer: React.FC<{
               <label htmlFor="finding-assignee">处置人（可清除指派）</label>
               <Select id="finding-assignee" aria-label="漏洞处置人" allowClear style={{width:'100%'}} value={assigneeId||undefined} onChange={value=>setAssigneeId(value??'')} options={assignees.map(item=>({value:item.id,label:item.name}))} disabled={workSaving||!canWrite||Boolean(workError)} placeholder="未指派" />
               <Button loading={workSaving} disabled={!canWrite||Boolean(workError)||assigneeId===(selectedFinding.assigneeId??'')} onClick={()=>void saveAssignment(selectedFinding.id)}>保存指派</Button>
-              {assignmentEvents.length?<Timeline items={assignmentEvents.map(event=>({key:event.id,children:<Space direction="vertical" size={2}><Text>指派：{event.fromAssigneeId||'未指派'} → {event.toAssigneeId||'未指派'}</Text><Text type="secondary">{event.createdAt} · 操作者 {event.actor}</Text></Space>}))}/>:<Text type="secondary">暂无指派历史</Text>}
+              {assignmentEvents.length?<Timeline items={assignmentEvents.map(event=>({key:event.id,children:<Space direction="vertical" size={2}><Text>指派：{event.fromAssigneeId||'未指派'} → {event.toAssigneeId||'未指派'}</Text><Text type="secondary">{formatTime(event.createdAt)} · 操作者 {event.actor}</Text></Space>}))}/>:<Text type="secondary">暂无指派历史</Text>}
               <label htmlFor="finding-note">追加备注（最多 2000 UTF-8 字节，单行纯文本）</label>
               <Input id="finding-note" value={noteBody} onChange={event=>setNoteBody(event.target.value)} disabled={workSaving||!canWrite} />
               <Button loading={workSaving} disabled={!canWrite||!noteBody.trim()} onClick={()=>void saveNote(selectedFinding.id)}>追加备注</Button>
-              {notes.length?<Timeline items={notes.map(note=>({key:note.id,children:<Space direction="vertical" size={2}><Text type="secondary">{note.createdAt} · {note.actorName||note.actor}</Text><Text style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{note.body}</Text></Space>}))}/>:<Text type="secondary">暂无备注</Text>}
+              {notes.length?<Timeline items={notes.map(note=>({key:note.id,children:<Space direction="vertical" size={2}><Text type="secondary">{formatTime(note.createdAt)} · {note.actorName||note.actor}</Text><Text style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{note.body}</Text></Space>}))}/>:<Text type="secondary">暂无备注</Text>}
             </Space>
           </section>
           <section style={{width:'100%'}}>
@@ -205,13 +206,13 @@ export const FindingDrawer: React.FC<{
             <Space direction="vertical" style={{width:'100%'}}>
               <Text type="secondary">复测只复用原任务冻结的目标、端口策略和授权，不会接受新的扫描目标。</Text>
               <Button type="primary" loading={retestSaving} disabled={!canWrite||selectedFinding.synthetic===true||selectedFinding.status==='FALSE_POSITIVE'||retests.some(retestIsActive)} onClick={()=>void startRetest(selectedFinding.id)}>重新扫描该漏洞</Button>
-              {retests.length?<Timeline items={retests.map(item=>({key:item.id,children:<Space direction="vertical" size={2}><Text>{retestStatusLabel(item.status)} · 任务 {item.taskId}</Text><Text type="secondary">{item.createdAt} · {item.actor}</Text></Space>}))}/>:<Text type="secondary">暂无复测记录</Text>}
+              {retests.length?<Timeline items={retests.map(item=>({key:item.id,children:<Space direction="vertical" size={2}><Text>{retestStatusLabel(item.status)} · 任务 {item.taskId}</Text><Text type="secondary">{formatTime(item.createdAt)} · {item.actor}</Text></Space>}))}/>:<Text type="secondary">暂无复测记录</Text>}
             </Space>
           </section>
           <section style={{width:'100%'}}>
             <Typography.Title level={5}>状态变更记录</Typography.Title>
             {eventsError&&<Alert type="error" message={eventsError} />}
-            {events.length?<Timeline items={events.map(event=>({key:event.id,children:<Space direction="vertical" size={2}><Text>{event.fromStatus} → {event.toStatus}</Text><Text type="secondary">{event.createdAt} · {event.actor}</Text>{event.reason&&<Text style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{event.reason}</Text>}</Space>}))}/>:<Text type="secondary">暂无状态变更记录</Text>}
+            {events.length?<Timeline items={events.map(event=>({key:event.id,children:<Space direction="vertical" size={2}><Text>{event.fromStatus} → {event.toStatus}</Text><Text type="secondary">{formatTime(event.createdAt)} · {event.actor}</Text>{event.reason&&<Text style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{event.reason}</Text>}</Space>}))}/>:<Text type="secondary">暂无状态变更记录</Text>}
           </section>
           <Descriptions title="关联标识" column={1} size="small" bordered
             styles={{ content: { overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' } }}

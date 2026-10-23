@@ -8,6 +8,7 @@ import { DataTable } from '../../components/DataState';
 import { apiClient, errorMessage } from '../../api/client';
 import { usePageState, useQuery } from '../../api/query';
 import { useAuth } from '../../auth/AuthProvider';
+import { formatTime } from '../../utils/time';
 import type { BusinessGroup } from '../../types';
 
 export const BusinessGroupsPage: React.FC = () => {
@@ -60,7 +61,7 @@ export const BusinessGroupsPage: React.FC = () => {
           columns={[
             { title: '业务组', dataIndex: 'name', ellipsis: true, render: (name: string) => <Typography.Text strong>{name}</Typography.Text> },
             { title: '资产数', dataIndex: 'assetCount', width: 140, render: (count: number) => <StatusPill tone={count ? 'running' : 'neutral'}>{count} 台</StatusPill> },
-            { title: '创建时间', dataIndex: 'createdAt', width: 220, render: (value: string) => <Mono>{new Date(value).toLocaleString()}</Mono> },
+            { title: '创建时间', dataIndex: 'createdAt', width: 220, render: (value: string) => <Mono>{formatTime(value)}</Mono> },
           ]}
         />
       </Panel>

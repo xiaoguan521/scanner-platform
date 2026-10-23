@@ -14,10 +14,11 @@ import type { Tone } from '../../theme/palette';
 import { activateRules, createCustomRule, deleteCustomRule, fetchRules, importRules, updateCustomRule } from '../../api/runtime';
 import type { CustomRule, NodeCredential, NodeInfo, NodeLifecycle, NodeLifecycleEvent, RuleBundle, RuleJob } from '../../types';
 
+import { formatTime } from '../../utils/time';
 import { ScanPolicySettings } from './ScanPolicySettings';
 type CustomRuleForm={id:string;name:string;severity:CustomRule['severity'];description:string;matchType:CustomRule['matchType'];path:string;part:'header'|'body';valuesText:string;statusCodesText:string;enabled:boolean};
 type NodeRegistrationForm=Pick<NodeLifecycle,'id'|'kind'|'hostId'>;
-const formatNodeTime=(value?:string)=>value?new Date(value).toLocaleString():'—';
+const formatNodeTime=(value?:string)=>formatTime(value,'—');
 const lifecycleStatusLabel=(value:NodeLifecycle['status'])=>({REGISTERED:'已登记',ONLINE:'在线',OFFLINE:'离线',REVOKED:'已吊销'}[value]);
 const lifecycleEventLabel=(value:NodeLifecycleEvent['kind'])=>({REGISTERED:'登记',ONLINE:'上线',OFFLINE:'离线',RECOVERED:'恢复',REVOKED:'吊销'}[value]);
 
@@ -108,7 +109,7 @@ export const NodesPage:React.FC=()=>{
         {title:'引擎数据',key:'engines',width:130,render:(_,b)=>b.engines?.join('、')||'—'},
         {title:'校验',key:'checks',width:230,render:(_,b)=><div style={{display:'flex',flexWrap:'wrap',gap:4}}><StatusPill tone={b.integrityVerified?'ok':'neutral'}>哈希{b.integrityVerified?'已验证':'未验证'}</StatusPill><StatusPill tone={b.signatureVerified?'ok':'warning'}>签名{b.signatureVerified?'已验证':'未验证'}</StatusPill><StatusPill tone={b.engineValidated?'ok':'neutral'}>兼容性{b.engineValidated?'已验证':'未验证'}</StatusPill></div>},
         {title:'Manifest SHA-256',key:'sha',render:(_,b)=><Mono style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',display:'block',...small}} title={b.manifestSha256}>{b.manifestSha256}</Mono>},
-        {title:'导入时间',key:'published',width:170,render:(_,b)=><span style={small}>{new Date(b.publishedAt).toLocaleString()}</span>},
+        {title:'导入时间',key:'published',width:170,render:(_,b)=><span style={small}>{formatTime(b.publishedAt)}</span>},
         {title:'操作',key:'actions',width:150,render:(_,b)=><Space size={0}><Button type="link" size="small" disabled={!canWrite||b.isCurrent||!b.signatureVerified} loading={busy} onClick={()=>void run(()=>activateRules(b.version,false))}>激活</Button><Button type="link" size="small" danger disabled={!canWrite||b.isCurrent||!b.signatureVerified} onClick={()=>Modal.confirm({title:'显式回滚到 '+b.version+'？',content:'将切换本地规则指针并记录审计。当前不会启动扫描。',onOk:()=>run(()=>activateRules(b.version,true))})}>显式回滚</Button></Space>},
       ]}/>
     </Panel>
@@ -118,7 +119,7 @@ export const NodesPage:React.FC=()=>{
         {title:'版本',dataIndex:'version',width:180,render:(v:string)=><Mono>{v||'—'}</Mono>},
         {title:'状态',dataIndex:'status',width:110,render:(v:string)=>{const state=jobStates[v]??{tone:'neutral' as Tone,label:v};return <StatusPill tone={state.tone}>{state.label}</StatusPill>;}},
         {title:'说明',dataIndex:'message',render:(v:string)=><span style={{overflowWrap:'anywhere'}}>{v}</span>},
-        {title:'提交时间',dataIndex:'createdAt',width:170,render:(v:string)=><span style={small}>{new Date(v).toLocaleString()}</span>},
+        {title:'提交时间',dataIndex:'createdAt',width:170,render:(v:string)=><span style={small}>{formatTime(v)}</span>},
       ]}/>
     </Panel>
   </div>;
@@ -137,7 +138,7 @@ export const NodesPage:React.FC=()=>{
   return <div style={{display:'flex',flexDirection:'column',gap:16}}>
     <PageHeader title="节点与规则库" description="扫描节点心跳、引擎状态、规则包版本和自定义规则"
       extra={<Button type="primary" disabled={!canAdmin} onClick={()=>{nodeForm.resetFields();nodeForm.setFieldsValue({kind:'worker'});setNodeRegisterOpen(true);}}>登记节点</Button>}/>
-    <CollectionNotice loading={systemLoading&&nodes.length===0&&bundles.length===0} error={systemError}/>
+    <CollectionNotice loading={systemLoading} error={systemError} hasData={nodes.length>0||bundles.length>0||jobs.length>0||customRules.length>0}/>
     <AutoGrid min={200} gap={12}>
       <StatCard title="在线节点" value={onlineNodes} suffix={`/ ${nodeTotal}`} valueColor={onlineNodes?palette.success:palette.textTertiary}/>
       <StatCard title="引擎就绪" value={readyEngines} suffix={`/ ${engines.length}`} valueColor={engines.length&&readyEngines===engines.length?palette.success:readyEngines?palette.warning:palette.textTertiary}/>

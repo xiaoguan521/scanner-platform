@@ -7,6 +7,7 @@ import { ReloadOutlined } from '@ant-design/icons';
 import { DataTable } from '../../components/DataState';
 import { apiClient } from '../../api/client';
 import { usePageState, useQuery } from '../../api/query';
+import { formatTime } from '../../utils/time';
 import type { AssetImportHistory } from '../../types';
 
 export const AssetImportHistoryPage: React.FC = () => {
@@ -32,7 +33,7 @@ export const AssetImportHistoryPage: React.FC = () => {
           locale={{ emptyText: <Empty description={search ? '没有符合条件的导入记录' : '暂无导入记录'} /> }}
           pagination={{ current: page, pageSize, total, showSizeChanger: true, pageSizeOptions: [15, 30, 60], showTotal: count => `共 ${count} 条记录`, onChange: onPageChange }}
           columns={[
-            { title: '导入时间', dataIndex: 'createdAt', width: 220, render: (value: string) => <Mono>{new Date(value).toLocaleString()}</Mono> },
+            { title: '导入时间', dataIndex: 'createdAt', width: 220, render: (value: string) => <Mono>{formatTime(value)}</Mono> },
             { title: '操作者', dataIndex: 'actor', width: 200, ellipsis: true, render: (value: string) => <Mono>{value}</Mono> },
             { title: '结果', dataIndex: 'imported', render: (value: number, row: AssetImportHistory) => <Space size={8}><StatusPill tone={value === row.total ? 'ok' : 'warning'}>成功 {value} 条</StatusPill><Typography.Text type="secondary">共 {row.total} 条</Typography.Text></Space> },
           ]}

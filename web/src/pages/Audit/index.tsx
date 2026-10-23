@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { DataTable } from '../../components/DataState';
 import { Alert, Button, DatePicker, Empty, Input, Space } from 'antd';
 import { Mono, StatusPill } from '../../components/Semantic';
@@ -7,8 +7,10 @@ import { useAppTheme } from '../../context/ThemeContext';
 import { TitleWithHelp } from '../../components/HelpTip';
 import type { Dayjs } from 'dayjs';
 import { ReloadOutlined, SearchOutlined } from '@ant-design/icons';
-import { requestJSON, errorMessage } from '../../api/client';
+import { requestJSON } from '../../api/client';
+import { useQuery } from '../../api/query';
 import type { AuditLog } from '../../types';
+import { formatTime } from '../../utils/time';
 import { buildAuditQuery, defaultAuditFilters, type AuditFilters } from './filters';
 
 const pageSize = 50;
@@ -18,28 +20,10 @@ export const AuditPage: React.FC = () => {
   const [filters, setFilters] = useState<AuditFilters>(defaultAuditFilters);
   const [draft, setDraft] = useState<AuditFilters>(defaultAuditFilters);
   const [range, setRange] = useState<[Dayjs | null, Dayjs | null]>([null, null]);
-  const [items, setItems] = useState<AuditLog[]>([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const reload = useCallback(async (signal?: AbortSignal) => {
-    setLoading(true);
-    try {
-      const response = await requestJSON<{ items: AuditLog[]; total: number }>(`/api/v1/audit-logs${buildAuditQuery(filters, pageSize)}`, 'GET', undefined, signal);
-      if (!signal?.aborted) { setItems(response.items); setTotal(response.total); setError(null); }
-    } catch (cause) {
-      if (!signal?.aborted) setError(errorMessage(cause,'审计日志不可用'));
-    } finally {
-      if (!signal?.aborted) setLoading(false);
-    }
-  }, [filters]);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    void reload(controller.signal);
-    return () => controller.abort();
-  }, [reload]);
+  const list = useQuery(signal => requestJSON<{ items: AuditLog[]; total: number }>(`/api/v1/audit-logs${buildAuditQuery(filters, pageSize)}`, 'GET', undefined, signal), [filters], { errorFallback: '审计日志不可用' });
+  const items = list.data?.items ?? [];
+  const total = list.data?.total ?? 0;
+  const { loading, error, reload } = list;
 
   const apply = () => {
     setFilters({ ...draft, page: 1 });
@@ -57,7 +41,7 @@ export const AuditPage: React.FC = () => {
   };
   const small = { fontSize: 12, color: palette.textSecondary };
   const columns = useMemo(() => [
-    { title: '时间', dataIndex: 'createdAt', width: 180, render: (value: string) => <span style={small}>{new Date(value).toLocaleString()}</span> },
+    { title: '时间', dataIndex: 'createdAt', width: 180, render: (value: string) => <span style={small}>{formatTime(value)}</span> },
     { title: '操作者', dataIndex: 'actor', width: 180, render: (value: string) => <Mono style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={value}>{value}</Mono> },
     { title: '动作', dataIndex: 'action', width: 220, render: (value: string) => <Mono style={{ fontWeight: 600 }}>{value}</Mono> },
     { title: '对象类型', dataIndex: 'objectType', width: 130, render: (value: string) => value ? <StatusPill tone="neutral">{value}</StatusPill> : <span style={small}>无</span> },
@@ -77,7 +61,7 @@ export const AuditPage: React.FC = () => {
         {field('时间范围', <DatePicker.RangePicker aria-label="时间范围" value={range} onChange={dateChange} allowEmpty={[true, true]} />)}
       </div>
     </Panel>
-    <Panel flush title={`审计记录（${total.toLocaleString()}）`} extra={<Button icon={<ReloadOutlined />} onClick={() => void reload()} loading={loading}>刷新</Button>}>
+    <Panel flush title={`审计记录（${total.toLocaleString()}）`} extra={<Button icon={<ReloadOutlined />} onClick={reload} loading={loading}>刷新</Button>}>
       <DataTable<AuditLog> rowKey="id" loading={loading} dataSource={items} columns={columns} tableLayout="fixed" locale={{ emptyText: <Empty description="暂无符合条件的审计记录" /> }} pagination={{ current: filters.page, pageSize, total, showSizeChanger: false, showTotal: count => `共 ${count} 条`, onChange: page => setFilters(current => ({ ...current, page })) }} scroll={{ x: 900 }} />
     </Panel>
   </div>;

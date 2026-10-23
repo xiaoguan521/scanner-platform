@@ -62,7 +62,7 @@ export const UsersPage: React.FC = () => {
   return <div style={{display:'flex',flexDirection:'column',gap:16}}>
     <PageHeader title="用户与角色" description={`共 ${users.length} 个账号 · 管理员 ${admins} 个${inactive ? ` · 已停用 ${inactive} 个` : ''}`}
       extra={<Button type="primary" icon={<PlusOutlined/>} disabled={!canManage} onClick={()=>setCreating(true)}>新建用户</Button>}/>
-    <CollectionNotice loading={loading&&users.length===0} error={error}/>
+    <CollectionNotice loading={loading} error={error} hasData={users.length>0}/>
     <Panel flush title="账号列表" extra={<Input.Search aria-label="用户搜索" value={query} onChange={e=>setQuery(e.target.value)} allowClear placeholder="搜索用户名" style={{width:220}}/>}>
       <DataTable<User> dataSource={rows} rowKey="id" loading={loading} tableLayout="fixed" pagination={{pageSize:10,hideOnSinglePage:true,showTotal:total=>`共 ${total} 个账号`}} locale={{emptyText:query?'没有符合条件的用户':'暂无用户'}}
         columns={[

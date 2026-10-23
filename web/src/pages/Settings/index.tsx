@@ -7,6 +7,7 @@ import { useAppTheme } from '../../context/ThemeContext';
 import type { Tone } from '../../theme/palette';
 import { TitleWithHelp } from '../../components/HelpTip';
 import { apiClient, errorMessage } from '../../api/client';
+import { setDisplayTimeZone } from '../../utils/time';
 import { useAuth } from '../../auth/AuthProvider';
 import type { NotificationDeliveryList, NotificationSettings, SystemSettings } from '../../types';
 
@@ -53,6 +54,7 @@ export const SettingsPage: React.FC = () => {
     try {
       const saved = await apiClient.saveSystemSettings(values);
       apply(saved);
+      setDisplayTimeZone(saved.timeZone);
       setError('');
       message.success('系统设置已保存；新登录会话将使用新的时长');
     } catch (err) {

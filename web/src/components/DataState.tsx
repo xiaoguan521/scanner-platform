@@ -21,13 +21,23 @@ export const EmptyState: React.FC<{ description?: ReactNode }> = ({ description 
   <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={description} />
 );
 
+/** Shared pagination look: size changer, total count, and size options around the page size. */
+// A fixed pageSize without onChange cannot change size, so it gets no size changer.
+export function tablePaginationDefaults(pagination?: { pageSize?: number; onChange?: unknown }) {
+  const pageSize = pagination?.pageSize ?? 10;
+  const sizeOptions = [10, 20, 50, 100].includes(pageSize) ? [10, 20, 50, 100] : [pageSize, pageSize * 2, pageSize * 4];
+  const resizable = pagination?.pageSize === undefined || Boolean(pagination.onChange);
+  return { showSizeChanger: resizable, pageSizeOptions: sizeOptions, showTotal: (total: number) => `共 ${total} 条` };
+}
+
 export function DataTable<RecordType extends object = Record<string, unknown>>(
   props: TableProps<RecordType>,
 ) {
-  const { locale, ...rest } = props;
+  const { locale, pagination, ...rest } = props;
   return (
     <Table<RecordType>
       {...rest}
+      pagination={pagination === false ? false : { ...tablePaginationDefaults(pagination || undefined), ...pagination }}
       locale={{ emptyText: <EmptyState />, ...locale }}
     />
   );

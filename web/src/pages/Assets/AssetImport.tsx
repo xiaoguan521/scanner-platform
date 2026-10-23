@@ -3,6 +3,7 @@ import { DataTable } from '../../components/DataState';
 import {Alert, Button, Checkbox, message, Modal, Space, Typography} from 'antd';
 import {apiClient,errorMessage} from '../../api/client';
 import {assertImportFile,canConfirmImport} from './import';
+import { formatTime } from '../../utils/time';
 import type {AssetImportPreview,AssetImportRow} from './import';
 
 export const AssetImport:React.FC<{disabled:boolean;onImported:()=>Promise<void>}>=({disabled,onImported})=>{
@@ -40,7 +41,7 @@ export const AssetImport:React.FC<{disabled:boolean;onImported:()=>Promise<void>
         <Space><Button href="/api/v1/assets/import/template" download>下载 CSV 模板</Button><input type="file" accept=".csv,text/csv" disabled={busy} aria-label="选择资产 CSV 文件" onChange={e=>{const file=e.target.files?.[0];e.target.value='';if(file)void upload(file);}}/></Space>
         {error&&<Alert type="error" showIcon message={error}/>}
         {preview&&<>
-          <Typography.Text>共 {preview.total} 行，可导入 {preview.valid} 行，错误 {preview.invalid} 行。{preview.expiresAt?`预览有效至 ${new Date(preview.expiresAt).toLocaleTimeString()}，新预览会替换旧预览。`:''}</Typography.Text>
+          <Typography.Text>共 {preview.total} 行，可导入 {preview.valid} 行，错误 {preview.invalid} 行。{preview.expiresAt?`预览有效至 ${formatTime(preview.expiresAt)}，新预览会替换旧预览。`:''}</Typography.Text>
           <DataTable<AssetImportRow> size="small" rowKey="row" dataSource={preview.rows} pagination={{pageSize:10}} scroll={{x:850}} columns={[
             {title:'行',dataIndex:'row',width:55},{title:'类型',dataIndex:'kind',width:100},{title:'地址',dataIndex:'address',ellipsis:true},{title:'业务组',dataIndex:'businessGroup',ellipsis:true},{title:'负责人',dataIndex:'owner',ellipsis:true},{title:'名称',dataIndex:'name',ellipsis:true},{title:'校验结果',dataIndex:'reason',render:(reason:string)=>reason||'可导入'},
           ]}/>
