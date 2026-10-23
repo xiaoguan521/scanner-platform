@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { DataTable } from '../../components/DataState';
-import { Button, Card, Col, Descriptions, Drawer, Form, Input, InputNumber, message, Modal, Row, Select, Space, Tag, Typography } from 'antd';
+import { Button, Col, Descriptions, Drawer, Form, Input, InputNumber, message, Modal, Row, Select, Space, Typography } from 'antd';
+import { Mono, StatusPill } from '../../components/Semantic';
+import { PageHeader, Panel } from '../../components/Page';
 import { TitleWithHelp } from '../../components/HelpTip';
 import { PlusOutlined, UploadOutlined } from '@ant-design/icons';
 import { useCollection } from '../../api/hooks';
@@ -39,18 +41,24 @@ export const KnowledgePage:React.FC=()=>{
       const result=await importKnowledge(imported);setPage(1);await reload();message.success(`已导入 ${result.imported??imported.length} 条知识`);
     }catch(e){message.error(e instanceof Error?e.message:'导入失败');}finally{setBusy(false);if(fileRef.current)fileRef.current.value='';}
   };
-  return <Space direction="vertical" size={16} style={{width:'100%'}}>
-    <CollectionNotice loading={loading} error={error}/>
-    <Card title={<TitleWithHelp title="漏洞知识库" helpTitle="漏洞知识库与中文修复建议" help="支持本地 JSON 导入和自建中文内容。条目用于组件版本匹配与发现项内容补全；版本匹配结果标注为版本推断。CNNVD、CNVD 等数据源尚未接入，可人工填写外部编号。"/>} extra={<Space wrap><input ref={fileRef} type="file" accept=".json,application/json" style={{display:'none'}} onChange={e=>void importFile(e.target.files?.[0])}/><Button icon={<UploadOutlined/>} disabled={!canWrite} loading={busy} onClick={()=>fileRef.current?.click()}>导入本地 JSON</Button><Button type="primary" icon={<PlusOutlined/>} disabled={!canWrite} onClick={()=>edit()}>新增条目</Button></Space>}>
-      <Input.Search aria-label="搜索知识条目" value={query} onChange={e=>{setQuery(e.target.value);setPage(1);}} allowClear placeholder="搜索平台编号、标题、组件或外部编号" style={{maxWidth:480,marginBottom:16}}/>
-      <DataTable<KnowledgeEntry> rowKey="id" dataSource={items} loading={loading} scroll={{x:1100}} pagination={{current:page,pageSize,total,showSizeChanger:true,pageSizeOptions:[15,30,60],showTotal:n=>`共 ${n} 条`,onChange:(nextPage,nextSize)=>{if(nextSize!==pageSize){setPageSize(nextSize);setPage(1);}else setPage(nextPage);}}} columns={[
-        {title:'平台编号',dataIndex:'id',width:170},{title:'中文标题',dataIndex:'title',render:(v:string,r)=><Button type="link" style={{padding:0,whiteSpace:'normal',textAlign:'left'}} onClick={()=>setDetail(r)}>{v}</Button>},
-        {title:'组件',dataIndex:'component',width:150},{title:'CVSS',dataIndex:'cvssScore',width:85,render:(v:number|undefined)=>v??'未提供'}, {title:'分类',dataIndex:'category',width:140},
-        {title:'内容',dataIndex:'language',width:125,render:(v:string)=><Tag color={v==='zh-CN'?'green':'orange'}>{v==='zh-CN'?'中文':'原文待中文化'}</Tag>},
-        {title:'来源',dataIndex:'source',width:150},{title:'操作',width:140,render:(_,r)=><Space><Button size="small" disabled={!canWrite} onClick={()=>edit(r)}>编辑</Button><Button size="small" danger disabled={!canWrite} onClick={()=>remove(r)}>删除</Button></Space>},
+  const chinese=items.filter(i=>i.language==='zh-CN').length;
+  return <div style={{display:'flex',flexDirection:'column',gap:16}}>
+    <PageHeader title={<TitleWithHelp title="漏洞知识库" helpTitle="漏洞知识库与中文修复建议" help="支持本地 JSON 导入和自建中文内容。条目用于组件版本匹配与发现项内容补全；版本匹配结果标注为版本推断。CNNVD、CNVD 等数据源尚未接入，可人工填写外部编号。导入格式为条目数组或 {&quot;items&quot;: [...]}，每条包含 id、title、component、affectedRanges、description、impact、solution、references、identifiers、category、source、language；单文件最多 5 MiB。"/>}
+      description={`共 ${total} 条知识${items.length?` · 本页中文内容 ${chinese}/${items.length}`:''}`}
+      extra={<Space wrap><input ref={fileRef} type="file" accept=".json,application/json" style={{display:'none'}} onChange={e=>void importFile(e.target.files?.[0])}/><Button icon={<UploadOutlined/>} disabled={!canWrite} loading={busy} onClick={()=>fileRef.current?.click()}>导入本地 JSON</Button><Button type="primary" icon={<PlusOutlined/>} disabled={!canWrite} onClick={()=>edit()}>新增条目</Button></Space>}/>
+    <CollectionNotice loading={loading&&items.length===0} error={error}/>
+    <Panel flush title="知识条目" extra={<Input.Search aria-label="搜索知识条目" value={query} onChange={e=>{setQuery(e.target.value);setPage(1);}} allowClear placeholder="搜索平台编号、标题、组件或外部编号" style={{width:320}}/>}>
+      <DataTable<KnowledgeEntry> rowKey="id" dataSource={items} loading={loading} tableLayout="fixed" scroll={{x:1100}} locale={{emptyText:query?'没有符合条件的知识条目':'暂无知识条目，可导入本地 JSON 或新增条目'}} pagination={{current:page,pageSize,total,showSizeChanger:true,pageSizeOptions:[15,30,60],showTotal:n=>`共 ${n} 条`,onChange:(nextPage,nextSize)=>{if(nextSize!==pageSize){setPageSize(nextSize);setPage(1);}else setPage(nextPage);}}} columns={[
+        {title:'平台编号',dataIndex:'id',width:190,ellipsis:true,render:(v:string)=><Mono title={v}>{v}</Mono>},
+        {title:'中文标题',dataIndex:'title',render:(v:string,r)=><Button type="link" style={{padding:0,height:'auto',whiteSpace:'normal',textAlign:'left'}} onClick={()=>setDetail(r)}>{v}</Button>},
+        {title:'组件',dataIndex:'component',width:160,ellipsis:true,render:(v:string)=><Mono title={v}>{v}</Mono>},
+        {title:'CVSS',dataIndex:'cvssScore',width:80,render:(v:number|undefined)=>v==null?<Typography.Text type="secondary">—</Typography.Text>:<Mono style={{fontWeight:600}}>{v.toFixed(1)}</Mono>},
+        {title:'分类',dataIndex:'category',width:140,ellipsis:true,render:(v:string|undefined)=>categories.find(c=>c.id===v)?.name??v??'—'},
+        {title:'内容',dataIndex:'language',width:130,render:(v:string)=><StatusPill tone={v==='zh-CN'?'ok':'warning'}>{v==='zh-CN'?'中文':'原文待中文化'}</StatusPill>},
+        {title:'来源',dataIndex:'source',width:150,ellipsis:true},
+        {title:'操作',key:'actions',width:120,render:(_,r)=><Space size={0}><Button type="link" size="small" disabled={!canWrite} onClick={()=>edit(r)}>编辑</Button><Button type="link" size="small" danger disabled={!canWrite} onClick={()=>remove(r)}>删除</Button></Space>},
       ]}/>
-      <Typography.Paragraph type="secondary" style={{marginBottom:0}}>导入格式为条目数组或 {`{"items": [...]}`}。每条包含 id、title、component、affectedRanges、description、impact、solution、references、identifiers、category、source、language；单文件最多 5 MiB。</Typography.Paragraph>
-    </Card>
+    </Panel>
     <Modal title={editing?'编辑知识条目':'新增知识条目'} open={open} width={840} onCancel={()=>setOpen(false)} onOk={()=>form.submit()} confirmLoading={busy} destroyOnClose>
       <Form form={form} layout="vertical" onFinish={save}>
         <Row gutter={16}><Col span={12}><Form.Item name="id" label="平台编号" rules={[{required:true}]}><Input disabled={!!editing} maxLength={160}/></Form.Item></Col><Col span={12}><Form.Item name="title" label="中文标题" rules={[{required:true}]}><Input maxLength={500}/></Form.Item></Col></Row>
@@ -68,5 +76,5 @@ export const KnowledgePage:React.FC=()=>{
       <Descriptions bordered column={2} size="small" items={[{key:'id',label:'平台编号',children:detail.id},{key:'score',label:'CVSS',children:detail.cvssScore??'未提供'},{key:'component',label:'组件',children:detail.component},{key:'source',label:'来源',children:detail.source},{key:'ids',label:'外部编号',span:2,children:Object.entries(detail.identifiers??{}).map(([k,v])=>`${k}: ${v.join(', ')}`).join('；')||'无'}]}/>
       {[['风险描述',detail.description],['风险影响',detail.impact],['修复建议',detail.solution],['参考资料',detail.references?.join('\n')],['版本范围',JSON.stringify(detail.affectedRanges,null,2)]].map(([label,value])=><div key={label}><Typography.Title level={5}>{label}</Typography.Title><Typography.Paragraph style={{whiteSpace:'pre-wrap'}}>{value||'待补充'}</Typography.Paragraph></div>)}
     </Space>}</Drawer>
-  </Space>;
+  </div>;
 };

@@ -1,11 +1,14 @@
 import React, { useEffect, useState } from 'react';
-import { Alert, Badge, Button, Card, Empty, List, Space, Typography, message } from 'antd';
+import { Alert, Button, Empty, List, message } from 'antd';
+import { PageHeader, Panel } from '../../components/Page';
+import { useAppTheme } from '../../context/ThemeContext';
 import { CheckOutlined, ReloadOutlined } from '@ant-design/icons';
 import { apiClient } from '../../api/client';
 import { NotificationSeverityTag } from '../../components/Semantic';
 import type { Notification } from '../../types';
 
 export const NotificationsPage: React.FC = () => {
+  const { palette } = useAppTheme();
   const [items, setItems] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [error, setError] = useState('');
@@ -49,28 +52,36 @@ export const NotificationsPage: React.FC = () => {
     }
   };
 
+  const small = { fontSize: 12, color: palette.textSecondary };
   return (
-    <Card
-      title={<Space><span>通知中心</span><Badge count={unreadCount} overflowCount={999} /></Space>}
-      extra={<Space><Button icon={<ReloadOutlined />} onClick={() => void reload()} loading={busy}>刷新</Button><Button icon={<CheckOutlined />} onClick={() => void markAllRead()} disabled={!unreadCount || busy}>全部标记已读</Button></Space>}
-    >
-      {error && <Alert type="error" showIcon message={error} style={{ marginBottom: 16 }} />}
-      <List
-        itemLayout="vertical"
-        locale={{ emptyText: <Empty description="暂无通知" /> }}
-        dataSource={items}
-        pagination={{ current: page, pageSize, total, showSizeChanger: true, pageSizeOptions: [15, 30, 60], showTotal: count => `共 ${count} 条通知`, onChange: (nextPage, nextSize) => { if (nextSize !== pageSize) { setPageSize(nextSize); setPage(1); } else setPage(nextPage); } }}
-        renderItem={item => (
-          <List.Item
-            actions={!item.readAt ? [<Button key="read" type="link" onClick={() => void markRead(item)}>标记已读</Button>] : []}
-          >
-            <List.Item.Meta
-              title={<Space><NotificationSeverityTag value={item.severity} /><Typography.Text strong={!item.readAt}>{item.title}</Typography.Text>{!item.readAt && <Badge status="processing" text="未读" />}</Space>}
-              description={<Space direction="vertical" size={4}><Typography.Text>{item.message}</Typography.Text><Typography.Text type="secondary">{new Date(item.createdAt).toLocaleString()}</Typography.Text></Space>}
-            />
-          </List.Item>
-        )}
-      />
-    </Card>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <PageHeader title="通知中心" description={unreadCount ? `${unreadCount} 条未读通知` : '没有未读通知'}
+        extra={<><Button icon={<ReloadOutlined />} onClick={() => void reload()} loading={busy}>刷新</Button><Button type="primary" icon={<CheckOutlined />} onClick={() => void markAllRead()} disabled={!unreadCount || busy}>全部标记已读</Button></>} />
+      {error && <Alert type="error" showIcon message={error} />}
+      <Panel flush title={`全部通知（${total.toLocaleString()}）`}>
+        <List
+          locale={{ emptyText: <Empty description="暂无通知" /> }}
+          dataSource={items}
+          pagination={{ current: page, pageSize, total, showSizeChanger: true, pageSizeOptions: [15, 30, 60], showTotal: count => `共 ${count} 条通知`, onChange: (nextPage, nextSize) => { if (nextSize !== pageSize) { setPageSize(nextSize); setPage(1); } else setPage(nextPage); }, style: { padding: '0 20px 16px' } }}
+          renderItem={item => (
+            <List.Item style={{ padding: '14px 20px', borderBlockEnd: `1px solid ${palette.borderSubtle}`, background: item.readAt ? undefined : palette.bgSubtle }}
+              actions={!item.readAt ? [<Button key="read" type="link" size="small" onClick={() => void markRead(item)}>标记已读</Button>] : []}>
+              <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', minWidth: 0 }}>
+                <span aria-hidden="true" style={{ width: 8, height: 8, marginTop: 7, borderRadius: '50%', flex: '0 0 auto', background: item.readAt ? 'transparent' : palette.primary }} />
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+                  <span style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+                    <NotificationSeverityTag value={item.severity} />
+                    <span style={{ fontWeight: item.readAt ? 400 : 600, color: palette.text }}>{item.title}</span>
+                    {!item.readAt && <span style={{ ...small, color: palette.primary }}>未读</span>}
+                  </span>
+                  <span style={{ color: palette.textSecondary, overflowWrap: 'anywhere' }}>{item.message}</span>
+                  <span style={small}>{new Date(item.createdAt).toLocaleString()}</span>
+                </div>
+              </div>
+            </List.Item>
+          )}
+        />
+      </Panel>
+    </div>
   );
 };

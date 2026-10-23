@@ -1,12 +1,14 @@
 import React, { useMemo, useState } from 'react';
 import { DataTable } from '../../components/DataState';
-import { Alert, Button, Card, Form, Input, message, Modal, Select, Space, Tag, Typography } from 'antd';
-import { PlusOutlined, UserOutlined } from '@ant-design/icons';
+import { Alert, Button, Form, Input, message, Modal, Select, Space } from 'antd';
+import { PlusOutlined } from '@ant-design/icons';
 import { apiClient } from '../../api/client';
 import { useCollection } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
 import { useAuth } from '../../auth/AuthProvider';
-import { roleNames } from '../../components/Semantic';
+import { Mono, StatusPill, roleNames } from '../../components/Semantic';
+import { PageHeader, Panel } from '../../components/Page';
+import type { Tone } from '../../theme/palette';
 import type { User, UserRole } from '../../types';
 
 const roleOptions = Object.entries(roleNames).map(([value,label])=>({value,label}));
@@ -54,22 +56,24 @@ export const UsersPage: React.FC = () => {
     }catch(e){message.error(e instanceof Error ? e.message:'密码重置失败');}
     finally{setBusy(false);}
   };
-  return <div style={{display:'flex',flexDirection:'column',gap:20}}>
-    <CollectionNotice loading={loading} error={error}/>
-    <Card title={<Space><UserOutlined/> 用户与角色管理</Space>}
-      extra={<Space><Input.Search value={query} onChange={e=>setQuery(e.target.value)} allowClear placeholder="搜索用户名" style={{width:180}}/>
-        <Button type="primary" icon={<PlusOutlined/>} disabled={!canManage} onClick={()=>setCreating(true)}>新建用户</Button>
-      </Space>}>
-      <DataTable<User> dataSource={rows} rowKey="id" loading={loading} pagination={{pageSize:10}}
+  const roleTones: Record<UserRole, Tone> = { admin: 'warning', security_engineer: 'running', ops_approver: 'ok', viewer: 'neutral' };
+  const admins = users.filter(u => u.role === 'admin').length;
+  const inactive = users.filter(u => !u.isActive).length;
+  return <div style={{display:'flex',flexDirection:'column',gap:16}}>
+    <PageHeader title="用户与角色" description={`共 ${users.length} 个账号 · 管理员 ${admins} 个${inactive ? ` · 已停用 ${inactive} 个` : ''}`}
+      extra={<Button type="primary" icon={<PlusOutlined/>} disabled={!canManage} onClick={()=>setCreating(true)}>新建用户</Button>}/>
+    <CollectionNotice loading={loading&&users.length===0} error={error}/>
+    <Panel flush title="账号列表" extra={<Input.Search aria-label="用户搜索" value={query} onChange={e=>setQuery(e.target.value)} allowClear placeholder="搜索用户名" style={{width:220}}/>}>
+      <DataTable<User> dataSource={rows} rowKey="id" loading={loading} tableLayout="fixed" pagination={{pageSize:10,hideOnSinglePage:true,showTotal:total=>`共 ${total} 个账号`}} locale={{emptyText:query?'没有符合条件的用户':'暂无用户'}}
         columns={[
-          {title:'用户名',dataIndex:'username',render:(name:string)=><Typography.Text strong>{name}</Typography.Text>},
-          {title:'角色',dataIndex:'role',render:(role:UserRole)=><Tag color={role==='admin'?'orange':'blue'}>{roleNames[role]}</Tag>},
-          {title:'账号状态',dataIndex:'isActive',render:(active:boolean)=><Tag color={active?'success':'default'}>{active?'启用':'停用'}</Tag>},
-          {title:'操作',render:(_:unknown,record:User)=><Space><Button type="link" disabled={!canManage || record.id===currentUser?.id} onClick={()=>{
+          {title:'用户名',key:'username',render:(_:unknown,record:User)=><span style={{display:'flex',alignItems:'center',gap:8}}><Mono style={{fontWeight:600}}>{record.username}</Mono>{record.id===currentUser?.id&&<StatusPill tone="running">当前登录</StatusPill>}</span>},
+          {title:'角色',key:'role',width:160,render:(_:unknown,record:User)=><StatusPill tone={roleTones[record.role]??'neutral'}>{roleNames[record.role]??record.role}</StatusPill>},
+          {title:'账号状态',key:'active',width:120,render:(_:unknown,record:User)=><StatusPill tone={record.isActive?'ok':'neutral'}>{record.isActive?'启用':'停用'}</StatusPill>},
+          {title:'操作',key:'actions',width:220,render:(_:unknown,record:User)=><Space size={0}><Button type="link" size="small" disabled={!canManage || record.id===currentUser?.id} onClick={()=>{
             editForm.setFieldsValue({role:record.role,isActive:record.isActive});setEditing(record);
-          }}>修改角色 / 状态</Button><Button type="link" disabled={!canManage} onClick={()=>{resetForm.resetFields();setResetting(record);}}>重置密码</Button></Space>},
+          }}>修改角色 / 状态</Button><Button type="link" size="small" disabled={!canManage} onClick={()=>{resetForm.resetFields();setResetting(record);}}>重置密码</Button></Space>},
         ]}/>
-    </Card>
+    </Panel>
     <Modal title="新增用户" open={creating} onOk={()=>createForm.submit()} onCancel={()=>setCreating(false)} okButtonProps={{loading:busy}}>
       <Form form={createForm} layout="vertical" onFinish={createUser} autoComplete="off">
         <Form.Item name="username" label="用户名" rules={[{required:true},{pattern:/^[a-zA-Z][a-zA-Z0-9_.-]{2,39}$/,message:'3–40 位，以英文字母开头'}]}><Input/></Form.Item>
