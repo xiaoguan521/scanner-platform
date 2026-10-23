@@ -1,0 +1,283 @@
+name: Build Portable Edition
+
+# Single-binary sec-portable packages (docs/portable.md). Each package holds
+# sec-portable with the embedded web UI, SHA-256-pinned Nuclei and Trivy, an
+# empty vuln-data/ and config/, docs and the Linux input collector. Packages
+# are smoke-tested on loopback on native runners; nothing is ever scanned.
+# Vulnerability data is not included: use `sec-portable prepare` or the
+# Build Offline Vulnerability Data workflow.
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'portable-v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-portable-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Required CI Checks
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  frontend:
+    name: Build web UI to embed
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js LTS
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install locked frontend dependencies
+        run: npm ci --prefix web
+
+      - name: Build static UI
+        run: npm run build --prefix web
+
+      - name: Upload frontend bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: portable-frontend-dist
+          path: web/dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  build:
+    name: Package (${{ matrix.goos }}/${{ matrix.goarch }})
+    needs: [verify, frontend]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Download reviewed frontend bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: portable-frontend-dist
+          path: frontend-dist
+
+      - name: Embed the frontend and compile sec-portable
+        shell: bash
+        env:
+          TARGET_GOOS: ${{ matrix.goos }}
+          TARGET_GOARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          test -s frontend-dist/index.html
+          find internal/webui/dist -mindepth 1 ! -name README.txt -exec rm -rf {} +
+          cp -R frontend-dist/. internal/webui/dist/
+          ext=""
+          if [[ "$TARGET_GOOS" == windows ]]; then
+            ext=".exe"
+          fi
+          mkdir -p build_output
+          CGO_ENABLED=0 GOOS="$TARGET_GOOS" GOARCH="$TARGET_GOARCH" \
+            go build -trimpath -ldflags="-s -w" \
+            -o "build_output/sec-portable$ext" ./cmd/portable
+          echo "BINARY=build_output/sec-portable$ext" >> "$GITHUB_ENV"
+
+      - name: Install SHA-256-pinned scanner engines
+        shell: bash
+        env:
+          TARGET_GOOS: ${{ matrix.goos }}
+          TARGET_GOARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          python3 scripts/install_engines.py \
+            --engine core \
+            --platform "$TARGET_GOOS" \
+            --arch "$TARGET_GOARCH" \
+            --destination build_output/bin
+          test -s build_output/bin/nuclei.installed.json
+          test -s build_output/bin/trivy.installed.json
+
+      - name: Assemble package layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/assemble_portable.py \
+            --binary "$BINARY" \
+            --engines build_output/bin \
+            --output package/sec-portable
+
+      - name: Archive and checksum
+        shell: bash
+        env:
+          TARGET_GOOS: ${{ matrix.goos }}
+          TARGET_GOARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist_pkg
+          base="scanner-platform-portable-$TARGET_GOOS-$TARGET_GOARCH"
+          if [[ "$TARGET_GOOS" == windows ]]; then
+            archive="$base.zip"
+            (cd package && zip -q -r "../dist_pkg/$archive" sec-portable)
+          else
+            archive="$base.tar.gz"
+            tar -czf "dist_pkg/$archive" -C package sec-portable
+          fi
+          (cd dist_pkg && sha256sum "$archive" > "$archive.sha256")
+
+      - name: Upload package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: portable-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist_pkg/*
+          if-no-files-found: error
+          retention-days: 14
+
+  smoke:
+    name: Smoke test (${{ matrix.goos }}/${{ matrix.goarch }})
+    needs: build
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # Native runners only; linux/arm64 and darwin/amd64 are built but not run.
+        include:
+          - runner: ubuntu-latest
+            goos: linux
+            goarch: amd64
+          - runner: macos-latest
+            goos: darwin
+            goarch: arm64
+          - runner: windows-latest
+            goos: windows
+            goarch: amd64
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Download package
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: portable-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist_pkg
+
+      - name: Verify checksum and unpack
+        shell: bash
+        env:
+          TARGET_GOOS: ${{ matrix.goos }}
+          TARGET_GOARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          base="scanner-platform-portable-$TARGET_GOOS-$TARGET_GOARCH"
+          python=python3
+          command -v python3 >/dev/null || python=python
+          if [[ "$TARGET_GOOS" == windows ]]; then
+            archive="$base.zip"
+          else
+            archive="$base.tar.gz"
+          fi
+          expected="$(cut -d' ' -f1 "dist_pkg/$archive.sha256")"
+          actual="$("$python" -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "dist_pkg/$archive")"
+          test "$expected" = "$actual"
+          mkdir -p unpacked
+          if [[ "$TARGET_GOOS" == windows ]]; then
+            "$python" -m zipfile -e "dist_pkg/$archive" unpacked
+          else
+            tar -xzf "dist_pkg/$archive" -C unpacked
+          fi
+          echo "PYTHON=$python" >> "$GITHUB_ENV"
+
+      - name: Run loopback smoke test (no scanning)
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$PYTHON" scripts/smoke_portable.py unpacked/sec-portable
+
+  release:
+    name: Create Draft Release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/portable-v')
+    needs: [build, smoke]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Download all packages
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: all_artifacts
+          pattern: portable-*
+          merge-multiple: true
+
+      - name: Verify packages and prepare checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          archives=(all_artifacts/scanner-platform-portable-*.zip all_artifacts/scanner-platform-portable-*.tar.gz)
+          checksums=(all_artifacts/scanner-platform-portable-*.sha256)
+          if [[ "${#archives[@]}" -ne 5 || "${#checksums[@]}" -ne 5 ]]; then
+            echo "Expected exactly five portable archives and checksum files" >&2
+            exit 1
+          fi
+          (cd all_artifacts && sha256sum --check -- *.sha256)
+          mkdir -p release_assets
+          cp -- "${archives[@]}" release_assets/
+          (cd release_assets && sha256sum -- * > checksums.txt)
+
+      - name: Create draft release (manual publication required)
+        uses: softprops/action-gh-release@72f2c25fcb47643c292f7107632f7a47c1df5cd8 # v2.3.2
+        with:
+          files: release_assets/*
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          draft: true
+          prerelease: true
+          body: |
+            Single-binary sec-portable packages for offline use on one computer.
+            Each archive contains sec-portable with the embedded web UI, SHA-256-pinned Nuclei and Trivy, empty vuln-data/ and config/ directories, docs and the Linux input collector. Vulnerability data is not included: run `sec-portable prepare` on a computer with internet access, or use the Build Offline Vulnerability Data workflow.
+            sec-portable listens only on loopback and has no network firewall; scan scope is enforced in Go. Windows and macOS binaries are not code-signed or notarized yet, and antivirus/EDR behaviour on target endpoints has not been validated.
+            linux/amd64, darwin/arm64 and windows/amd64 packages were smoke-tested on loopback in this run; linux/arm64 and darwin/amd64 were built but not run.
+            Publish this draft only after reviewing the validation record and target-platform requirements.

@@ -305,3 +305,29 @@ func TestRunRejectsNonLoopbackAndMissingUI(t *testing.T) {
 }
 
 func webuiEmbedded() (http.FileSystem, bool) { return webui.FileSystem() }
+
+func TestSupervisorIgnoresErrorsAfterShutdown(t *testing.T) {
+	// A request cut off by Ctrl+C must not turn a clean stop into a failure.
+	ctx, cancel := context.WithCancel(context.Background())
+	group := newSupervisor(ctx, cancel)
+	stopping := make(chan struct{})
+	group.start("worker", func() error {
+		<-stopping
+		return errors.New("call task API: interrupt signal received")
+	})
+	cancel()
+	close(stopping)
+	if err := group.wait(); err != nil {
+		t.Fatalf("clean stop reported %v", err)
+	}
+
+	// An exit before shutdown stops everything and is reported once.
+	ctx, cancel = context.WithCancel(context.Background())
+	group = newSupervisor(ctx, cancel)
+	group.start("updater", func() error { return errors.New("rule directory unreadable") })
+	group.start("worker", func() error { <-ctx.Done(); return ctx.Err() })
+	err := group.wait()
+	if err == nil || !strings.Contains(err.Error(), "updater: rule directory unreadable") || ctx.Err() == nil {
+		t.Fatalf("failure not propagated: %v", err)
+	}
+}

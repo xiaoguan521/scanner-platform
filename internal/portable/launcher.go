@@ -129,27 +129,9 @@ func Run(ctx context.Context, opts Options, stdout, stderr io.Writer) error {
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	var (
-		wait     sync.WaitGroup
-		failOnce sync.Once
-		failure  error
-	)
-	fail := func(err error) {
-		failOnce.Do(func() { failure = err })
-		cancel()
-	}
-	start := func(name string, run func() error) {
-		wait.Add(1)
-		go func() {
-			defer wait.Done()
-			if err := run(); err != nil {
-				fail(fmt.Errorf("%s: %w", name, err))
-			} else if ctx.Err() == nil {
-				fail(fmt.Errorf("%s stopped unexpectedly", name))
-			}
-		}()
-	}
-
+	group := newSupervisor(ctx, cancel)
+	start := group.start
+	fail := group.fail
 	start("server", func() error {
 		code := bootstrap.ServeServer(ctx, bootstrap.ServerOptions{
 			Addr: address, DBPath: layout.Database, Storage: "sqlite", UI: ui, ReportDir: layout.Reports,
@@ -163,8 +145,7 @@ func Run(ctx context.Context, opts Options, stdout, stderr io.Writer) error {
 	})
 	if err := waitReady(ctx, serverURL, opts.ReadyTimeout); err != nil {
 		fail(err)
-		wait.Wait()
-		return failure
+		return group.wait()
 	}
 	start("worker", func() error {
 		return bootstrap.ServeWorker(ctx, bootstrap.WorkerOptions{
@@ -189,11 +170,49 @@ func Run(ctx context.Context, opts Options, stdout, stderr io.Writer) error {
 		openBrowser(webURL)
 	}
 	<-ctx.Done()
-	wait.Wait()
-	if failure != nil {
-		return failure
-	}
-	return nil
+	return group.wait()
+}
+
+// supervisor runs the components and stops all of them when one exits.
+type supervisor struct {
+	ctx     context.Context
+	cancel  context.CancelFunc
+	group   sync.WaitGroup
+	once    sync.Once
+	failure error
+}
+
+func newSupervisor(ctx context.Context, cancel context.CancelFunc) *supervisor {
+	return &supervisor{ctx: ctx, cancel: cancel}
+}
+
+func (s *supervisor) fail(err error) {
+	s.once.Do(func() { s.failure = err })
+	s.cancel()
+}
+
+func (s *supervisor) start(name string, run func() error) {
+	s.group.Add(1)
+	go func() {
+		defer s.group.Done()
+		err := run()
+		// Once shutdown has started, in-flight requests fail with the
+		// cancellation; only an exit before shutdown is a failure.
+		if s.ctx.Err() != nil {
+			return
+		}
+		if err != nil {
+			s.fail(fmt.Errorf("%s: %w", name, err))
+		} else {
+			s.fail(fmt.Errorf("%s stopped unexpectedly", name))
+		}
+	}()
+}
+
+// wait returns the first failure, or nil after a requested shutdown.
+func (s *supervisor) wait() error {
+	s.group.Wait()
+	return s.failure
 }
 
 // waitReady polls /readyz until the Server answers, ctx ends or the timeout passes.

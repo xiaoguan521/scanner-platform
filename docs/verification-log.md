@@ -903,3 +903,9 @@
 - 三权分立保持：Worker、Updater 仍只通过 Server 节点接口通信，每次启动各生成 32 字节随机令牌，只存在内存，Server 用内存令牌表校验；无令牌的节点请求返回 401。Worker 不持有数据库连接。规则目录对 Worker 只读由代码保证（同进程无法以系统权限隔离，经用户确认接受）；无 Linux 围栏，范围由 Go 层校验（4.1-8）。`config/trusted-rule-keys/*.pem` 存在时规则包须验签，否则保持现有本地未签名行为（经用户确认）。
 - `internal/bootstrap` 把 `RunServer`、`RunWorker`、`RunUpdater` 拆为参数解析与可复用的 `ServeServer`、`ServeWorker`、`ServeUpdater`、`PrepareEngines`、`NewRuleManager`；三个独立程序的参数与行为不变，Linux 围栏路径未改动。新增 `golang.org/x/sys` 直接依赖（原已为间接依赖，BSD 许可证）用于 Windows 文件锁。
 - 验证：`go test -race ./internal/portable`（目录与权限、文件锁、回环限制、令牌随机性；在临时目录真实启动三组件，确认网页、401、第二副本被拒、Worker 与 Updater 以令牌上报心跳、取消后正常退出，并确认磁盘文件含数据库、日志及控制台输出中不含本次令牌）；`make portable` 后实际运行二进制：`--status`、首次创建管理员页面、无令牌节点请求 401、第二副本与 `prepare` 被拒、SIGINT 后退出码 0。未执行联网的 `prepare` 下载；未在 Windows 实机运行（仅交叉编译）；代码签名与 EDR 测试未做。
+
+## 2026-10-23：便携版发布工作流
+
+- 新增 `.github/workflows/build-portable.yml`（手动触发；`portable-v*` 标签另建草稿 Release）：CI 门禁后构建一次前端，为 5 个平台编译内嵌前端的 `sec-portable`，安装固定版本引擎，经 `scripts/assemble_portable.py` 组装目录并打包、生成 SHA-256；在 Linux amd64、macOS arm64、Windows amd64 原生运行器上校验校验和、解包并运行 `scripts/smoke_portable.py`（仅回环，不扫描）。Release 只在构建与冒烟测试均通过后以草稿形式创建，需人工发布。
+- 冒烟测试发现并修复启动器问题：Ctrl+C 时 Worker 正在进行的轮询请求以“interrupt signal received”失败，被误判为组件故障导致退出码 1。改为关闭开始后忽略组件返回的错误，新增 `TestSupervisorIgnoresErrorsAfterShutdown`。
+- 验证：工作流 YAML 可解析；在本机按工作流步骤复现 macOS arm64 任务（嵌入前端、交叉编译、组装、打包、校验和、解包、冒烟测试）通过，冒烟测试连续 3 次通过；`go test -race ./internal/portable` 通过。工作流本身尚未在 GitHub 上运行，Windows 冒烟路径未在本机验证。

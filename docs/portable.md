@@ -56,6 +56,22 @@ make portable
 
 该目标先构建 `web/`，再把 `web/dist` 复制到 `internal/webui/dist`（复制的文件不提交）并编译 `dist/sec-portable`。直接 `go build ./cmd/portable` 得到的程序不含网页，启动时会提示改用 `make portable` 或传入 `--ui-dir`。发布流程 `Build & Release Artifacts` 使用同一份前端产物为每个平台编译。
 
+## 发布包
+
+GitHub Actions 的 `Build Portable Edition` 工作流（`.github/workflows/build-portable.yml`）可手动触发，推送 `portable-v*` 标签时还会创建草稿 Release。流程：
+
+1. 运行必需的 CI 检查，构建一次前端。
+2. 为 Linux amd64/arm64、macOS amd64/arm64、Windows amd64 编译内嵌该前端的 `sec-portable`，安装按 SHA-256 固定的 Nuclei 与 Trivy，用 `scripts/assemble_portable.py` 组装上面的目录结构，打包为 `scanner-platform-portable-<系统>-<架构>.tar.gz`（Windows 为 `.zip`）并生成校验文件。
+3. 在 Linux amd64、macOS arm64、Windows amd64 原生运行器上解包，用 `scripts/smoke_portable.py` 做回环冒烟测试：检查目录、`--status`、内嵌网页、无令牌节点请求被拒、第二副本被拒以及正常退出。不扫描任何目标。Linux arm64 与 macOS amd64 只构建不运行。
+
+发布包不含漏洞库，需要时运行 `sec-portable prepare` 或使用 `Build Offline Vulnerability Data` 工作流。本地可用同样的脚本检查自己构建的包：
+
+```bash
+make portable
+python3 scripts/assemble_portable.py --binary dist/sec-portable --engines bin --output /tmp/pkg/sec-portable
+python3 scripts/smoke_portable.py /tmp/pkg/sec-portable
+```
+
 ## 尚未完成
 
 - Windows、macOS 代码签名与公证。
