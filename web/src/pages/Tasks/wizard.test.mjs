@@ -13,7 +13,7 @@ assert.equal(isAutoTaskWizard({engine:'auto',mode:'now'},false),true);
 for(const engine of ['synthetic','nuclei','trivy','zap','port-probe'])assert.equal(isAutoTaskWizard({engine,mode:'now'},false),false);
 assert.equal(isAutoTaskWizard({engine:'auto',mode:'schedule'},false),false);
 assert.equal(isAutoTaskWizard({engine:'auto',mode:'now'},true),false);
-assert.deepEqual(wizardStepFields(0,{}),['assetId'],'target step must not validate later authorization or schedule fields');
+assert.deepEqual(wizardStepFields(0,{}),['assetIds'],'target step must not validate later authorization or schedule fields');
 assert.deepEqual(wizardStepFields(1,{portPreset:'custom'}),['portPreset','intensity','portExclusions','customRuleIds','portRanges']);
 assert.ok(!wizardStepFields(1,{portPreset:'common'}).includes('portRanges'),'preserved custom input is irrelevant to common preset');
 assert.deepEqual(wizardStepFields(2,{window:false}),['mode','window']);

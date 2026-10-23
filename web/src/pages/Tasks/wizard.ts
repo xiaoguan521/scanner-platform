@@ -29,7 +29,7 @@ export function isAutoTaskWizard(values: WizardValues, editingSchedule: boolean)
 }
 
 export function wizardStepFields(step: number, values: WizardValues): string[] {
-  if (step === 0) return ['assetId'];
+  if (step === 0) return ['assetIds'];
   if (step === 1) return ['portPreset', 'intensity', 'portExclusions', 'customRuleIds',
     ...(['custom', 'common-and-custom'].includes(values.portPreset ?? '') ? ['portRanges'] : [])];
   if (step === 2) return ['mode', 'window', ...(values.window ? ['weekdays', 'start', 'end', 'timeZone'] : [])];

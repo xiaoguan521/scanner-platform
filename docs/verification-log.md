@@ -909,3 +909,5 @@
 - 新增 `.github/workflows/build-portable.yml`（手动触发；`portable-v*` 标签另建草稿 Release）：CI 门禁后构建一次前端，为 5 个平台编译内嵌前端的 `sec-portable`，安装固定版本引擎，经 `scripts/assemble_portable.py` 组装目录并打包、生成 SHA-256；在 Linux amd64、macOS arm64、Windows amd64 原生运行器上校验校验和、解包并运行 `scripts/smoke_portable.py`（仅回环，不扫描）。Release 只在构建与冒烟测试均通过后以草稿形式创建，需人工发布。
 - 冒烟测试发现并修复启动器问题：Ctrl+C 时 Worker 正在进行的轮询请求以“interrupt signal received”失败，被误判为组件故障导致退出码 1。改为关闭开始后忽略组件返回的错误，新增 `TestSupervisorIgnoresErrorsAfterShutdown`。
 - 验证：工作流 YAML 可解析；在本机按工作流步骤复现 macOS arm64 任务（嵌入前端、交叉编译、组装、打包、校验和、解包、冒烟测试）通过，冒烟测试连续 3 次通过；`go test -race ./internal/portable` 通过。工作流本身尚未在 GitHub 上运行，Windows 冒烟路径未在本机验证。
+
+- 任务中心创建自动综合扫描/端口探测时，“已登记主机”改为多选：前端对每台选中主机各创建一个任务（定时任务同理，编辑时仅限一台）。后端与 Worker 仍是单任务单主机，范围规则不变。`tsc` 与 `wizard.test.mjs` 通过；未运行浏览器 e2e。

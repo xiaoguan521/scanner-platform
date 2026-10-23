@@ -8,7 +8,7 @@ import { parsePortRanges, showRanges, coversAllPorts, presetLabels, summarizePor
 import { assertTaskSubmission, isAutoTaskWizard, wizardStepFields } from './wizard';
 
 const dayOptions=['周日','周一','周二','周三','周四','周五','周六'].map((label,value)=>({label,value}));
-type Values={engine:'auto'|'synthetic'|'nuclei'|'trivy'|'zap'|'port-probe';scheme:'http'|'https';inputPath:string;inputKind:'filesystem'|'image-archive'|'rootfs'|'artifact';targets:string[];assetId:string;scanPlan:string;portPreset:'common'|'custom'|'common-and-custom'|'registered'|'full';intensity:'gentle'|'standard'|'aggressive';portRanges:string;portExclusions:string;opsApproved:boolean;customRuleIds:string[];mode:'now'|'schedule';name:string;nextRun:string;intervalMinutes:number;window:boolean;weekdays:number[];start:string;end:string;timeZone:string};
+type Values={engine:'auto'|'synthetic'|'nuclei'|'trivy'|'zap'|'port-probe';scheme:'http'|'https';inputPath:string;inputKind:'filesystem'|'image-archive'|'rootfs'|'artifact';targets:string[];assetIds:string[];scanPlan:string;portPreset:'common'|'custom'|'common-and-custom'|'registered'|'full';intensity:'gentle'|'standard'|'aggressive';portRanges:string;portExclusions:string;opsApproved:boolean;customRuleIds:string[];mode:'now'|'schedule';name:string;nextRun:string;intervalMinutes:number;window:boolean;weekdays:number[];start:string;end:string;timeZone:string};
 function validateProbeRanges(text?:string):void{
   const ranges=parsePortRanges(text);
   if(ranges.length===0) throw new Error('此模式至少填写一个端口或端口范围');
@@ -46,19 +46,23 @@ export const TaskCreateModal:React.FC<{
   const engine=Form.useWatch('engine',form)??'auto';const mode=Form.useWatch('mode',form);const useWindow=Form.useWatch('window',form);const portPreset=Form.useWatch('portPreset',form)??'common';const selectedPlan=Form.useWatch('scanPlan',form)??'quick';
   const wizard=isAutoTaskWizard({engine,mode},Boolean(editingSchedule));
   const watchedValues=Form.useWatch([],form) as Partial<Values>|undefined;
-  const selectedAsset=assets.find(asset=>asset.id===watchedValues?.assetId&&asset.kind==='host');
-  const portPreview=useMemo(()=>{
-    if(!wizard||!selectedAsset||!policy)return null;
-    try{return previewProbePorts(selectedAsset,{preset:portPreset,ranges:['custom','common-and-custom'].includes(portPreset)?parsePortRanges(watchedValues?.portRanges):[],exclusions:parsePortRanges(watchedValues?.portExclusions)},policy);}catch{return null;}
-  },[wizard,selectedAsset,policy,portPreset,watchedValues?.portRanges,watchedValues?.portExclusions]);
+  const selectedAssets=(watchedValues?.assetIds??[]).map(id=>assets.find(asset=>asset.id===id&&asset.kind==='host')).filter((asset):asset is typeof assets[number]=>Boolean(asset));
+  const portPreviews=useMemo(()=>{
+    if(!wizard||!selectedAssets.length||!policy)return [];
+    try{return selectedAssets.map(asset=>({asset,preview:previewProbePorts(asset,{preset:portPreset,ranges:['custom','common-and-custom'].includes(portPreset)?parsePortRanges(watchedValues?.portRanges):[],exclusions:parsePortRanges(watchedValues?.portExclusions)},policy)}));}catch{return [];}
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[wizard,watchedValues?.assetIds,assets,policy,portPreset,watchedValues?.portRanges,watchedValues?.portExclusions]);
+  const selectedAsset=selectedAssets[0];
+  const portPreview=portPreviews[0]?.preview??null;
   useEffect(()=>{setWizardStep(0);},[engine,mode]);
   const nextWizardStep=async()=>{
     try{
       await form.validateFields(wizardStepFields(wizardStep,form.getFieldsValue(true)));
-      if(wizardStep===0&&!assets.some(asset=>asset.id===form.getFieldValue('assetId')&&asset.kind==='host'))throw new Error('请选择一台当前已登记的主机');
+      const chosenIds:string[]=form.getFieldValue('assetIds')??[];
+      if(wizardStep===0&&(!chosenIds.length||!chosenIds.every(id=>assets.some(asset=>asset.id===id&&asset.kind==='host'))))throw new Error('请选择当前已登记的主机');
       if(wizardStep===1){
         if(!policy)throw new Error(policyError?'扫描策略读取失败，请刷新页面后重试':'扫描策略正在加载，请稍后重试');
-        if(!portPreview?.effective.length)throw new Error('所选范围没有可扫描端口，请检查端口范围和排除项');
+        if(!portPreviews.length||portPreviews.some(item=>!item.preview.effective.length))throw new Error('有主机在所选范围内没有可扫描端口，请检查端口范围和排除项');
       }
       setWizardStep(Math.min(3,wizardStep+1));
     }catch(cause){if(cause instanceof Error)message.error(cause.message);}
@@ -76,24 +80,37 @@ export const TaskCreateModal:React.FC<{
     try{
       assertTaskSubmission(values,canWrite,wizard,wizardStep);
       const requestedRanges=['custom','common-and-custom'].includes(values.portPreset)?parsePortRanges(values.portRanges):[];
-      const fullRange=(values.engine==='auto'||values.engine==='port-probe')&&(values.portPreset==='full'||coversAllPorts(requestedRanges)||(wizard&&portPreview?.requested.length===65535));
+      const fullRange=(values.engine==='auto'||values.engine==='port-probe')&&(values.portPreset==='full'||coversAllPorts(requestedRanges)||(wizard&&portPreviews.some(item=>item.preview.requested.length===65535)));
       if(fullRange&&!(await confirmFull()))return;
       const timeWindows=values.window?[{weekdays:values.weekdays,start:values.start,end:values.end,timeZone:values.timeZone}]:[];
-      const input:TaskInput=values.engine==='auto'||values.engine==='port-probe'
-        ?{synthetic:false,engine:values.engine,assetId:values.assetId,portProbe:{preset:values.portPreset??'common',ranges:requestedRanges,intensity:values.intensity??'gentle',fullConfirmed:fullRange,exclusions:parsePortRanges(values.portExclusions),opsApproved:Boolean(values.opsApproved)},...(values.engine==='auto'&&values.customRuleIds?.length?{customRuleIds:values.customRuleIds}:{}),targets:[],timeWindows}
+      const buildInput=(assetId:string):TaskInput=>values.engine==='auto'||values.engine==='port-probe'
+        ?{synthetic:false,engine:values.engine,assetId,portProbe:{preset:values.portPreset??'common',ranges:requestedRanges,intensity:values.intensity??'gentle',fullConfirmed:fullRange,exclusions:parsePortRanges(values.portExclusions),opsApproved:Boolean(values.opsApproved)},...(values.engine==='auto'&&values.customRuleIds?.length?{customRuleIds:values.customRuleIds}:{}),targets:[],timeWindows}
         :{synthetic:values.engine==='synthetic',...(values.engine!=='synthetic'?{engine:values.engine}:{}),...(values.engine==='trivy'?{inputPath:values.inputPath,inputKind:values.inputKind}:values.engine!=='synthetic'?{scheme:values.scheme}:{}),targets:values.engine==='trivy'?[]:values.targets,timeWindows};
+      const hostIds=values.engine==='auto'||values.engine==='port-probe'?values.assetIds:[''];
       if(values.mode==='schedule'){
         const date=new Date(values.nextRun);if(!Number.isFinite(date.getTime())||date.getTime()<=Date.now()) throw new Error('首次运行时间必须晚于现在');
-        const scheduleInput={...input,name:values.name,nextRun:date.toISOString(),intervalMinutes:values.intervalMinutes??0};
+        const scheduleInput={...buildInput(hostIds[0]),name:values.name,nextRun:date.toISOString(),intervalMinutes:values.intervalMinutes??0};
         if(editingSchedule){
+          if(hostIds.length!==1)throw new Error('修改定时任务时只能选择一台主机');
           const updated=await updateSchedule(editingSchedule.id,scheduleInput);
           setSchedules(prev=>prev.map(item=>item.id===updated.id?updated:item));
           message.success('定时任务已修改');
         }else{
-          const saved=await saveSchedule(scheduleInput);setSchedules(prev=>[saved,...prev]);
-          message.success('定时任务已保存，到点由平台创建任务');
+          const created:Schedule[]=[];
+          for(const id of hostIds){
+            const host=assets.find(asset=>asset.id===id);
+            const name=hostIds.length>1&&host?`${values.name} · ${host.address}`:values.name;
+            created.unshift(await saveSchedule({...scheduleInput,...buildInput(id),name}));
+          }
+          setSchedules(prev=>[...created,...prev]);
+          message.success(hostIds.length>1?`已保存 ${hostIds.length} 个定时任务，到点由平台创建任务`:'定时任务已保存，到点由平台创建任务');
         }
-      }else{const task=await createTask(input);reloadTasks();message.success(task.status==='WAITING_WINDOW'?'已创建，等待允许的时间窗':'任务已入队');}
+      }else{
+        const tasks=[];
+        try{for(const id of hostIds)tasks.push(await createTask(buildInput(id)));}
+        finally{if(tasks.length)reloadTasks();}
+        message.success(tasks.length>1?`已为 ${tasks.length} 台主机各创建一个任务`:tasks[0].status==='WAITING_WINDOW'?'已创建，等待允许的时间窗':'任务已入队');
+      }
       setOpen(false);setEditingSchedule(null);form.resetFields();
     }catch(e){message.error(errorMessage(e,'创建失败'));}finally{setBusy(false);}
   };
@@ -105,7 +122,7 @@ export const TaskCreateModal:React.FC<{
   };
   const openScheduleEdit=(schedule:Schedule)=>{
     const window=schedule.timeWindows?.[0];const nextRun=new Date(schedule.nextRun);
-    form.setFieldsValue({engine:schedule.synthetic?'synthetic':schedule.engine??'synthetic',scheme:schedule.scheme??'http',inputPath:schedule.inputPath??'',inputKind:schedule.inputKind??'filesystem',targets:schedule.targets??[],assetId:schedule.assetId??'',scanPlan:'standard',portPreset:schedule.portProbe?.preset??'common',intensity:schedule.portProbe?.intensity??'gentle',portRanges:schedule.portProbe?.ranges?.map(r=>r.start===r.end?String(r.start):`${r.start}-${r.end}`).join(', ')??'',portExclusions:schedule.portProbe?.exclusions?.map(r=>r.start===r.end?String(r.start):`${r.start}-${r.end}`).join(', ')??'',customRuleIds:schedule.customRuleIds??[],mode:'schedule',name:schedule.name,nextRun:Number.isFinite(nextRun.getTime())?new Date(nextRun.getTime()-nextRun.getTimezoneOffset()*60000).toISOString().slice(0,16):'',intervalMinutes:schedule.intervalMinutes,window:Boolean(schedule.timeWindows?.length),weekdays:window?.weekdays??[1,2,3,4,5],start:window?.start??'09:00',end:window?.end??'18:00',timeZone:window?.timeZone??'Asia/Shanghai'});
+    form.setFieldsValue({engine:schedule.synthetic?'synthetic':schedule.engine??'synthetic',scheme:schedule.scheme??'http',inputPath:schedule.inputPath??'',inputKind:schedule.inputKind??'filesystem',targets:schedule.targets??[],assetIds:schedule.assetId?[schedule.assetId]:[],scanPlan:'standard',portPreset:schedule.portProbe?.preset??'common',intensity:schedule.portProbe?.intensity??'gentle',portRanges:schedule.portProbe?.ranges?.map(r=>r.start===r.end?String(r.start):`${r.start}-${r.end}`).join(', ')??'',portExclusions:schedule.portProbe?.exclusions?.map(r=>r.start===r.end?String(r.start):`${r.start}-${r.end}`).join(', ')??'',customRuleIds:schedule.customRuleIds??[],mode:'schedule',name:schedule.name,nextRun:Number.isFinite(nextRun.getTime())?new Date(nextRun.getTime()-nextRun.getTimezoneOffset()*60000).toISOString().slice(0,16):'',intervalMinutes:schedule.intervalMinutes,window:Boolean(schedule.timeWindows?.length),weekdays:window?.weekdays??[1,2,3,4,5],start:window?.start??'09:00',end:window?.end??'18:00',timeZone:window?.timeZone??'Asia/Shanghai'});
     setWizardStep(0);setEditingSchedule(schedule);setOpen(true);
   };
   const copyTask=(task:ScanTask)=>{
@@ -113,7 +130,7 @@ export const TaskCreateModal:React.FC<{
     const taskEngine:Values['engine']=task.synthetic?'synthetic':task.engines[0]==='port-probe'?'auto':task.engines[0];const window=task.timeWindows?.[0];
     const portConfig=task.portProbeConfig;
     const rangeText=(ranges?:PortProbeRange[])=>ranges?.map(range=>range.start===range.end?String(range.start):`${range.start}-${range.end}`).join(', ')??'';
-    form.setFieldsValue({engine:taskEngine,scheme:task.scheme==='https'?'https':'http',inputPath:task.inputPath??'',inputKind:(task.inputKind as Values['inputKind'])??'filesystem',targets:task.chunks?.flatMap(chunk=>chunk.targets)??[],assetId:task.assetId??'',scanPlan:'standard',portPreset:portConfig?.preset??'common',intensity:portConfig?.intensity??'gentle',portRanges:rangeText(portConfig?.ranges),portExclusions:rangeText(portConfig?.exclusions),opsApproved:false,mode:'now',window:Boolean(task.timeWindows?.length),weekdays:window?.weekdays??[0,1,2,3,4,5,6],start:window?.start??'09:00',end:window?.end??'18:00',timeZone:window?.timeZone??'Asia/Shanghai'});
+    form.setFieldsValue({engine:taskEngine,scheme:task.scheme==='https'?'https':'http',inputPath:task.inputPath??'',inputKind:(task.inputKind as Values['inputKind'])??'filesystem',targets:task.chunks?.flatMap(chunk=>chunk.targets)??[],assetIds:task.assetId?[task.assetId]:[],scanPlan:'standard',portPreset:portConfig?.preset??'common',intensity:portConfig?.intensity??'gentle',portRanges:rangeText(portConfig?.ranges),portExclusions:rangeText(portConfig?.exclusions),opsApproved:false,mode:'now',window:Boolean(task.timeWindows?.length),weekdays:window?.weekdays??[0,1,2,3,4,5,6],start:window?.start??'09:00',end:window?.end??'18:00',timeZone:window?.timeZone??'Asia/Shanghai'});
     setWizardStep(0);setEditingSchedule(null);setOpen(true);
   };
   useEffect(()=>{
@@ -131,10 +148,10 @@ export const TaskCreateModal:React.FC<{
     </Space>:undefined}>
       {wizard&&<Steps current={wizardStep} size="small" style={{marginBottom:24}} items={[{title:'目标'},{title:'方案'},{title:'执行方式'},{title:'确认'}]}/>}
       <Form<Values> form={form} disabled={busy} layout="vertical" onValuesChange={changed=>{if(wizard&&!Object.prototype.hasOwnProperty.call(changed,'opsApproved'))form.setFieldValue('opsApproved',false);}} onFinish={create} onKeyDown={event=>{if(wizard&&wizardStep<3&&event.key==='Enter'&&!(event.target as HTMLElement).closest('.ant-select, textarea')){event.preventDefault();void nextWizardStep();}}} initialValues={{engine:'auto',scheme:'http',inputKind:'filesystem',mode:'now',scanPlan:'quick',portPreset:'common',intensity:'gentle',portRanges:'',portExclusions:'',opsApproved:false,customRuleIds:[],window:false,weekdays:[0,1,2,3,4,5,6],start:'09:00',end:'18:00',timeZone:'Asia/Shanghai',intervalMinutes:0}}>
-        <div hidden={wizard&&wizardStep!==0}><Form.Item name="engine" label="执行任务"><Select options={[{value:'auto',label:'自动综合扫描（推荐）'},{value:'trivy',label:'离线输入扫描（系统包 / 应用 / 镜像）'},...(syntheticEnabled?[{value:'synthetic',label:'模拟任务（不连接目标）'}]:[])]}/></Form.Item>{engine==='auto'&&<Collapse size="small" ghost style={{marginBottom:16}} items={[{key:'flow',label:'了解自动综合扫描流程',children:<Typography.Paragraph style={{marginBottom:0}}>选择一台已登记主机并填写端口范围或排除端口，平台会并发探测范围内的 TCP 端口，再对开放的 HTTP(S) 服务自动执行只读基线和选中的自定义规则。Worker 配置了该主机的 SSH 只读档案、known_hosts 和密钥文件或 SSH Agent，且 SSH 端口包含在本次范围时，还会临时采集 Linux 软件包快照并用本地 Trivy 漏洞库分析。如还配置了 Java/Go 应用的具体部署目录，将逐个采集支持的产物并分析其依赖。SSH 凭据和部署目录只留在 Worker。</Typography.Paragraph>}]}/>}</div>
+        <div hidden={wizard&&wizardStep!==0}><Form.Item name="engine" label="执行任务"><Select options={[{value:'auto',label:'自动综合扫描（推荐）'},{value:'trivy',label:'离线输入扫描（系统包 / 应用 / 镜像）'},...(syntheticEnabled?[{value:'synthetic',label:'模拟任务（不连接目标）'}]:[])]}/></Form.Item>{engine==='auto'&&<Collapse size="small" ghost style={{marginBottom:16}} items={[{key:'flow',label:'了解自动综合扫描流程',children:<Typography.Paragraph style={{marginBottom:0}}>选择一台或多台已登记主机并填写端口范围或排除端口，平台会并发探测范围内的 TCP 端口，再对开放的 HTTP(S) 服务自动执行只读基线和选中的自定义规则。Worker 配置了该主机的 SSH 只读档案、known_hosts 和密钥文件或 SSH Agent，且 SSH 端口包含在本次范围时，还会临时采集 Linux 软件包快照并用本地 Trivy 漏洞库分析。如还配置了 Java/Go 应用的具体部署目录，将逐个采集支持的产物并分析其依赖。SSH 凭据和部署目录只留在 Worker。</Typography.Paragraph>}]}/>}</div>
         {(engine==='nuclei'||engine==='zap')&&<Form.Item name="scheme" label="Web 协议" rules={[{required:true}]}><Select options={[{value:'http',label:'HTTP'},{value:'https',label:'HTTPS（允许自签名证书）'}]}/></Form.Item>}
         {engine==='trivy'?<><Form.Item name="inputKind" label="输入类型"><Select options={[{value:'rootfs',label:'Linux 系统包快照（rootfs）'},{value:'filesystem',label:'应用依赖清单（lock 文件）'},{value:'artifact',label:'已部署应用 / 中间件（JAR / Go 文件）'},{value:'image-archive',label:'Docker 镜像归档（docker save / OCI tar）'}]}/></Form.Item><Form.Item name="inputPath" label="Worker 本机输入路径（只填相对路径）" rules={[{required:true,message:'请填写已复制到 Worker 的输入目录'}]} extra="系统包示例：将已授权采集的输入目录（含隐藏校验文件）复制到 Worker 的 runtime/inputs/，此处填相对路径。"><Input placeholder="例如 lab-a/os" maxLength={240}/></Form.Item><Alert style={{marginBottom:16}} type="info" showIcon message="Trivy 读取 Worker 上的离线快照，不会自行联网或连接目标。"/></>:engine==='port-probe'||engine==='auto'?<>
-          <div hidden={wizard&&wizardStep!==0}><Form.Item name="assetId" label="已登记主机" rules={[{required:true,message:'请选择一台已登记的主机'}]}><Select showSearch optionFilterProp="label" options={assets.filter(a=>a.kind==='host').map(a=>({value:a.id,label:`${a.address} · ${a.businessGroup}`}))} placeholder="只选择一台主机"/></Form.Item></div>
+          <div hidden={wizard&&wizardStep!==0}><Form.Item name="assetIds" label="已登记主机" extra={editingSchedule?'修改定时任务时只能保留一台主机':'可多选；每台主机会各创建一个独立任务，只扫描所选主机'} rules={[{required:true,type:'array',min:1,message:'请至少选择一台已登记的主机'}]}><Select mode="multiple" maxTagCount="responsive" showSearch optionFilterProp="label" options={assets.filter(a=>a.kind==='host').map(a=>({value:a.id,label:`${a.address} · ${a.businessGroup}`}))} placeholder="选择一台或多台主机"/></Form.Item></div>
           <div hidden={wizard&&wizardStep!==1}><Form.Item name="scanPlan" hidden><Input /></Form.Item><Form.Item label="扫描方案"><Space wrap align="start" role="radiogroup" aria-label="扫描方案">{scanPlans.map(plan=><Card key={plan.id} size="small" hoverable role="radio" aria-checked={selectedPlan===plan.id} aria-label={plan.title} tabIndex={0} onClick={()=>choosePlan(plan)} onKeyDown={event=>{if(event.target===event.currentTarget&&(event.key==='Enter'||event.key===' ')){event.preventDefault();choosePlan(plan);}}} style={{width:270,cursor:'pointer',borderColor:selectedPlan===plan.id?token.colorPrimary:undefined,boxShadow:selectedPlan===plan.id?`0 0 0 1px ${token.colorPrimary}`:undefined}}><Space size={6}><Typography.Text strong>{plan.title}</Typography.Text><Tag color={plan.kind==='CUSTOM'?'blue':'default'}>{plan.kind==='CUSTOM'?'自定义':'预置'}</Tag></Space><Typography.Paragraph style={{margin:'6px 0 2px'}}>{plan.summary}</Typography.Paragraph><Typography.Text type="secondary">{plan.detail}</Typography.Text><Space size={4} style={{marginTop:8}}><Button size="small" type="link" disabled={!canWrite} onClick={event=>{event.stopPropagation();openPlanEditor(plan,true);}}>复制为自定义</Button>{plan.kind==='CUSTOM'&&<><Button size="small" type="link" disabled={!canWrite} onClick={event=>{event.stopPropagation();openPlanEditor(plan,false);}}>编辑</Button><Button size="small" type="link" danger disabled={!canWrite} onClick={event=>{event.stopPropagation();removePlan(plan);}}>删除</Button></>}</Space></Card>)}</Space></Form.Item><Form.Item name="portPreset" label="探测范围"><Select onChange={v=>{if(v==='full')form.setFieldValue('intensity','gentle');}} options={Object.entries(presetLabels).map(([value,label])=>({value,label}))}/></Form.Item>
           {(portPreset==='common'||portPreset==='common-and-custom')&&<Alert style={{marginBottom:16}} showIcon type={policyError?'error':'info'} message={policyError?'常见端口策略读取失败':`常见端口来自系统策略：${policy?.commonPorts?.length??'—'} 个`} description={(policy?summarizePorts(policy.commonPorts):null)||policyError||'由平台统一确定，创建任务时冻结策略。'}/>}
           {portPreset==='full'&&<Alert style={{marginBottom:16}} showIcon type="warning" message="全端口探测耗时较长，请预留维护窗口" description="最多 65535 个 TCP 端口，默认使用温和强度；提交时需要再次确认。排除和隔离端口始终跳过。"/>}
@@ -153,7 +170,7 @@ export const TaskCreateModal:React.FC<{
         </div>
         {wizard&&wizardStep===3&&<>
           <Descriptions bordered size="small" column={1} title="确认扫描配置" items={[
-            {key:'target',label:'实际目标',children:selectedAsset?`${selectedAsset.address} · ${selectedAsset.businessGroup}`:'主机已不可用，请返回重新选择'},
+            {key:'target',label:`实际目标（${selectedAssets.length} 台，各建一个任务）`,children:selectedAssets.length?selectedAssets.map(a=>`${a.address} · ${a.businessGroup}`).join('；'):'主机已不可用，请返回重新选择'},
             {key:'plan',label:'扫描方案',children:`${scanPlans.find(plan=>plan.id===selectedPlan)?.title??'自定义方案'}：TCP 探测 → 受限服务识别 → 只读 HTTP(S) 检查；SSH 采集依 Worker 档案和范围执行`},
             {key:'preset',label:'端口策略',children:presetLabels[portPreset]},
             {key:'ports',label:`有效 TCP 端口预览（${portPreview?.effective.length??0} 个）`,children:<Typography.Paragraph style={{marginBottom:0,overflowWrap:'anywhere'}} ellipsis={{rows:3,expandable:true,symbol:'展开全部端口'}}>{portPreview?compressPorts(portPreview.effective)||'无':'当前策略不可用'}</Typography.Paragraph>},
