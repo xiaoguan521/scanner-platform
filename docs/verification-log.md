@@ -911,3 +911,5 @@
 - 验证：工作流 YAML 可解析；在本机按工作流步骤复现 macOS arm64 任务（嵌入前端、交叉编译、组装、打包、校验和、解包、冒烟测试）通过，冒烟测试连续 3 次通过；`go test -race ./internal/portable` 通过。工作流本身尚未在 GitHub 上运行，Windows 冒烟路径未在本机验证。
 
 - 任务中心创建自动综合扫描/端口探测时，“已登记主机”改为多选：前端对每台选中主机各创建一个任务（定时任务同理，编辑时仅限一台）。后端与 Worker 仍是单任务单主机，范围规则不变。`tsc` 与 `wizard.test.mjs` 通过；未运行浏览器 e2e。
+
+- `sec-portable.exe` 内嵌蓝色播放键图标（`cmd/portable/rsrc_windows_amd64.syso`，由 `scripts/gen_windows_icon.py` 纯标准库生成，无新依赖）。已确认 windows/amd64 交叉编译成功、PE 资源树含图标；未在真实 Windows 资源管理器中查看。
