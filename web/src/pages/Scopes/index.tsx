@@ -7,6 +7,10 @@ import { useCollection } from '../../api/hooks';
 import { CollectionNotice } from '../../api/CollectionNotice';
 import { pollIntervals, pollWhileVisible } from '../../api/polling';
 import { useAuth } from '../../auth/AuthProvider';
+import { Mono, StatusPill } from '../../components/Semantic';
+import { PageHeader, Panel } from '../../components/Page';
+import { useAppTheme } from '../../context/ThemeContext';
+import type { Tone } from '../../theme/palette';
 import type { ApprovalDecision, AuthorizedScope, PortRequest, ReviewStatus, TimeWindow } from '../../types';
 import { scopeExpiryLabel, scopeExpiryState, type ScopeExpiryFilter } from './expiry';
 
@@ -32,11 +36,14 @@ type ReviewTarget = { kind: 'scope'; id: string; requestedBy?: string } |
 
 export const ScopesPage: React.FC = () => {
   const { user } = useAuth();
+  const { palette } = useAppTheme();
   const { data: assets } = useCollection('assets');
   const [scopes, setScopes] = useState<AuthorizedScope[]>([]);
   const [scopePage, setScopePage] = useState(1);
   const [scopePageSize, setScopePageSize] = useState(10);
   const [scopeTotal, setScopeTotal] = useState(0);
+  // Unfiltered total for the summary tile; only refreshed by unfiltered loads.
+  const [allScopeTotal, setAllScopeTotal] = useState<number | null>(null);
   const [selectedScopeIDs, setSelectedScopeIDs] = useState<React.Key[]>([]);
   const [expiryCounts, setExpiryCounts] = useState({ expiring: 0, expired: 0 });
   const [ports, setPorts] = useState<PortRequest[]>([]);
@@ -81,6 +88,7 @@ export const ScopesPage: React.FC = () => {
         if (controller.signal.aborted) return;
         setScopes(scopeResult.items);
         setScopeTotal(scopeResult.total);
+        if (expiryFilter === 'all' && !scopeSearch) setAllScopeTotal(scopeResult.total);
         setExpiryCounts({ expiring: scopeResult.expiringCount, expired: scopeResult.expiredCount });
         setPorts(portResult.items);
         setPortTotal(portResult.total);
@@ -193,61 +201,87 @@ export const ScopesPage: React.FC = () => {
       message.error(e instanceof Error ? e.message : '审批失败，记录未改变');
     } finally { setBusy(false); }
   };
+  const statusTones: Record<ReviewStatus | 'REVOKED', Tone> = { PENDING: 'warning', APPROVED: 'ok', REJECTED: 'error', REVOKED: 'neutral' };
+  const portKindNames: Record<string, string> = { WEB: 'Web 服务', NON_WEB: '非 Web', EXCLUDED_PROXY: '已跳过（四层转发）' };
   const renderDecision = (status: ReviewStatus | 'REVOKED', target: ReviewTarget) => (
-    <Space>
-      <Tag color={status === 'APPROVED' ? 'green' : status === 'REJECTED' ? 'red' : 'gold'}>{statusNames[status]}</Tag>
+    <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+      <StatusPill tone={statusTones[status]}>{statusNames[status]}</StatusPill>
       {status === 'PENDING' && <Button size="small" disabled={!canReview || target.requestedBy === user?.id} onClick={() => openReview(target)}>审核</Button>}
-    </Space>
+    </span>
   );
+  const muted = { color: palette.textSecondary };
+  const small = { fontSize: 12, ...muted };
+  const expiryTone: Record<string, Tone> = { EXPIRED: 'error', EXPIRING: 'warning', ACTIVE: 'ok' };
+  const tiles: { key: ScopeExpiryFilter; label: string; value: number; tone: Tone; note: string }[] = [
+    { key: 'all', label: '全部授权', value: allScopeTotal ?? scopeTotal, tone: 'neutral', note: expiryFilter === 'all' ? '含待审核、已驳回和已撤销' : '点击查看全部授权' },
+    { key: 'expiring', label: '7 天内到期', value: expiryCounts.expiring, tone: expiryCounts.expiring ? 'warning' : 'neutral', note: '请提前续期并重新审批' },
+    { key: 'expired', label: '已过期', value: expiryCounts.expired, tone: expiryCounts.expired ? 'error' : 'neutral', note: '过期授权不会用于扫描' },
+  ];
 
   return <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-    <CollectionNotice loading={loading} error={error} />
-    {expiryCounts.expired > 0
-      ? <Alert showIcon type="error" message={`有 ${expiryCounts.expired} 条已批准授权已过期`} description="过期授权不会被用于扫描；请重新申请并完成审批。" />
-      : expiryCounts.expiring > 0
-        ? <Alert showIcon type="warning" message={`有 ${expiryCounts.expiring} 条授权将在 7 天内到期`} description="请提前续期并重新完成审批，避免任务因授权失效而无法领取。" />
-        : null}
-    <Alert showIcon type="warning" message="审批记录不等于扫描执行许可"
+    <PageHeader
+      title="授权范围"
+      description="登记主机的扫描授权、执行时间窗和端口人工审批"
+      extra={<Button type="primary" icon={<PlusOutlined />} disabled={!canRequest} onClick={() => setRequestOpen(true)}>申请范围授权</Button>}
+    />
+    <CollectionNotice loading={loading && scopes.length === 0 && ports.length === 0} error={error} />
+    <div role="group" aria-label="按授权期限筛选" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(200px, 100%), 1fr))', gap: 12 }}>
+      {tiles.map(tile => {
+        const active = expiryFilter === tile.key;
+        return <button key={tile.key} type="button" aria-pressed={active} onClick={() => setExpiryFilter(tile.key)}
+          style={{ textAlign: 'left', cursor: 'pointer', padding: 16, borderRadius: 12, font: 'inherit', background: palette.bgContainer, border: `1px solid ${active ? palette.primary : palette.borderSubtle}`, boxShadow: active ? `0 0 0 1px ${palette.primary}` : undefined, display: 'flex', flexDirection: 'column', gap: 6, color: palette.text }}>
+          <span style={{ fontSize: 13, ...muted }}>{tile.label}</span>
+          <Mono style={{ fontSize: 26, fontWeight: 700, color: tile.tone === 'neutral' ? palette.text : palette.tone[tile.tone].fg }}>{tile.value.toLocaleString()}</Mono>
+          <span style={small}>{tile.note}</span>
+        </button>;
+      })}
+    </div>
+    <Alert showIcon type="info" message="审批记录不等于扫描执行许可"
       description="当前只保存已登记主机 IP 的授权申请及端口人工审核结果。审批记录用于管理台账；任务按明确登记的端口和任务时间窗执行，跳过端口不会下发。" />
-    <Card title="扫描授权范围与执行时间窗" extra={<Space>
-      <Text type="secondary">共 {scopeTotal} 条</Text>
+
+    <Panel flush title="扫描授权范围与执行时间窗" extra={<Space wrap>
       <Input aria-label="授权范围搜索" placeholder="搜索资产地址或 ID" allowClear value={scopeQuery} onChange={event => setScopeQuery(event.target.value)} style={{ width: 200 }} />
-      <Select aria-label="授权期限筛选" value={expiryFilter} onChange={setExpiryFilter} style={{ width: 150 }}
+      <Select aria-label="授权期限筛选" value={expiryFilter} onChange={setExpiryFilter} style={{ width: 130 }}
         options={[{ value: 'all', label: '全部期限' }, { value: 'expiring', label: '7 天内到期' }, { value: 'expired', label: '已过期' }]} />
       <Button disabled={!canRequest || selectedScopeIDs.length === 0 || busy} onClick={() => setRenewOpen(true)}>批量续期{selectedScopeIDs.length ? `（${selectedScopeIDs.length}）` : ''}</Button>
-      <Button type="primary" icon={<PlusOutlined />} disabled={!canRequest} onClick={() => setRequestOpen(true)}>申请范围授权</Button>
     </Space>}>
-      <DataTable<AuthorizedScope> dataSource={scopes} rowKey="id" loading={loading} scroll={{ x: 1200 }}
+      <DataTable<AuthorizedScope> dataSource={scopes} rowKey="id" loading={loading} tableLayout="fixed" scroll={{ x: 960 }}
         rowSelection={{
           selectedRowKeys: selectedScopeIDs,
           preserveSelectedRowKeys: true,
           getCheckboxProps: scope => ({ disabled: !canRequest || scopeStatus(scope) !== 'APPROVED' || busy }),
           onChange: keys => setSelectedScopeIDs(keys),
         }}
+        locale={{ emptyText: scopeSearch || expiryFilter !== 'all' ? '没有符合条件的授权' : '暂无授权，请从右上角申请范围授权' }}
         pagination={{ current: scopePage, pageSize: scopePageSize, total: scopeTotal, showSizeChanger: true, pageSizeOptions: [10, 20, 50], showTotal: total => `共 ${total} 项`, onChange: (page, size) => { if (size !== scopePageSize) { setScopePageSize(size); setScopePage(1); } else setScopePage(page); } }}
         columns={[
-          { title: '目标 IP', dataIndex: 'cidrOrHost', render: (v: string) => <Tag>{v}</Tag> },
-          { title: '上限', dataIndex: 'maxTargets', render: (v: number) => v + ' 台' },
-          { title: '允许时间', dataIndex: 'timeWindows', render: (windows: TimeWindow[]) => <Space direction="vertical" size={0}>{windows.map((w, i) => <Text key={i}>{w.weekdays.map(day => weekdays.find(d => d.value === day)?.label).join('、')} {' '}{w.start}–{w.end} ({w.timeZone})</Text>)}</Space> },
-          { title: '截止时间', dataIndex: 'expiresAt', render: (v: string) => v ? new Date(v).toLocaleString() : '未填写' },
-          { title: '审批单', render: (_: unknown, scope: AuthorizedScope) => <Space direction="vertical" size={0}><Text>{scope.approvalTicket || '待审批'}</Text><Text type="secondary">{scope.approvedBy || '无审批人'}</Text></Space> },
-          { title: '状态', render: (_: unknown, scope: AuthorizedScope) => <Space direction="vertical">{renderDecision(scopeStatus(scope), { kind: 'scope', id: scope.id, requestedBy: scope.requestedBy })}{(() => { const expiry = scopeExpiryState(scope); return expiry !== 'NOT_APPLICABLE' && <Tag color={expiry === 'EXPIRED' ? 'error' : expiry === 'EXPIRING' ? 'warning' : 'success'}>{scopeExpiryLabel[expiry]}</Tag>; })()}</Space> },
-          { title: '操作', width: 200, fixed: 'right', render: (_: unknown, scope: AuthorizedScope) => { const status = scopeStatus(scope); return <Space wrap><Button size="small" disabled={!canRequest || status === 'REJECTED' || status === 'REVOKED'} onClick={() => editScope(scope)}>修改</Button>{status === 'APPROVED' ? <Button size="small" danger disabled={!canRequest && !canReview} onClick={() => revokeScope(scope)}>撤销</Button> : <Button size="small" danger disabled={!canRequest} onClick={() => deleteScope(scope)}>删除</Button>}</Space>; } },
+          { title: '目标', key: 'target', width: 170, render: (_: unknown, scope: AuthorizedScope) => <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}><Mono>{scope.cidrOrHost}</Mono><span style={small}>上限 {scope.maxTargets} 台</span></div> },
+          { title: '允许时间', key: 'windows', render: (_: unknown, scope: AuthorizedScope) => <div style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 13 }}>{scope.timeWindows.map((w, i) => <span key={i}>{w.weekdays.map(day => weekdays.find(d => d.value === day)?.label).join('、')} <Mono>{w.start}–{w.end}</Mono> <span style={small}>{w.timeZone}</span></span>)}</div> },
+          { title: '截止时间', key: 'expires', width: 190, render: (_: unknown, scope: AuthorizedScope) => { const expiry = scopeExpiryState(scope); return <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}><span style={{ fontSize: 13 }}>{scope.expiresAt ? new Date(scope.expiresAt).toLocaleString() : '未填写'}</span>{expiry !== 'NOT_APPLICABLE' && <StatusPill tone={expiryTone[expiry] ?? 'neutral'}>{scopeExpiryLabel[expiry]}</StatusPill>}</div>; } },
+          { title: '审批单', key: 'ticket', width: 160, render: (_: unknown, scope: AuthorizedScope) => <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>{scope.approvalTicket ? <Mono>{scope.approvalTicket}</Mono> : <span style={small}>待审批</span>}<span style={small}>{scope.approvedBy || '无审批人'}</span></div> },
+          { title: '状态', key: 'status', width: 150, render: (_: unknown, scope: AuthorizedScope) => renderDecision(scopeStatus(scope), { kind: 'scope', id: scope.id, requestedBy: scope.requestedBy }) },
+          { title: '操作', key: 'actions', width: 120, fixed: 'right', render: (_: unknown, scope: AuthorizedScope) => { const status = scopeStatus(scope); return <Space size={0}><Button type="link" size="small" disabled={!canRequest || status === 'REJECTED' || status === 'REVOKED'} onClick={() => editScope(scope)}>修改</Button>{status === 'APPROVED' ? <Button type="link" size="small" danger disabled={!canRequest && !canReview} onClick={() => revokeScope(scope)}>撤销</Button> : <Button type="link" size="small" danger disabled={!canRequest} onClick={() => deleteScope(scope)}>删除</Button>}</Space>; } },
         ]} />
-    </Card>
-    <Card title="资产端口申请审批" extra={<Space wrap>
+    </Panel>
+
+    <Panel flush title="资产端口申请审批" extra={<Space wrap>
       <Input aria-label="端口申请搜索" placeholder="搜索资产地址或 ID" allowClear value={portSearch} onChange={event => setPortSearch(event.target.value)} style={{ width: 200 }} />
       <Select aria-label="端口申请状态筛选" value={portStatus} onChange={setPortStatus} style={{ width: 130 }} options={[{ value: 'ALL', label: '全部状态' }, { value: 'PENDING', label: '待审核' }, { value: 'APPROVED', label: '已批准' }, { value: 'REJECTED', label: '已驳回' }]} />
-      <Text type="secondary">共 {portTotal} 条 · 已标记跳过的端口不会派发</Text>
+      <span style={small}>共 {portTotal} 条 · 已标记跳过的端口不会派发</span>
     </Space>}>
-      <DataTable<PortRequest> dataSource={ports} loading={loading} rowKey={p => p.assetId + ':' + p.port} scroll={{ x: 1050 }}
+      <DataTable<PortRequest> dataSource={ports} loading={loading} rowKey={p => p.assetId + ':' + p.port} tableLayout="fixed" scroll={{ x: 900 }}
+        locale={{ emptyText: portSearch || portStatus !== 'ALL' ? '没有符合条件的端口申请' : '暂无端口申请' }}
         pagination={{ current: portPage, pageSize: portPageSize, total: portTotal, showSizeChanger: true, pageSizeOptions: [10, 20, 50], showTotal: total => `共 ${total} 项`, onChange: (page, size) => { if (size !== portPageSize) { setPortPageSize(size); setPortPage(1); } else setPortPage(page); } }}
         columns={[
-          { title: '资产地址', dataIndex: 'address' }, { title: '端口', dataIndex: 'port' }, { title: '端口类型', dataIndex: 'kind', render: (v: string) => v || '待审核' },
-          { title: '状态', render: (_: unknown, p: PortRequest) => p.kind === 'EXCLUDED_PROXY' ? <Tag>已跳过</Tag> : renderDecision(p.status, { kind: 'port', id: p.assetId, port: p.port, requestedBy: p.requestedBy }) },
-          { title: '审批单', dataIndex: 'approvalTicket', render: (v: string) => v || '—' }, { title: '审核人', dataIndex: 'reviewedBy', render: (v: string) => v || '—' }, { title: '备注', dataIndex: 'reviewNote' },
+          { title: '资产地址', key: 'address', width: 170, render: (_: unknown, p: PortRequest) => <Mono>{p.address}</Mono> },
+          { title: '端口', key: 'port', width: 80, render: (_: unknown, p: PortRequest) => <Mono>{p.port}</Mono> },
+          { title: '端口类型', key: 'kind', width: 150, render: (_: unknown, p: PortRequest) => p.kind ? portKindNames[p.kind] ?? p.kind : <span style={small}>待人工确认</span> },
+          { title: '状态', key: 'status', width: 150, render: (_: unknown, p: PortRequest) => p.kind === 'EXCLUDED_PROXY' ? <StatusPill tone="neutral">已跳过</StatusPill> : renderDecision(p.status, { kind: 'port', id: p.assetId, port: p.port, requestedBy: p.requestedBy }) },
+          { title: '审批单', key: 'ticket', width: 150, render: (_: unknown, p: PortRequest) => p.approvalTicket ? <Mono>{p.approvalTicket}</Mono> : '—' },
+          { title: '审核人', key: 'reviewer', width: 120, render: (_: unknown, p: PortRequest) => p.reviewedBy || '—' },
+          { title: '备注', key: 'note', ellipsis: true, render: (_: unknown, p: PortRequest) => p.reviewNote ? <span title={p.reviewNote}>{p.reviewNote}</span> : <span style={small}>—</span> },
         ]} />
-    </Card>
+    </Panel>
     <Modal title="批量续期授权范围" open={renewOpen} onCancel={() => { setRenewOpen(false); setRenewExpiry(''); }} onOk={() => void renewScopes()} okButtonProps={{ loading: busy, disabled: selectedScopeIDs.length === 0 }}>
       <Alert type="warning" showIcon message={`将续期 ${selectedScopeIDs.length} 条已批准授权`} description="续期会保留原目标和时间窗，但立即清除原审批并重置为待审核；不会直接延长扫描执行权限。" style={{ marginBottom: 14 }} />
       <Typography.Text strong>新的授权截止时间</Typography.Text>
