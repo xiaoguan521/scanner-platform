@@ -14,7 +14,7 @@ test('authorized asset to automatic scan result journey', async ({ page }) => {
     await dialog.getByLabel('资产地址', { exact: true }).fill(target);
     await dialog.getByLabel('所属业务组', { exact: true }).fill('隔离浏览器验收');
     await dialog.getByLabel('责任人', { exact: true }).fill('隔离验收操作者');
-    await dialog.getByRole('button', { name: 'OK', exact: true }).click();
+    await dialog.getByRole('button', { name: '登记资产', exact: true }).click();
     await expect(page.locator('tr').filter({ hasText: target })).toBeVisible();
   }
 

@@ -875,3 +875,10 @@
 - 资产画像、资产详情、报告资产表和 OpenAPI 已同步 `container`、`docker/podman`、`stopped` 与镜像字段；没有新增数据库表或迁移。
 - 待执行验证：`go test -race ./internal/inventory ./internal/sshcollect ./internal/assets ./internal/repo ./internal/reporting ./internal/executor`、`PYTHONPATH=scripts python3 -m unittest scripts.test_collect_linux_inputs`、`npm --prefix web run build` 及全量 `make test && make lint && make build`。本批不连接外部节点、不执行容器内扫描，也不把容器记录成新的扫描目标。
 
+
+## 2026-10-23：前端无障碍基线扫描
+
+- 新增开发依赖 `@axe-core/playwright@4.10.1`（及其依赖 `axe-core`，均为 MPL-2.0）；许可证不在默认允许列表，已经用户确认批准。仅用于 e2e 测试，不打包进前端产物或 Server。
+- 新增 `web/e2e/accessibility.spec.mjs`：登录后只读打开 14 个页面，深色、浅色各扫描一次 WCAG 2.1 A/AA 规则；严重（serious/critical）问题与 `web/e2e/a11y-baseline.json` 对比，出现新规则即失败；修复后用 `SCANNER_E2E_A11Y_UPDATE=1` 刷新基线。`src/e2e-contract.test.mjs` 约束该用例不点击、不填写、不发起写请求。
+- 首次扫描发现的对比度、进度条名称、行选择框标签问题已修复。基线中剩余 3 类来自 antd 内部实现：表格测量行 `aria-hidden-focus`、横向滚动容器 `scrollable-region-focusable`、表单内 Select 的 `aria-required`（`aria-allowed-attr`）。
+- 验证：在本机临时 Server（隔离 SQLite、示例数据）上实际运行该用例并连续两次得到相同基线；尚未在隔离实验环境的 `make test-browser` 中运行。

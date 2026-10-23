@@ -1,0 +1,50 @@
+{
+  "/#/": [],
+  "/#/findings": [
+    "aria-hidden-focus"
+  ],
+  "/#/tasks": [
+    "scrollable-region-focusable"
+  ],
+  "/#/assets": [
+    "aria-hidden-focus"
+  ],
+  "/#/scopes": [],
+  "/#/reports": [],
+  "/#/nodes": [],
+  "/#/knowledge": [
+    "scrollable-region-focusable"
+  ],
+  "/#/business-groups": [],
+  "/#/asset-import-history": [],
+  "/#/users": [],
+  "/#/audit": [],
+  "/#/settings": [
+    "aria-allowed-attr"
+  ],
+  "/#/notifications": [],
+  "/#/ (浅色)": [],
+  "/#/findings (浅色)": [
+    "aria-hidden-focus"
+  ],
+  "/#/tasks (浅色)": [
+    "scrollable-region-focusable"
+  ],
+  "/#/assets (浅色)": [
+    "aria-hidden-focus"
+  ],
+  "/#/scopes (浅色)": [],
+  "/#/reports (浅色)": [],
+  "/#/nodes (浅色)": [],
+  "/#/knowledge (浅色)": [
+    "scrollable-region-focusable"
+  ],
+  "/#/business-groups (浅色)": [],
+  "/#/asset-import-history (浅色)": [],
+  "/#/users (浅色)": [],
+  "/#/audit (浅色)": [],
+  "/#/settings (浅色)": [
+    "aria-allowed-attr"
+  ],
+  "/#/notifications (浅色)": []
+}

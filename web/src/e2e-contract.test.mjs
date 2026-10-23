@@ -25,4 +25,14 @@ test('all browser journeys require the shared authorization gate', () => {
   }
 });
 
+test('accessibility scan only reads pages', () => {
+  const source = fs.readFileSync(new URL('../e2e/accessibility.spec.mjs', import.meta.url), 'utf8');
+  assert.match(source, /login\(page\)/);
+  assert.match(source, /AxeBuilder/);
+  assert.match(source, /a11y-baseline\.json/);
+  // No form submits, record changes or scan creation from the a11y pass.
+  assert.doesNotMatch(source, /\.click\(|\.fill\(|request\.(post|put|patch|delete)|method\(\) === 'POST'/);
+  assert.doesNotMatch(source, /192\.0\.2\.|198\.51\.100\.|203\.0\.113\.|100\.97\.|192\.168\.|10\./);
+});
+
 console.log('real-target browser journey scope contract passed');

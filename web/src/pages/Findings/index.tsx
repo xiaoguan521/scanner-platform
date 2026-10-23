@@ -150,7 +150,7 @@ export const FindingsPage: React.FC = () => {
             selectedRowKeys:batchSelection.map(item=>item.id),
             preserveSelectedRowKeys:true,
             onChange:keys=>setBatchSelection(previous=>updateBatchSelection(previous,keys,findings)),
-            getCheckboxProps:record=>({disabled:batchSaving||!canWrite||record.status==='FIXED'||(batchSelection.length>=100&&!batchSelection.some(item=>item.id===record.id))}),
+            getCheckboxProps:record=>({'aria-label':`选择 ${record.title}`,disabled:batchSaving||!canWrite||record.status==='FIXED'||(batchSelection.length>=100&&!batchSelection.some(item=>item.id===record.id))}),
           }}
           onChange={(_pagination,_filters,sorter,extra)=>{
             if(extra.action!=='sort')return;

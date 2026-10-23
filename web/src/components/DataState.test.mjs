@@ -11,7 +11,9 @@ test('shared data states expose loading, error and empty semantics', () => {
   assert.match(source, /export const EmptyState/);
   assert.match(source, /role="status"/);
   assert.match(source, /Empty\.PRESENTED_IMAGE_SIMPLE/);
-  assert.match(source, /locale=\{\{ emptyText: <EmptyState \/>/);
+  // Text empty messages and the default both render through EmptyState.
+  assert.match(source, /typeof locale\?\.emptyText === 'string' \? <EmptyState description=\{locale\.emptyText\} \/>/);
+  assert.match(source, /locale\?\.emptyText \?\? <EmptyState \/>/);
 });
 
 test('collection notice uses the shared states and never fabricates data', () => {

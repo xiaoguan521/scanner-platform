@@ -38,7 +38,8 @@ export function DataTable<RecordType extends object = Record<string, unknown>>(
     <Table<RecordType>
       {...rest}
       pagination={pagination === false ? false : { ...tablePaginationDefaults(pagination || undefined), ...pagination }}
-      locale={{ emptyText: <EmptyState />, ...locale }}
+      // Plain-text empty messages use EmptyState so they get readable secondary text.
+      locale={{ ...locale, emptyText: typeof locale?.emptyText === 'string' ? <EmptyState description={locale.emptyText} /> : locale?.emptyText ?? <EmptyState /> }}
     />
   );
 }

@@ -355,7 +355,7 @@ export const AssetsPage: React.FC = () => {
       <Input.TextArea aria-label="解除原因" value={releaseReason} onChange={e=>setReleaseReason(e.target.value)} maxLength={1000} rows={3} placeholder="必填：人工核查依据和解除原因"/>
     </Modal>
     <Modal title="登记新资产" open={createOpen} width={720}
-      onCancel={()=>setCreateOpen(false)} onOk={()=>createForm.submit()} okButtonProps={{loading:saving||testingForm==='create'}}>
+      onCancel={()=>setCreateOpen(false)} onOk={()=>createForm.submit()} okText="登记资产" okButtonProps={{loading:saving||testingForm==='create'}}>
       <Form form={createForm} layout="vertical" onFinish={create} autoComplete="off">
         <Form.Item name="kind" label="资产类型" initialValue="host" rules={[{required:true}]}>
           <Select options={[{label:'主机（纯数字 IPv4/IPv6）',value:'host'},{label:'镜像仓库',value:'image_repo'}]}/>
@@ -388,7 +388,7 @@ export const AssetsPage: React.FC = () => {
       <Alert type="info" showIcon style={{marginBottom:12}} message={`本次探测发现 ${candidateRows.length} 个开放候选。开放结果只是候选；所选端口会逐个提交给运维审批。`} />
       <Input.Search aria-label="候选端口筛选" allowClear placeholder="按端口号筛选" value={candidateFilter} onChange={event=>setCandidateFilter(event.target.value)} style={{marginBottom:12,maxWidth:280}}/>
       <DataTable<CandidateRow> rowKey="port" size="small" dataSource={filteredCandidateRows} pagination={{pageSize:25,showSizeChanger:true,pageSizeOptions:[25,50,100],showTotal:(total)=>`共 ${total} 个候选`}} scroll={{y:420}}
-        rowSelection={{selectedRowKeys:selectedCandidatePorts,preserveSelectedRowKeys:true,getCheckboxProps:row=>({disabled:!row.requestable||!canEdit}),onChange:keys=>{
+        rowSelection={{selectedRowKeys:selectedCandidatePorts,preserveSelectedRowKeys:true,getCheckboxProps:row=>({'aria-label':`选择端口 ${row.port}`,disabled:!row.requestable||!canEdit}),onChange:keys=>{
           if(keys.length>1024){message.warning('一次最多选择 1024 个端口申请');setSelectedCandidatePorts(keys.slice(0,1024));return;}
           setSelectedCandidatePorts(keys);
         }}}

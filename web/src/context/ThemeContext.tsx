@@ -84,12 +84,17 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             Tooltip: { colorTextLightSolid: '#F8FAFC' },
             Table: {
               headerBg: palette.bgSubtle,
-              headerColor: palette.textTertiary,
+              // Sorted columns get a lighter header; secondary text keeps 4.5:1 on it.
+              headerColor: palette.textSecondary,
+              headerSortActiveBg: palette.bgElevated,
+              headerSortHoverBg: palette.bgElevated,
               rowHoverBg: isDark ? '#131E33' : '#F5F8FF',
               borderColor: palette.borderSubtle,
               cellPaddingBlock: 12,
             },
             Card: { headerFontSize: 15 },
+            // The unchecked track carries its label text, so it needs a readable background.
+            Switch: { colorTextQuaternary: palette.textTertiary, colorTextTertiary: palette.textSecondary },
             Menu: {
               itemBg: 'transparent',
               subMenuItemBg: 'transparent',

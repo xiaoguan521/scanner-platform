@@ -223,7 +223,7 @@ export const ScopesPage: React.FC = () => {
         rowSelection={{
           selectedRowKeys: selectedScopeIDs,
           preserveSelectedRowKeys: true,
-          getCheckboxProps: scope => ({ disabled: !canRequest || scopeStatus(scope) !== 'APPROVED' || busy }),
+          getCheckboxProps: scope => ({ 'aria-label': `选择授权 ${scope.cidrOrHost}`, disabled: !canRequest || scopeStatus(scope) !== 'APPROVED' || busy }),
           onChange: keys => setSelectedScopeIDs(keys),
         }}
         locale={{ emptyText: scopeSearch || expiryFilter !== 'all' ? '没有符合条件的授权' : '暂无授权，请从右上角申请范围授权' }}
