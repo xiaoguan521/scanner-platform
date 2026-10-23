@@ -16,6 +16,9 @@
 # 运行期私有目录与数据 (三权分立与版本回收规范)
 /runtime/
 /vuln-data/
+/vulnerability-data/
+/vulnerability-data.zip
+/shenxinfu/
 /secrets/
 /deploy/secrets/
 /.trash/
