@@ -77,7 +77,7 @@ func NormalizeFindingListQuery(in FindingListQuery) (FindingListQuery, error) {
 	if in.Status != "" && !oneOf(in.Status, "OPEN", "REOPENED", "IN_PROGRESS", "FIXED", "FALSE_POSITIVE", "ACCEPTED_RISK") {
 		return FindingListQuery{}, ErrInvalidFindingListQuery
 	}
-	if in.Engine != "" && !oneOf(in.Engine, "nuclei", "trivy", "zap", "knowledge", "ssh-audit", "synthetic") {
+	if in.Engine != "" && !oneOf(in.Engine, "nuclei", "trivy", "zap", "knowledge", "ssh-audit", "tls-audit", "synthetic") {
 		return FindingListQuery{}, ErrInvalidFindingListQuery
 	}
 	if in.Method != "" && !oneOf(in.Method, "principle", "version", "configuration", "unknown") {

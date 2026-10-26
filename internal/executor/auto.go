@@ -100,6 +100,20 @@ func (r *Runner) AutoScan(ctx context.Context, task taskflow.Task) (taskflow.Aut
 		markEngine(SSHAuditEngine)
 		result.Findings = append(result.Findings, sshWeakAlgorithmFindings(task.Chunks[0].Targets[0], service.Port, algorithms)...)
 	}
+	for _, service := range services {
+		if !(service.TLS || service.Scheme == "https") || service.Quarantined || service.Excluded || !allowed[service.Port] {
+			continue
+		}
+		tlsFindings, tlsErr := auditTLS(ctx, task.Chunks[0].Targets[0], service.Port, tlsAuditTimeout)
+		if ctx.Err() != nil {
+			return result, ctx.Err()
+		}
+		if tlsErr != nil {
+			continue // Best effort: a service that never completes TLS only skips this check.
+		}
+		markEngine(TLSAuditEngine)
+		result.Findings = append(result.Findings, tlsFindings...)
+	}
 	byScheme := map[string][]string{"http": {}, "https": {}}
 	for _, service := range services {
 		if !service.Quarantined && (service.Scheme == "http" || service.Scheme == "https") {

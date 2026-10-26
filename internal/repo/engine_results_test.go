@@ -658,3 +658,45 @@ func TestAutomaticTaskStoresSSHAuditFindingsOnlyForOpenSelectedPorts(t *testing.
 		t.Fatalf("unexpected stored finding: %+v", got)
 	}
 }
+
+func TestAutomaticTaskStoresTLSAuditFindingsOnlyForOpenSelectedPorts(t *testing.T) {
+	store, actor := localFixture(t)
+	ctx := context.Background()
+	bundle, _ := json.Marshal(rules.Bundle{Version: "20261019.01", Engines: []string{"nuclei", "trivy"}, IsCurrent: true, IntegrityVerified: true})
+	if _, err := store.db.ExecContext(ctx, "INSERT INTO local_rule_bundles(version,data) VALUES(?,?)", "20261019.01", string(bundle)); err != nil {
+		t.Fatal(err)
+	}
+	var assetID string
+	if err := store.db.QueryRowContext(ctx, "SELECT id FROM assets WHERE address=?", "192.0.2.20").Scan(&assetID); err != nil {
+		t.Fatal(err)
+	}
+	input := taskflow.TaskInput{Engine: "auto", AssetID: assetID, Targets: []string{}, PortProbe: portprobe.Config{Preset: "custom", Ranges: []portprobe.Range{{Start: 8443, End: 8443}, {Start: 80, End: 80}}, OpsApproved: true}}
+	task, err := store.CreateLocalTask(ctx, input, actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := store.ClaimRuntimeTask(ctx, "auto-worker")
+	if err != nil || claimed == nil {
+		t.Fatalf("auto task claim failed: %+v %v", claimed, err)
+	}
+	expired := taskflow.Detection{Engine: "tls-audit", Target: "192.0.2.20:8443", Port: 8443, TemplateID: "tls-cert-expired", Title: "SSL 证书已过期", Severity: "MEDIUM",
+		RiskType: "system", DetectMethod: "configuration", Confidence: "high", ContentLanguage: "zh-CN", Evidence: "证书已过期"}
+	report := taskflow.Report{TaskID: task.ID, WorkerID: "auto-worker", Status: "COMPLETED", SystemScanStatus: taskflow.SystemScanNotConfigured,
+		ApplicationScanStatus: taskflow.ApplicationScanNotConfigured, PortProbeResults: []taskflow.PortProbeResult{{Port: 8443}},
+		ServiceResults: []taskflow.ServiceResult{{Port: 8443, Kind: "HTTP", Scheme: "https", TLS: true}},
+		Findings:       []taskflow.Detection{expired}, RulesExecuted: true, ExecutedEngines: []string{"tls-audit"}}
+
+	closedPort := report
+	closedPort.Findings = []taskflow.Detection{expired}
+	closedPort.Findings[0].Target, closedPort.Findings[0].Port = "192.0.2.20:80", 80
+	if err := store.CompleteRuntimeTask(ctx, closedPort); !errors.Is(err, ErrInvalidTask) {
+		t.Fatalf("tls-audit finding on a port that was not open accepted: %v", err)
+	}
+	if err := store.CompleteRuntimeTask(ctx, report); err != nil {
+		t.Fatalf("valid tls-audit report rejected: %v", err)
+	}
+	stored, err := store.ListRuntimeFindings(ctx)
+	if err != nil || len(stored) != 1 || stored[0].Engine != "tls-audit" || stored[0].Port != 8443 || stored[0].TemplateOrCVE != "tls-cert-expired" {
+		t.Fatalf("tls-audit finding not stored: %+v %v", stored, err)
+	}
+}

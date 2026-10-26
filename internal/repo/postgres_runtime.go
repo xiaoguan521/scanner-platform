@@ -1162,7 +1162,7 @@ func postgresFindingFromDetection(ctx context.Context, tx *sql.Tx, task taskflow
 	if !allowed[port] {
 		return taskflow.Finding{}, ErrInvalidTask
 	}
-	if detection.Engine != "nuclei" && detection.Engine != "trivy" && detection.Engine != "zap" && detection.Engine != "knowledge" && detection.Engine != "ssh-audit" {
+	if detection.Engine != "nuclei" && detection.Engine != "trivy" && detection.Engine != "zap" && detection.Engine != "knowledge" && !isPassiveAuditEngine(detection.Engine) {
 		return taskflow.Finding{}, ErrInvalidTask
 	}
 	matchedPath := detection.MatchedPath
