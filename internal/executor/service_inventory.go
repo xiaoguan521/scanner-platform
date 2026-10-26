@@ -152,9 +152,12 @@ func identifyService(ctx context.Context, host string, port int, timeout time.Du
 			resets++
 		}
 	}
-	if resets >= threshold {
-		s.Quarantined = true
-		s.QuarantineReason = "有限识别连接连续无响应、被关闭或复位，疑似转发；待人工核对"
+	if resets >= threshold && s.State != "unidentified" {
+		// Silent or non-HTTP services (XMPP, Redis, rpcbind, SOCKS) fail an HTTP probe
+		// just like a forwarder does, so a failure alone is no proof of forwarding. Keep
+		// the port as unidentified: no engine scans it, and it is not quarantined.
+		// Only explicit evidence such as a proxy-protocol banner quarantines a port.
+		s.State = "unidentified"
 	}
 	return s
 }

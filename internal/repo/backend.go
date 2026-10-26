@@ -109,6 +109,8 @@ type RuntimeBackend interface {
 	RecoverReports(ctx context.Context) error
 	RefreshNotifications(ctx context.Context) error
 	ReleaseQuarantine(ctx context.Context, assetID string, port int, reason, actor string) error
+	// ReleaseAllQuarantines releases every active quarantine of one asset and returns how many.
+	ReleaseAllQuarantines(ctx context.Context, assetID, reason, actor string) (int, error)
 	RenewChunkLease(ctx context.Context, taskID, workerID, pinnedRuleVersion string) (time.Time, error)
 	ReportRuleJob(ctx context.Context, report rules.Report) error
 	ReportSnapshot(ctx context.Context, id string) (reporting.Snapshot, error)

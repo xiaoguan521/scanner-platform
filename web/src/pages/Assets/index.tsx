@@ -54,7 +54,7 @@ export const AssetsPage: React.FC = () => {
   const setAssets = (update:(previous:Asset[])=>Asset[]) => assetList.setData(current=>current&&{...current,items:update(current.items)});
   const {data:quarantines,setData:setQuarantines} = useCollection('port-quarantines');
   const [detailId,setDetailId]=useState('');const detailAsset=assets.find(a=>a.id===detailId);
-  const [releaseTarget,setReleaseTarget]=useState<{assetId:string;port:number}|null>(null);const [releaseReason,setReleaseReason]=useState('');
+  const [releaseTarget,setReleaseTarget]=useState<{assetId:string;port:number}|null>(null);const [bulkRelease,setBulkRelease]=useState(false);const [releaseReason,setReleaseReason]=useState('');
   const [createOpen,setCreateOpen] = useState(false);
   // Hosts the SSH config generator opens with; null keeps it closed.
   const [sshProfileIds,setSshProfileIds] = useState<string[]|null>(null);
@@ -185,6 +185,19 @@ export const AssetsPage: React.FC = () => {
       setReleaseTarget(null);setReleaseReason('');message.success('隔离已解除并记录审计；排除和扫描授权仍独立生效');
     }catch(e){message.error(errorMessage(e,'解除失败'));}finally{setSaving(false);}
   };
+  const releaseAllQuarantines=async()=>{
+    if(!bulkRelease||!releaseReason.trim())return;
+    setSaving(true);
+    try {
+      const assetIds=[...new Set(quarantines.filter(q=>q.status==='ACTIVE').map(q=>q.assetId))];
+      let released=0;
+      for(const assetId of assetIds) released+=(await apiClient.releaseAllQuarantines(assetId,releaseReason.trim())).released;
+      const cleared=new Set(assetIds);
+      setQuarantines(prev=>prev.map(q=>cleared.has(q.assetId)?{...q,status:'RELEASED'}:q));
+      setAssets(prev=>prev.map(a=>cleared.has(a.id)?{...a,quarantinedPorts:[],services:a.services?.map(s=>({...s,quarantined:false}))}:a));
+      setBulkRelease(false);setReleaseReason('');message.success(`已解除 ${released} 个端口的隔离并记录审计；排除和扫描授权仍独立生效`);
+    }catch(e){message.error(errorMessage(e,'批量解除失败'));}finally{setSaving(false);}
+  };
   const requestSelectedCandidates = async() => {
     if(!candidateAsset)return;
     const selected=new Set(selectedCandidatePorts.map(Number));
@@ -237,7 +250,7 @@ export const AssetsPage: React.FC = () => {
     />
     <CollectionNotice loading={assetLoading} error={assetError} hasData={rows.length>0}/>
 
-    {activeQuarantines.length > 0 && <Panel flush title={<span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>疑似四层转发隔离区 <StatusPill tone="warning">{activeQuarantines.length} 个端口</StatusPill></span>} extra={<span style={small}>隔离端口在探测和扫描时始终跳过</span>}>
+    {activeQuarantines.length > 0 && <Panel flush title={<span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>疑似四层转发隔离区 <StatusPill tone="warning">{activeQuarantines.length} 个端口</StatusPill></span>} extra={<span style={{display:'flex',alignItems:'center',gap:12}}><span style={small}>隔离端口在探测和扫描时始终跳过</span><Button size="small" disabled={user?.role!=='admin'} onClick={()=>{setBulkRelease(true);setReleaseReason('');}}>全部解除</Button></span>}>
       <DataTable rowKey={q=>q.assetId+'-'+q.port} dataSource={activeQuarantines} size="small" pagination={false}
         columns={[
           {title:'地址',dataIndex:'address',render:(value:string)=><Mono>{value}</Mono>},{title:'端口',dataIndex:'port',width:100,render:(value:number)=><Mono>{value}</Mono>},{title:'原因',dataIndex:'reason'},
@@ -357,6 +370,10 @@ export const AssetsPage: React.FC = () => {
         ]}/></Panel>
       </div>}
     </Drawer>
+    <Modal title="批量解除端口隔离" open={bulkRelease} onCancel={()=>setBulkRelease(false)} onOk={()=>void releaseAllQuarantines()} confirmLoading={saving} okButtonProps={{disabled:!releaseReason.trim()}} okText="全部解除并记录审计">
+      <Alert type="warning" showIcon message={`将解除当前列表中全部 ${activeQuarantines.length} 个隔离端口。解除后这些端口会在下次扫描中重新探测；新版本已不再因识别失败而自动隔离。`} style={{marginBottom:16}}/>
+      <Input.TextArea aria-label="批量解除原因" value={releaseReason} onChange={e=>setReleaseReason(e.target.value)} maxLength={1000} rows={3} placeholder="必填：人工核查依据和解除原因"/>
+    </Modal>
     <Modal title="人工解除端口隔离" open={!!releaseTarget} onCancel={()=>setReleaseTarget(null)} onOk={()=>void releaseQuarantine()} confirmLoading={saving} okButtonProps={{disabled:!releaseReason.trim()}} okText="解除并记录审计">
       <Alert type="warning" showIcon message={`解除端口 ${releaseTarget?.port??''} 的疑似转发隔离前，请确认已人工核查服务与转发配置。`} style={{marginBottom:16}}/>
       <Input.TextArea aria-label="解除原因" value={releaseReason} onChange={e=>setReleaseReason(e.target.value)} maxLength={1000} rows={3} placeholder="必填：人工核查依据和解除原因"/>

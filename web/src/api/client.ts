@@ -126,6 +126,7 @@ export const apiClient = {
   notificationsPage(page:number,pageSize:number,unreadOnly=false,signal?:AbortSignal) { const params=new URLSearchParams({page:String(page),page_size:String(pageSize),unread:String(unreadOnly)}); return requestJSON<NotificationListPage>('/api/v1/notifications?'+params.toString(),'GET',undefined,signal); },
   markNotificationRead(id:string) { return requestJSON<{status:string}>('/api/v1/notifications/' + encodeURIComponent(id) + '/read','POST',{}); },
   markAllNotificationsRead() { return requestJSON<{status:string}>('/api/v1/notifications/read-all','POST',{}); },
+  releaseAllQuarantines(assetId:string,reason:string) { return requestJSON('/api/v1/port-quarantines/release-all','POST',{assetId,reason}) as Promise<{status:string;released:number}>; },
   releaseQuarantine(assetId:string,port:number,reason:string) { return requestJSON('/api/v1/port-quarantines/release','POST',{assetId,port,reason}); },
   systemStatus(signal?: AbortSignal) { return requestJSON<SystemStatus>('/api/v1/system/status', 'GET', undefined, signal); },
   capabilities(signal?: AbortSignal) { return requestJSON<Capabilities>('/api/v1/system/capabilities', 'GET', undefined, signal); },

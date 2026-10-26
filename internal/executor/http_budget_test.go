@@ -41,7 +41,7 @@ func TestHTTPBudgetCoversTemplateLimit(t *testing.T) {
 		t.Fatalf("HTTP budget %d cannot cover %d templates plus %d fixed requests", maxHTTPRequestsPerTarget, maxTemplatesPerTask, fixedRequestsPerTarget)
 	}
 }
-func TestSilentOpenPortIsQuarantinedAfterBoundedIdentification(t *testing.T) {
+func TestSilentOpenPortStaysUnidentifiedAfterBoundedIdentification(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -62,8 +62,10 @@ func TestSilentOpenPortIsQuarantinedAfterBoundedIdentification(t *testing.T) {
 	}()
 	port, _ := strconv.Atoi(strings.Split(listener.Addr().String(), ":")[1])
 	service := identifyService(ctx, "127.0.0.1", port, 35*time.Millisecond, 2, 2, &identificationBudget{remaining: 2})
-	if !service.Quarantined || count.Load() != 2 {
-		t.Fatalf("silent open service was not bounded and quarantined: %+v count=%d", service, count.Load())
+	// A silent service (XMPP, Redis, SOCKS...) fails an HTTP probe like a forwarder
+	// does, so identification stays bounded but must not quarantine it persistently.
+	if service.Quarantined || service.State != "unidentified" || count.Load() != 2 {
+		t.Fatalf("silent open service must stay bounded, unidentified and not quarantined: %+v count=%d", service, count.Load())
 	}
 }
 

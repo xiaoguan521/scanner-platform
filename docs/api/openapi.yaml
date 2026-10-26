@@ -3388,6 +3388,23 @@ paths:
               schema: {"type": "object", "properties": {"items": {"type": "array", "items": {"$ref": "#/components/schemas/Finding"}}, "total": {"type": "integer"}}, "required": ["items", "total"]}
         "400": {description: Invalid input}
         "403": {description: Insufficient role or invalid same-origin mutation header}
+  "/api/v1/port-quarantines/release-all":
+    post:
+      summary: "Admin releases every active quarantine of one asset after manual review"
+      security: [{sessionCookie: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"type": "object", "required": ["assetId", "reason"], "properties": {"assetId": {"type": "string"}, "reason": {"type": "string"}}}
+      responses:
+        "200":
+          description: "Number of released quarantines"
+          content:
+            application/json:
+              schema: {"type": "object", "properties": {"status": {"type": "string"}, "released": {"type": "integer"}}, "required": ["status", "released"]}
+        "400": {description: Invalid input}
+        "403": {description: Insufficient role or invalid same-origin mutation header}
   "/api/v1/port-quarantines/release":
     post:
       summary: "Admin releases quarantine after manual review"

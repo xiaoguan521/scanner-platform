@@ -270,6 +270,19 @@ func registerProductHandlers(mux *http.ServeMux, store repo.RuntimeBackend, ui f
 			runtimeJSON(w, 200, ListResponse[taskflow.Finding]{Items: items, Total: len(items)})
 		}
 	}))
+	mux.HandleFunc("POST /api/v1/port-quarantines/release-all", admin(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			AssetID string `json:"assetId"`
+			Reason  string `json:"reason"`
+		}
+		if !runtimeDecode(w, r, &body) {
+			return
+		}
+		released, err := store.ReleaseAllQuarantines(r.Context(), body.AssetID, body.Reason, actor(r))
+		if !runtimeStoreError(w, err) {
+			runtimeJSON(w, 200, map[string]any{"status": "RELEASED", "released": released})
+		}
+	}))
 	mux.HandleFunc("POST /api/v1/port-quarantines/release", admin(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			AssetID string `json:"assetId"`

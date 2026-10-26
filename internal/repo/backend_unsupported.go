@@ -335,6 +335,9 @@ func (unsupportedRuntimeBackend) RefreshNotifications(ctx context.Context) error
 	return backendCapabilityError("RefreshNotifications")
 }
 
+func (unsupportedRuntimeBackend) ReleaseAllQuarantines(ctx context.Context, assetID, reason, actor string) (int, error) {
+	return 0, backendCapabilityError("ReleaseAllQuarantines")
+}
 func (unsupportedRuntimeBackend) ReleaseQuarantine(ctx context.Context, assetID string, port int, reason, actor string) error {
 	return backendCapabilityError("ReleaseQuarantine")
 }
