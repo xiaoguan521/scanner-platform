@@ -86,6 +86,20 @@ func (r *Runner) AutoScan(ctx context.Context, task taskflow.Task) (taskflow.Aut
 		result.CompletedFully = autoScanCompleted(result)
 		return result, nil
 	}
+	for _, service := range services {
+		if service.ServiceName != "ssh" || service.Quarantined || service.Excluded || !allowed[service.Port] {
+			continue
+		}
+		algorithms, auditErr := auditSSH(ctx, task.Chunks[0].Targets[0], service.Port, sshAuditTimeout)
+		if ctx.Err() != nil {
+			return result, ctx.Err()
+		}
+		if auditErr != nil {
+			continue // Best effort: an unreadable SSH handshake only skips this check.
+		}
+		markEngine(SSHAuditEngine)
+		result.Findings = append(result.Findings, sshWeakAlgorithmFindings(task.Chunks[0].Targets[0], service.Port, algorithms)...)
+	}
 	byScheme := map[string][]string{"http": {}, "https": {}}
 	for _, service := range services {
 		if !service.Quarantined && (service.Scheme == "http" || service.Scheme == "https") {

@@ -52,7 +52,7 @@ func validDetection(d taskflow.Detection, task taskflow.Task, openResults []task
 		return false
 	}
 	if task.Engines[0] == "auto" {
-		if d.Engine != "nuclei" && d.Engine != "zap" && d.Engine != "trivy" {
+		if d.Engine != "nuclei" && d.Engine != "zap" && d.Engine != "trivy" && d.Engine != "ssh-audit" {
 			return false
 		}
 		address, port, target, err := canonicalTarget(d.Target)
@@ -144,7 +144,7 @@ func validExecutionSummary(report taskflow.Report, task taskflow.Task) bool {
 	}
 	allowed := map[string]bool{}
 	if len(task.Engines) == 1 && task.Engines[0] == "auto" {
-		allowed = map[string]bool{"nuclei": true, "zap": true, "trivy": true}
+		allowed = map[string]bool{"nuclei": true, "zap": true, "trivy": true, "ssh-audit": true}
 	} else if len(task.Engines) == 1 {
 		allowed[task.Engines[0]] = task.Engines[0] == "nuclei" || task.Engines[0] == "zap" || task.Engines[0] == "trivy"
 	}
