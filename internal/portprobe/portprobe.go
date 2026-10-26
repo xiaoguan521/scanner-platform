@@ -5,6 +5,7 @@ package portprobe
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net"
 	"net/netip"
 	"sort"
@@ -312,6 +313,7 @@ func scanDetailed(ctx context.Context, target string, ports []int, d dialer, pol
 	}
 	sort.Ints(result.Open)
 	sort.Ints(result.TCPWrapped)
+	slog.Info("port probe pass finished", "probed", len(ports), "connected_open", len(result.Open), "in_pass_tcpwrapped", len(result.TCPWrapped), "wildcard_mode", wildcard.strict.Load())
 	if wildcard.strict.Load() || suspiciousOpenSet(len(result.Open), len(ports)) {
 		return verifyWildcardResult(ctx, address, result, d, policy)
 	}

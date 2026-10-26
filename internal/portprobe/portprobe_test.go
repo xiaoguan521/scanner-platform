@@ -480,3 +480,16 @@ func TestUnreliableInPassRuleTriggersFullVerification(t *testing.T) {
 		t.Fatalf("a port the in-pass rule wrongly rejected must be recovered, got open %v", result.Open)
 	}
 }
+
+func TestAPortThatEverKeptAConnectionIsNeverCalledTCPWrapped(t *testing.T) {
+	// One silent observation followed by closes: not a pure accept-then-close fake.
+	result := scanScripted(t, 600, map[int][]string{10: {"hold", "hold", "close", "close", "close"}})
+	for _, port := range result.TCPWrapped {
+		if port == 10 {
+			t.Fatalf("a port with mixed observations must not be tcpwrapped")
+		}
+	}
+	if !reflect.DeepEqual(result.Unconfirmed, []int{10}) {
+		t.Fatalf("expected port 10 unconfirmed, got open %v unconfirmed %v", result.Open, result.Unconfirmed)
+	}
+}

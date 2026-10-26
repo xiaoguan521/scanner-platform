@@ -2,6 +2,7 @@ package portprobe
 
 import (
 	"context"
+	"log/slog"
 	"net"
 	"net/netip"
 	"sort"
@@ -9,6 +10,20 @@ import (
 	"sync"
 	"time"
 )
+
+// maxVerdictLogs bounds how many per-port verification lines one pass writes.
+const maxVerdictLogs = 400
+
+func verdictName(v verdict) string {
+	switch v {
+	case verdictOpen:
+		return "open"
+	case verdictClosed:
+		return "tcpwrapped"
+	default:
+		return "unconfirmed"
+	}
+}
 
 const (
 	// Verification stops as soon as two observations agree, and gives up after this many.
@@ -55,35 +70,41 @@ func observePort(ctx context.Context, address netip.Addr, port int, d dialer, ti
 	return observedClosed
 }
 
-// judgePort decides by consensus instead of a single observation: two agreeing
-// observations settle the port, anything else is Unconfirmed. This keeps one
-// dropped packet or one slow close from hiding a real service or inventing one.
-func judgePort(ctx context.Context, address netip.Addr, port int, d dialer, timeout time.Duration) verdict {
+// judgePort decides by consensus instead of a single observation. Two agreeing
+// observations settle a port only when the other kind was never seen: a port that
+// ever kept a connection is not a pure accept-then-close fake, so mixed evidence
+// is Unconfirmed rather than tcpwrapped. The history ("O" open, "C" closed, "U"
+// could not connect) is returned so the decision can be audited.
+func judgePort(ctx context.Context, address netip.Addr, port int, d dialer, timeout time.Duration) (verdict, string) {
 	opened, closed := 0, 0
+	history := make([]byte, 0, maxObservations)
 	for attempt := 1; attempt <= maxObservations; attempt++ {
 		if ctx.Err() != nil {
-			return verdictUnconfirmed
+			return verdictUnconfirmed, string(history)
 		}
 		switch observePort(ctx, address, port, d, timeout) {
 		case observedOpen:
 			opened++
+			history = append(history, 'O')
 		case observedClosed:
 			closed++
+			history = append(history, 'C')
 		default:
+			history = append(history, 'U')
 			select {
 			case <-time.After(time.Duration(attempt) * 200 * time.Millisecond):
 			case <-ctx.Done():
-				return verdictUnconfirmed
+				return verdictUnconfirmed, string(history)
 			}
 		}
-		if opened >= 2 {
-			return verdictOpen
+		if opened >= 2 && closed == 0 {
+			return verdictOpen, string(history)
 		}
-		if closed >= 2 {
-			return verdictClosed
+		if closed >= 2 && opened == 0 {
+			return verdictClosed, string(history)
 		}
 	}
-	return verdictUnconfirmed
+	return verdictUnconfirmed, string(history)
 }
 
 // judgePorts runs judgePort for each port with the scan's concurrency and rate.
@@ -95,13 +116,18 @@ func judgePorts(ctx context.Context, address netip.Addr, ports []int, d dialer, 
 	jobs := make(chan int)
 	var mu sync.Mutex
 	var done sync.WaitGroup
+	logged := 0
 	for range workers {
 		done.Add(1)
 		go func() {
 			defer done.Done()
 			for port := range jobs {
-				v := judgePort(ctx, address, port, d, policy.Timeout)
+				v, history := judgePort(ctx, address, port, d, policy.Timeout)
 				mu.Lock()
+				if logged < maxVerdictLogs {
+					logged++
+					slog.Info("port verification", "port", port, "history", history, "verdict", verdictName(v))
+				}
 				switch v {
 				case verdictOpen:
 					open = append(open, port)
@@ -152,6 +178,7 @@ feed:
 //     port is not confirmed closed, the in-pass rule is unreliable on this host and
 //     all of them are judged by consensus too.
 func verifyWildcardResult(ctx context.Context, address netip.Addr, pass Result, d dialer, policy Policy) (Result, error) {
+	slog.Info("port probe first pass", "survivors", len(pass.Open), "in_pass_tcpwrapped", len(pass.TCPWrapped))
 	open, closedFromOpen, unconfirmed, err := judgePorts(ctx, address, pass.Open, d, policy)
 	if err != nil {
 		return Result{}, err
@@ -162,6 +189,7 @@ func verifyWildcardResult(ctx context.Context, address netip.Addr, pass Result, 
 	if err != nil {
 		return Result{}, err
 	}
+	slog.Info("port probe audit", "sample", len(sample), "not_closed", len(sampleOpen)+len(sampleUnconfirmed))
 	if len(sampleOpen) == 0 && len(sampleUnconfirmed) == 0 {
 		result.TCPWrapped = append(result.TCPWrapped, pass.TCPWrapped...)
 	} else {
@@ -176,6 +204,7 @@ func verifyWildcardResult(ctx context.Context, address netip.Addr, pass Result, 
 	sort.Ints(result.Open)
 	sort.Ints(result.TCPWrapped)
 	sort.Ints(result.Unconfirmed)
+	slog.Info("port probe verified", "open", len(result.Open), "tcpwrapped", len(result.TCPWrapped), "unconfirmed", len(result.Unconfirmed))
 	return result, nil
 }
 
