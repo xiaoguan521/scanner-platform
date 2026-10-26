@@ -104,12 +104,21 @@ func (s *RuntimeStore) initLocal(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS scan_task_progress(
 			task_id TEXT PRIMARY KEY REFERENCES scan_tasks(id) ON DELETE CASCADE,
 			worker_id TEXT NOT NULL, phase TEXT NOT NULL, completed INTEGER NOT NULL,
-			total INTEGER NOT NULL, updated_at TEXT NOT NULL)`,
+			total INTEGER NOT NULL, updated_at TEXT NOT NULL, history TEXT NOT NULL DEFAULT '')`,
 		`CREATE TABLE IF NOT EXISTS local_rule_bundles(version TEXT PRIMARY KEY,data TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS rule_jobs(id TEXT PRIMARY KEY,status TEXT NOT NULL,data TEXT NOT NULL,bundle BLOB,created_at TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS custom_rules(id TEXT PRIMARY KEY,data TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL,updated_at TEXT NOT NULL)`,
 	} {
 		if _, err := s.db.ExecContext(ctx, q); err != nil {
+			return err
+		}
+	}
+	var progressHistory int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('scan_task_progress') WHERE name='history'`).Scan(&progressHistory); err != nil {
+		return err
+	}
+	if progressHistory == 0 {
+		if _, err := s.db.ExecContext(ctx, `ALTER TABLE scan_task_progress ADD COLUMN history TEXT NOT NULL DEFAULT ''`); err != nil {
 			return err
 		}
 	}

@@ -299,23 +299,23 @@ func (s *RuntimeStore) ListRuntimeAssets(ctx context.Context) ([]assets.Asset, e
 }
 
 func (s *RuntimeStore) runtimeTaskProgress(ctx context.Context) (map[string]taskflow.TaskProgress, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT task_id,phase,completed,total,updated_at FROM scan_task_progress`)
+	rows, err := s.db.QueryContext(ctx, `SELECT task_id,phase,completed,total,updated_at,history FROM scan_task_progress`)
 	if err != nil {
 		return nil, fmt.Errorf("list task progress: %w", err)
 	}
 	defer rows.Close()
 	progress := map[string]taskflow.TaskProgress{}
 	for rows.Next() {
-		var taskID, phase, updatedAt string
+		var taskID, phase, updatedAt, history string
 		var completed, total int
-		if err := rows.Scan(&taskID, &phase, &completed, &total, &updatedAt); err != nil {
+		if err := rows.Scan(&taskID, &phase, &completed, &total, &updatedAt, &history); err != nil {
 			return nil, fmt.Errorf("read task progress: %w", err)
 		}
 		updated, err := time.Parse(time.RFC3339Nano, updatedAt)
 		if err != nil {
 			return nil, fmt.Errorf("parse task progress time: %w", err)
 		}
-		progress[taskID] = taskflow.TaskProgress{Phase: phase, Completed: completed, Total: total, UpdatedAt: updated}
+		progress[taskID] = taskflow.TaskProgress{Phase: phase, Completed: completed, Total: total, UpdatedAt: updated, Phases: decodePhaseHistory(history)}
 	}
 	return progress, rows.Err()
 }
@@ -361,9 +361,9 @@ func (s *RuntimeStore) UpdateRuntimeTaskProgress(ctx context.Context, worker str
 	if !validRuntimeTaskProgress(detail.Input.Engine, portTotal, update) {
 		return ErrInvalidTask
 	}
-	var oldWorker, oldPhase string
+	var oldWorker, oldPhase, oldHistory string
 	var oldCompleted, oldTotal int
-	readErr := tx.QueryRowContext(ctx, `SELECT worker_id,phase,completed,total FROM scan_task_progress WHERE task_id=?`, update.TaskID).Scan(&oldWorker, &oldPhase, &oldCompleted, &oldTotal)
+	readErr := tx.QueryRowContext(ctx, `SELECT worker_id,phase,completed,total,history FROM scan_task_progress WHERE task_id=?`, update.TaskID).Scan(&oldWorker, &oldPhase, &oldCompleted, &oldTotal, &oldHistory)
 	if readErr != nil && !errors.Is(readErr, sql.ErrNoRows) {
 		return fmt.Errorf("read previous task progress: %w", readErr)
 	}
@@ -374,11 +374,15 @@ func (s *RuntimeStore) UpdateRuntimeTaskProgress(ctx context.Context, worker str
 			return ErrInvalidTask
 		}
 	}
+	history := ""
+	if readErr == nil && oldWorker == worker {
+		history = nextPhaseHistory(oldHistory, oldPhase, oldTotal, update.Phase)
+	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	if _, err := tx.ExecContext(ctx, `INSERT INTO scan_task_progress(task_id,worker_id,phase,completed,total,updated_at)
-		VALUES (?,?,?,?,?,?) ON CONFLICT(task_id) DO UPDATE SET worker_id=excluded.worker_id,phase=excluded.phase,
-		completed=excluded.completed,total=excluded.total,updated_at=excluded.updated_at`,
-		update.TaskID, worker, update.Phase, update.Completed, update.Total, now); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO scan_task_progress(task_id,worker_id,phase,completed,total,updated_at,history)
+		VALUES (?,?,?,?,?,?,?) ON CONFLICT(task_id) DO UPDATE SET worker_id=excluded.worker_id,phase=excluded.phase,
+		completed=excluded.completed,total=excluded.total,updated_at=excluded.updated_at,history=excluded.history`,
+		update.TaskID, worker, update.Phase, update.Completed, update.Total, now, history); err != nil {
 		return fmt.Errorf("save task progress: %w", err)
 	}
 	return tx.Commit()
@@ -769,4 +773,36 @@ func (s *RuntimeStore) ListRuntimeFindings(ctx context.Context) ([]taskflow.Find
 		return nil, err
 	}
 	return page.Items, nil
+}
+
+func decodePhaseHistory(raw string) map[string]taskflow.PhaseCount {
+	if raw == "" {
+		return nil
+	}
+	var phases map[string]taskflow.PhaseCount
+	if err := json.Unmarshal([]byte(raw), &phases); err != nil {
+		return nil
+	}
+	return phases
+}
+
+// nextPhaseHistory records the phase a Worker just left as fully done. A phase
+// only advances after it finished, and its total is the input size of the next
+// phase (ports probed, open ports identified, HTTP services checked).
+func nextPhaseHistory(raw, oldPhase string, oldTotal int, newPhase string) string {
+	phases := decodePhaseHistory(raw)
+	if newPhase != oldPhase {
+		if phases == nil {
+			phases = map[string]taskflow.PhaseCount{}
+		}
+		phases[oldPhase] = taskflow.PhaseCount{Completed: oldTotal, Total: oldTotal}
+	}
+	if len(phases) == 0 {
+		return ""
+	}
+	encoded, err := json.Marshal(phases)
+	if err != nil {
+		return ""
+	}
+	return string(encoded)
 }

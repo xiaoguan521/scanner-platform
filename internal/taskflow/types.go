@@ -161,11 +161,21 @@ type Task struct {
 
 // TaskProgress is advisory execution telemetry. It never changes scan scope,
 // authorization, findings, or task completion state.
+// PhaseCount is the final n/m of a phase the task has already moved past.
+type PhaseCount struct {
+	Completed int `json:"completed"`
+	Total     int `json:"total"`
+}
+
 type TaskProgress struct {
 	Phase     string    `json:"phase"`
 	Completed int       `json:"completed"`
 	Total     int       `json:"total"`
 	UpdatedAt time.Time `json:"updatedAt"`
+	// Phases holds the final counts of earlier phases, so the UI can show that
+	// each phase worked on the result of the previous one (open ports, HTTP
+	// services) while a later phase is still running.
+	Phases map[string]PhaseCount `json:"phases,omitempty"`
 }
 
 // FenceTelemetry is the small trusted projection returned by a fenced Worker.

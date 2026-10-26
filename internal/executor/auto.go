@@ -65,6 +65,27 @@ func (r *Runner) AutoScan(ctx context.Context, task taskflow.Task) (taskflow.Aut
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
+	if len(open) == 0 {
+		// Nothing answered on the authorized ports: there is no HTTP(S) service
+		// to check and no open SSH port to collect from, so finish here instead
+		// of starting later phases. Statuses match what those phases would
+		// have recorded for a closed SSH port, so finding lifecycle is unchanged.
+		if _, configured := r.SSHCollector.ProfilePort(task.Chunks[0].Targets[0]); configured {
+			result.SystemStatus = taskflow.SystemScanPortClosed
+		} else {
+			result.SystemStatus = taskflow.SystemScanNotConfigured
+		}
+		if apps := r.SSHCollector.Applications(task.Chunks[0].Targets[0]); len(apps) == 0 {
+			result.ApplicationStatus = taskflow.ApplicationScanNotConfigured
+		} else {
+			result.ApplicationStatus = taskflow.ApplicationScanPortOutOfScope
+			for _, app := range apps {
+				result.ApplicationResults = append(result.ApplicationResults, taskflow.ApplicationResult{Alias: app.Alias, Status: taskflow.ApplicationScanPortOutOfScope})
+			}
+		}
+		result.CompletedFully = autoScanCompleted(result)
+		return result, nil
+	}
 	byScheme := map[string][]string{"http": {}, "https": {}}
 	for _, service := range services {
 		if !service.Quarantined && (service.Scheme == "http" || service.Scheme == "https") {

@@ -110,6 +110,8 @@ export interface TaskProgress {
   completed: number;
   total: number;
   updatedAt: string;
+  /** Final counts of phases already left behind (older Servers omit it). */
+  phases?: Record<string, { completed: number; total: number }>;
 }
 export interface TaskLog {
   id: string;

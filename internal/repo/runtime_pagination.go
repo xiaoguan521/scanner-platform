@@ -258,16 +258,16 @@ func (s *RuntimeStore) attachRuntimeTaskPageMetadata(ctx context.Context, items 
 		return err
 	}
 	countsRows.Close()
-	progressQuery := `SELECT task_id,phase,completed,total,updated_at FROM scan_task_progress WHERE task_id IN (` + strings.Join(placeholders, ",") + `)`
+	progressQuery := `SELECT task_id,phase,completed,total,updated_at,history FROM scan_task_progress WHERE task_id IN (` + strings.Join(placeholders, ",") + `)`
 	progressRows, err := s.db.QueryContext(ctx, progressQuery, ids...)
 	if err != nil {
 		return fmt.Errorf("list paged task progress: %w", err)
 	}
 	progress := map[string]taskflow.TaskProgress{}
 	for progressRows.Next() {
-		var taskID, phase, updatedAt string
+		var taskID, phase, updatedAt, history string
 		var completed, total int
-		if err := progressRows.Scan(&taskID, &phase, &completed, &total, &updatedAt); err != nil {
+		if err := progressRows.Scan(&taskID, &phase, &completed, &total, &updatedAt, &history); err != nil {
 			progressRows.Close()
 			return err
 		}
@@ -276,7 +276,7 @@ func (s *RuntimeStore) attachRuntimeTaskPageMetadata(ctx context.Context, items 
 			progressRows.Close()
 			return fmt.Errorf("parse task progress time: %w", err)
 		}
-		progress[taskID] = taskflow.TaskProgress{Phase: phase, Completed: completed, Total: total, UpdatedAt: updated}
+		progress[taskID] = taskflow.TaskProgress{Phase: phase, Completed: completed, Total: total, UpdatedAt: updated, Phases: decodePhaseHistory(history)}
 	}
 	if err := progressRows.Err(); err != nil {
 		progressRows.Close()

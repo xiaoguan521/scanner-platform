@@ -8,7 +8,7 @@ import { AutoGrid, Panel } from '../../components/Page';
 import { useAppTheme } from '../../context/ThemeContext';
 import type { ScanTask, TaskLog } from '../../types';
 import { applicationCoverage, applicationStatuses, systemCoverage, type Coverage } from './coverage';
-import { isTerminalTask, phaseLabels, phaseTones, taskPhases } from './phases';
+import { isTerminalTask, liveScanCounts, phaseLabels, phaseTones, taskPhases } from './phases';
 import { compressPorts, presetLabels, showRanges } from './policy';
 import { formatTime } from '../../utils/time';
 import { taskTargetSummary } from './targets';
@@ -61,6 +61,7 @@ export const TaskDetail: React.FC<{
   const terminal = isTerminalTask(task.status);
   const auto = task.engines?.[0] === 'auto' || task.engines?.[0] === 'port-probe';
   const phases = taskPhases(task);
+  const live = liveScanCounts(task);
   const target = taskTargetSummary(task);
   const startedAt = task.chunks?.map(chunk => chunk.startedAt).filter(Boolean).sort()[0];
   const finishedAt = task.chunks?.map(chunk => chunk.finishedAt).filter(Boolean).sort().slice(-1)[0];
@@ -134,8 +135,8 @@ export const TaskDetail: React.FC<{
       <Panel title="扫描结果">
         <AutoGrid min={150} gap={12}>
           {[
-            ['开放端口', openPorts.length, compressPorts(openPorts) || '无'],
-            ['HTTP(S) 服务', httpServices.length, (task.serviceResults?.length ?? 0) > httpServices.length ? `另有 ${(task.serviceResults?.length ?? 0) - httpServices.length} 个非 HTTP 服务` : '已执行只读基线检查'],
+            ['开放端口', openPorts.length || live.open || 0, openPorts.length ? compressPorts(openPorts) : live.open ? '端口明细在任务结束后显示' : '无'],
+            ['HTTP(S) 服务', httpServices.length || live.http || 0, !httpServices.length && live.http ? '正在检查，服务明细在任务结束后显示' : (task.serviceResults?.length ?? 0) > httpServices.length ? `另有 ${(task.serviceResults?.length ?? 0) - httpServices.length} 个非 HTTP 服务` : '已执行只读基线检查'],
             ['发现项', task.findingCount, task.findingCount ? '可在漏洞列表中按任务筛选' : '本次没有发现项'],
           ].map(([label, value, note]) => (
             <div key={String(label)} style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: 12, borderRadius: 10, background: palette.bgSubtle }}>

@@ -94,3 +94,18 @@ func TestRuntimeAtomicClaimAcrossConnections(t *testing.T) {
 		t.Fatalf("same queued task claimed %d times", len(claimed))
 	}
 }
+
+func TestNextPhaseHistoryKeepsFinishedPhaseTotals(t *testing.T) {
+	history := nextPhaseHistory("", "tcp_probe", 65535, "service_identification")
+	history = nextPhaseHistory(history, "service_identification", 5, "http_scan")
+	phases := decodePhaseHistory(history)
+	if phases["tcp_probe"] != (taskflow.PhaseCount{Completed: 65535, Total: 65535}) || phases["service_identification"] != (taskflow.PhaseCount{Completed: 5, Total: 5}) {
+		t.Fatalf("history = %#v", phases)
+	}
+	if again := nextPhaseHistory(history, "http_scan", 2, "http_scan"); again != history {
+		t.Fatalf("same phase must not change history: %q", again)
+	}
+	if nextPhaseHistory("", "tcp_probe", 3, "tcp_probe") != "" || decodePhaseHistory("not json") != nil {
+		t.Fatal("empty or corrupt history must stay empty")
+	}
+}
