@@ -86,6 +86,7 @@ func (r workerLeaseRenewer) Renew(ctx context.Context, assignment scheduler.Assi
 		"pinnedRuleVersion": assignment.PinnedRuleVersion,
 	}, &response)
 	if err != nil {
+		slog.Warn("lease renewal failed", "task_id", assignment.TaskID, "error", err)
 		return time.Time{}, err
 	}
 	if code != http.StatusOK || response.LeaseExpiresAt.IsZero() {

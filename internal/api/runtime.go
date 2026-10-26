@@ -310,9 +310,16 @@ func NewRuntimeHandlerWithUI(store repo.RuntimeBackend, fallback http.Handler, u
 	return withRequestID(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
+		started := time.Now()
 		mux.ServeHTTP(w, r)
+		if elapsed := time.Since(started); elapsed >= slowRequestThreshold {
+			// Method, route and duration only: no query, headers or bodies, so nothing sensitive is logged.
+			slog.Warn("slow request", "method", r.Method, "path", r.URL.Path, "duration", elapsed.Round(time.Millisecond))
+		}
 	}))
 }
+
+const slowRequestThreshold = 2 * time.Second
 
 func runtimeJSON(w http.ResponseWriter, code int, value any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
