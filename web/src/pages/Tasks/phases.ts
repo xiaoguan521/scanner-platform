@@ -24,7 +24,8 @@ export function taskPhases(task: PhaseTask): PhaseView[] {
   // Each phase works on the result of the one before: ports probed -> open
   // ports identified -> HTTP(S) services checked. Show every phase as n / m.
   const counts = (key: string, index: number): { completed: number; total: number } | null => {
-    if (index === current && task.progress) return task.progress;
+    // A finished task keeps its last heartbeat (e.g. 6/8 HTTP services); show the final counts instead.
+    if (index === current && task.progress && !finished) return task.progress;
     const recorded = task.progress?.phases?.[key];
     if (recorded) return recorded;
     if (key === 'tcp_probe' && task.portProbePorts && (finished || current > index)) return { completed: task.portProbePorts.length, total: task.portProbePorts.length };

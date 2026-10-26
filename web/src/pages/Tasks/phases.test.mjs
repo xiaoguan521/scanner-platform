@@ -53,3 +53,6 @@ assert.deepEqual(liveScanCounts({ progress: { phase: 'http_scan', completed: 0, 
 assert.equal(isTerminalTask('RUNNING'), false);
 assert.equal(isTerminalTask('CANCELED'), true);
 console.log('task phases and coverage: all checks passed');
+
+// A finished task must not show its last heartbeat (6 of 8 HTTP services) as the final count.
+assert.equal(taskPhases({ ...base, status: 'COMPLETED', serviceResults: Array.from({ length: 8 }, (_, i) => ({ port: 7000 + i, kind: 'HTTP' })), progress: { phase: 'http_scan', completed: 6, total: 8 } })[2].detail, '8 / 8 个 HTTP(S) 服务');
