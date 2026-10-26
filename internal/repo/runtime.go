@@ -64,7 +64,10 @@ func OpenRuntime(path string) (*RuntimeStore, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return nil, fmt.Errorf("create database directory: %w", err)
 	}
-	db, err := sql.Open("sqlite", path)
+	// Pragmas in the DSN run on every new connection; a PRAGMA executed once
+	// through the pool is lost when database/sql replaces a connection, which
+	// would make writers fail instantly with SQLITE_BUSY instead of waiting.
+	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
 	if err != nil {
 		return nil, fmt.Errorf("open task database: %w", err)
 	}

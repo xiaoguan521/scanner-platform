@@ -95,7 +95,9 @@ func New(path string) (*Store, error) {
 	if err := os.MkdirAll(parent, 0700); err != nil {
 		return nil, fmt.Errorf("create DB directory: %w", err)
 	}
-	db, err := sql.Open("sqlite", path)
+	// Per-connection pragmas belong in the DSN so a replaced connection keeps
+	// waiting on a busy database instead of failing instantly.
+	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
