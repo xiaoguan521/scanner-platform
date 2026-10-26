@@ -91,7 +91,7 @@ func TestRuntimeTaskProgressStoresLivePortsAndRejectsUndispatched(t *testing.T) 
 	for _, update := range []taskflow.ProgressUpdate{
 		{TaskID: "live-ports", Phase: "tcp_probe", Completed: 3, Total: 3},
 		{TaskID: "live-ports", Phase: "service_identification", Total: 2, OpenPorts: []int{22, 80}},
-		{TaskID: "live-ports", Phase: "http_scan", Total: 1, HTTPPorts: []int{80}},
+		{TaskID: "live-ports", Phase: "http_scan", Total: 1, HTTPPorts: []int{80}, Services: []taskflow.LiveService{{Port: 80, Kind: "HTTP", Scheme: "http", Software: "nginx", Version: "1.24", Title: "Home"}, {Port: 22, Kind: "OTHER"}}},
 		{TaskID: "live-ports", Phase: "http_scan", Completed: 1, Total: 1}, // later counter keeps the lists
 	} {
 		if err := store.UpdateRuntimeTaskProgress(ctx, "worker", update); err != nil {
@@ -103,12 +103,15 @@ func TestRuntimeTaskProgressStoresLivePortsAndRejectsUndispatched(t *testing.T) 
 		t.Fatal(err)
 	}
 	got := progress["live-ports"]
-	if len(got.OpenPorts) != 2 || len(got.HTTPPorts) != 1 || got.Phases["tcp_probe"].Total != 3 || got.Phases["service_identification"].Total != 2 {
+	if len(got.OpenPorts) != 2 || len(got.HTTPPorts) != 1 || got.Phases["tcp_probe"].Total != 3 || got.Phases["service_identification"].Total != 2 || len(got.Services) != 2 || got.Services[0].Software != "nginx" {
 		t.Fatalf("stored progress = %+v", got)
 	}
 	for _, bad := range []taskflow.ProgressUpdate{
 		{TaskID: "live-ports", Phase: "http_scan", Completed: 1, Total: 1, OpenPorts: []int{443}},
 		{TaskID: "live-ports", Phase: "http_scan", Completed: 1, Total: 1, HTTPPorts: []int{80, 80}},
+		{TaskID: "live-ports", Phase: "http_scan", Completed: 1, Total: 1, Services: []taskflow.LiveService{{Port: 443, Kind: "HTTP", Scheme: "https"}}},
+		{TaskID: "live-ports", Phase: "http_scan", Completed: 1, Total: 1, Services: []taskflow.LiveService{{Port: 80, Kind: "HTTP", Scheme: "gopher"}}},
+		{TaskID: "live-ports", Phase: "http_scan", Completed: 1, Total: 1, Services: []taskflow.LiveService{{Port: 80, Kind: "OTHER", Title: string(make([]byte, 0)) + "ok\x00"}}},
 	} {
 		if err := store.UpdateRuntimeTaskProgress(ctx, "worker", bad); err == nil {
 			t.Fatalf("invalid live ports accepted: %+v", bad)

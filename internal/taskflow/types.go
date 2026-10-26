@@ -7,6 +7,7 @@ import (
 	"scanner-platform/internal/inventory"
 	"scanner-platform/internal/portprobe"
 	"scanner-platform/internal/scheduler"
+	"strings"
 	"time"
 )
 
@@ -185,7 +186,28 @@ type TaskProgress struct {
 	// scan is still running. They are omitted when longer than MaxLivePorts.
 	OpenPorts []int `json:"openPorts,omitempty"`
 	HTTPPorts []int `json:"httpPorts,omitempty"`
+	// Services is a compact view of the identified services (no login entries,
+	// URLs or evidence); the complete inventory arrives with the final report.
+	Services []LiveService `json:"services,omitempty"`
 }
+
+// LiveService is the small projection of a service shown while a task runs.
+type LiveService struct {
+	Port     int    `json:"port"`
+	Kind     string `json:"kind"`
+	Scheme   string `json:"scheme,omitempty"`
+	Software string `json:"software,omitempty"`
+	Version  string `json:"version,omitempty"`
+	Title    string `json:"title,omitempty"`
+	TLS      bool   `json:"tls,omitempty"`
+}
+
+// MaxLiveServices and MaxLiveText bound the live service list; a longer list
+// is omitted and the UI waits for the final report.
+const (
+	MaxLiveServices = 128
+	MaxLiveText     = 120
+)
 
 // MaxLivePorts bounds the live port lists carried by progress telemetry. A host
 // with more open ports is unusual; the UI then falls back to counts and the
@@ -201,12 +223,13 @@ type FenceTelemetry struct {
 
 // ProgressUpdate is sent by a Worker in its existing heartbeat.
 type ProgressUpdate struct {
-	TaskID    string `json:"taskId"`
-	Phase     string `json:"phase"`
-	Completed int    `json:"completed"`
-	Total     int    `json:"total"`
-	OpenPorts []int  `json:"openPorts,omitempty"`
-	HTTPPorts []int  `json:"httpPorts,omitempty"`
+	TaskID    string        `json:"taskId"`
+	Phase     string        `json:"phase"`
+	Completed int           `json:"completed"`
+	Total     int           `json:"total"`
+	OpenPorts []int         `json:"openPorts,omitempty"`
+	HTTPPorts []int         `json:"httpPorts,omitempty"`
+	Services  []LiveService `json:"services,omitempty"`
 }
 
 type ProgressReporter func(TaskProgress)
@@ -228,9 +251,35 @@ func ReportProgress(ctx context.Context, phase string, completed, total int) {
 	reporter(TaskProgress{Phase: phase, Completed: completed, Total: total, UpdatedAt: time.Now().UTC()})
 }
 
-// ReportFoundPorts publishes the ports discovered so far together with the
-// phase counter. Lists over MaxLivePorts are dropped, not truncated.
-func ReportFoundPorts(ctx context.Context, phase string, completed, total int, open, http []int) {
+// Found is what a phase has discovered so far.
+type Found struct {
+	Open, HTTP []int
+	Services   []ServiceResult
+}
+
+// LiveServices projects identified services to their compact live form, or nil
+// when there are too many to carry in progress telemetry.
+func LiveServices(services []ServiceResult) []LiveService {
+	if len(services) > MaxLiveServices {
+		return nil
+	}
+	clip := func(value string) string {
+		if len(value) <= MaxLiveText {
+			return value
+		}
+		return strings.ToValidUTF8(value[:MaxLiveText], "")
+	}
+	out := make([]LiveService, 0, len(services))
+	for _, service := range services {
+		out = append(out, LiveService{Port: service.Port, Kind: service.Kind, Scheme: service.Scheme, Software: clip(service.Software), Version: clip(service.Version), Title: clip(service.Title), TLS: service.TLS})
+	}
+	return out
+}
+
+// ReportFound publishes what was discovered so far together with the phase
+// counter. Port lists over MaxLivePorts are dropped, not truncated.
+func ReportFound(ctx context.Context, phase string, completed, total int, found Found) {
+	open, http := found.Open, found.HTTP
 	reporter, ok := ctx.Value(progressReporterKey{}).(ProgressReporter)
 	if !ok || reporter == nil {
 		return
@@ -242,6 +291,7 @@ func ReportFoundPorts(ctx context.Context, phase string, completed, total int, o
 	if len(http) <= MaxLivePorts {
 		progress.HTTPPorts = append([]int(nil), http...)
 	}
+	progress.Services = LiveServices(found.Services)
 	reporter(progress)
 }
 

@@ -49,10 +49,11 @@ func (r *Runner) AutoScan(ctx context.Context, task taskflow.Task) (taskflow.Aut
 			openApproved = append(openApproved, result.Port)
 		}
 	}
-	taskflow.ReportFoundPorts(ctx, "service_identification", 0, len(openApproved), openPorts(open), nil)
+	taskflow.ReportFound(ctx, "service_identification", 0, len(openApproved), taskflow.Found{Open: openPorts(open)})
 	services := identifyServicesWithProgress(ctx, task.Chunks[0].Targets[0], openApproved, task.PortProbeConfig, func(completed, total int) {
 		taskflow.ReportProgress(ctx, "service_identification", completed, total)
 	})
+	taskflow.ReportFound(ctx, "service_identification", len(openApproved), len(openApproved), taskflow.Found{Services: services})
 	result := taskflow.AutoResult{TCPWrapped: tcpWrapped, UnconfirmedPorts: unconfirmed, Ports: open, Services: services, Findings: []taskflow.Detection{}, SystemStatus: taskflow.SystemScanNotStarted, ApplicationStatus: taskflow.ApplicationScanNotStarted, AssetProfile: inferProfile(services)}
 	markEngine := func(engine string) {
 		for _, existing := range result.ExecutedEngines {
@@ -129,7 +130,7 @@ func (r *Runner) AutoScan(ctx context.Context, task taskflow.Task) (taskflow.Aut
 				httpPorts = append(httpPorts, service.Port)
 			}
 		}
-		taskflow.ReportFoundPorts(ctx, "http_scan", 0, httpTotal, nil, httpPorts)
+		taskflow.ReportFound(ctx, "http_scan", 0, httpTotal, taskflow.Found{HTTP: httpPorts})
 	}
 	httpCompleted := 0
 	httpScanFailed := false

@@ -67,7 +67,9 @@ export const TaskDetail: React.FC<{
   const finishedAt = task.chunks?.map(chunk => chunk.finishedAt).filter(Boolean).sort().slice(-1)[0];
   const worker = [...new Set(task.chunks?.map(chunk => chunk.workerNodeId).filter(Boolean))].join('、');
   const openPorts = task.portProbeResults?.map(item => item.port) ?? [];
-  const httpServices = task.serviceResults?.filter(item => item.kind === 'HTTP') ?? [];
+  // While the task runs only the compact live view exists; the final report replaces it.
+  const serviceRows: { port: number; kind: string; software?: string; version?: string; title?: string; tls?: boolean }[] = task.serviceResults?.length ? task.serviceResults : task.progress?.services ?? [];
+  const httpServices = serviceRows.filter(item => item.kind === 'HTTP');
   const system = systemCoverage(task.systemScanStatus, task.systemScanCode);
   const app = applicationCoverage(task.applicationScanStatus);
   const kind = task.synthetic ? '模拟任务' : task.engines?.[0] === 'auto' ? '自动综合扫描' : task.engines?.[0] === 'port-probe' ? '历史 TCP 端口探测' : task.inputPath ? '离线输入扫描' : (task.engines ?? []).join('、').toUpperCase();
@@ -136,7 +138,7 @@ export const TaskDetail: React.FC<{
         <AutoGrid min={150} gap={12}>
           {[
             ['开放端口', openPorts.length || live.open || 0, `${openPorts.length ? compressPorts(openPorts) : live.openPorts.length ? `${compressPorts(live.openPorts)}（任务进行中）` : live.open ? '端口明细在任务结束后显示' : '无'}${task.tcpWrapped ? `；另有 ${task.tcpWrapped.toLocaleString()} 个端口应答握手但立即关闭（tcpwrapped，疑似防火墙或负载均衡代答），未计入开放端口` : ''}${task.unconfirmedPorts?.length ? `；另有 ${task.unconfirmedPorts.length} 个端口多次检查结果不一致，无法判定（${compressPorts(task.unconfirmedPorts)}），建议稍后单独复测` : ''}`],
-            ['HTTP(S) 服务', httpServices.length || live.http || 0, !httpServices.length && live.http ? (live.httpPorts.length ? `端口 ${compressPorts(live.httpPorts)}，正在检查` : '正在检查，服务明细在任务结束后显示') : (task.serviceResults?.length ?? 0) > httpServices.length ? `另有 ${(task.serviceResults?.length ?? 0) - httpServices.length} 个非 HTTP 服务` : '已执行只读基线检查'],
+            ['HTTP(S) 服务', httpServices.length || live.http || 0, !isTerminalTask(task.status) && httpServices.length ? '服务识别完成，基线检查进行中' : !httpServices.length && live.http ? (live.httpPorts.length ? `端口 ${compressPorts(live.httpPorts)}，正在检查` : '正在检查，服务明细在任务结束后显示') : serviceRows.length > httpServices.length ? `另有 ${serviceRows.length - httpServices.length} 个非 HTTP 服务` : '已执行只读基线检查'],
             ['发现项', task.findingCount, task.findingCount ? '可在漏洞列表中按任务筛选' : '本次没有发现项'],
           ].map(([label, value, note]) => (
             <div key={String(label)} style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: 12, borderRadius: 10, background: palette.bgSubtle }}>

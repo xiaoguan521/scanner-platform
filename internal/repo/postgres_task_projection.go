@@ -286,12 +286,12 @@ func (s *PostgresTaskProjection) SaveProgress(ctx context.Context, worker string
 	if !validRuntimeTaskProgress(engine, len(task.PortProbePorts), update) {
 		return ErrPostgresProjectionInvalid
 	}
-	if len(update.OpenPorts) > 0 || len(update.HTTPPorts) > 0 {
+	if len(update.OpenPorts) > 0 || len(update.HTTPPorts) > 0 || len(update.Services) > 0 {
 		dispatched := make(map[int]bool, len(task.PortProbePorts))
 		for _, port := range task.PortProbePorts {
 			dispatched[port] = true
 		}
-		if engine != "auto" || !validLivePorts(update.OpenPorts, dispatched) || !validLivePorts(update.HTTPPorts, dispatched) {
+		if engine != "auto" || !validLivePorts(update.OpenPorts, dispatched) || !validLivePorts(update.HTTPPorts, dispatched) || !validLiveServices(update.Services, dispatched) {
 			return ErrPostgresProjectionInvalid
 		}
 	}

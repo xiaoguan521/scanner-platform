@@ -64,6 +64,9 @@ func (p *workerProgress) update(value TaskProgress) {
 		if value.HTTPPorts == nil {
 			value.HTTPPorts = p.value.HTTPPorts
 		}
+		if value.Services == nil {
+			value.Services = p.value.Services
+		}
 	}
 	p.value, p.set = value, true
 }
@@ -245,7 +248,7 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 					payload["localRuleVersion"] = localRuleVersion
 				}
 				if current, ok := progress.snapshot(); ok {
-					payload["progress"] = ProgressUpdate{TaskID: task.ID, Phase: current.Phase, Completed: current.Completed, Total: current.Total, OpenPorts: current.OpenPorts, HTTPPorts: current.HTTPPorts}
+					payload["progress"] = ProgressUpdate{TaskID: task.ID, Phase: current.Phase, Completed: current.Completed, Total: current.Total, OpenPorts: current.OpenPorts, HTTPPorts: current.HTTPPorts, Services: current.Services}
 				}
 				_, e := w.post(heartbeatCtx, "/api/v1/nodes/heartbeat", payload, &state)
 				if e != nil {

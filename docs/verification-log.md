@@ -919,3 +919,5 @@
 - 任务详情进度改为统一 n/m 且逐级递进：端口探测（已探/总端口，附开放数）→ 服务识别（已识别/开放端口）→ HTTP 基线（已检查/HTTP(S) 服务）。SQLite 的 `scan_task_progress` 新增 `history` 列，记录已离开阶段的最终计数，使运行中也能显示开放端口数和 HTTP 服务数；“扫描结果”卡片据此实时显示数量（端口/服务明细仍在任务结束后上报）。无开放端口时自动综合扫描在服务识别后直接结束，后续阶段显示“已跳过”，系统/应用覆盖状态与原 SSH 端口未开放的状态一致。PostgreSQL 路径未加 `history`（界面自动回退），尚未验证真实长任务。
 
 - 实时上报：Worker 心跳的 `progress` 新增可选 `openPorts`/`httpPorts`（服务识别开始时报开放端口，HTTP 基线开始时报 HTTP(S) 服务端口），超过 `MaxLivePorts`(512) 则省略改回计数。Server 仅接受任务已下发探测端口内、无重复的列表，存入 `scan_task_progress.history`（该列格式为阶段计数加端口列表，仅 SQLite），任务详情“扫描结果”卡片实时显示端口号。围栏子进程进度行上限由 4096 调至 16384 字节并校验端口范围。仅传端口号，不传服务指纹明细；服务明细仍随最终回报。PostgreSQL 路径未实现，真实长任务与围栏子进程链路（Linux）未实机验证。
+
+- 三项收尾：(1) SQLite 的 `busy_timeout`/`foreign_keys` 改写入 DSN，每个连接创建时都生效（原先只在初始化时对连接池执行一次 PRAGMA，连接被替换后等待设置丢失，写库会立刻 `SQLITE_BUSY`）；新增测试在去掉修复后会失败。(2) PostgreSQL 新增迁移 `0018_task_progress_history`（`scan_task_progress.history`），SaveProgress/读取与 SQLite 一致，校验脚本和迁移清单同步为 18 项。(3) 实时上报增加精简服务视图 `LiveService`（端口、类型、协议、软件、版本、标题、TLS；文本 ≤120 字节、最多 128 条，超出则省略），Server 校验端口属于下发范围且唯一，围栏子进程进度行上限调为 64KB 并校验；任务详情运行中即显示服务明细，最终回报后以完整清册替换。未验证：PostgreSQL 迁移与 SaveProgress 未在真实库执行（本机无 Docker 守护进程），Linux 围栏子进程链路与真实长任务未实机验证。

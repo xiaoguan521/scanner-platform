@@ -156,7 +156,7 @@ func (r *fencedTaskRunner) run(ctx context.Context, operation string, task taskf
 }
 
 const (
-	maxFencedProgressLine   = 16384
+	maxFencedProgressLine   = 65536
 	maxFencedProgressEvents = 100000
 )
 
@@ -185,7 +185,7 @@ func readFencedProgress(ctx context.Context, r io.Reader) error {
 			firstErr = errors.New("invalid progress event")
 			continue
 		}
-		if !validLivePorts(update.OpenPorts) || !validLivePorts(update.HTTPPorts) {
+		if !validLivePorts(update.OpenPorts) || !validLivePorts(update.HTTPPorts) || !validLiveServices(update.Services) {
 			firstErr = errors.New("invalid progress event")
 			continue
 		}
@@ -208,6 +208,18 @@ func validLivePorts(ports []int) bool {
 	}
 	for _, port := range ports {
 		if port < 1 || port > 65535 {
+			return false
+		}
+	}
+	return true
+}
+
+func validLiveServices(services []taskflow.LiveService) bool {
+	if len(services) > taskflow.MaxLiveServices {
+		return false
+	}
+	for _, service := range services {
+		if service.Port < 1 || service.Port > 65535 || service.Kind != "HTTP" && service.Kind != "OTHER" || len(service.Software) > taskflow.MaxLiveText || len(service.Version) > taskflow.MaxLiveText || len(service.Title) > taskflow.MaxLiveText {
 			return false
 		}
 	}

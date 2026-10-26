@@ -119,6 +119,8 @@ export interface TaskProgress {
   /** Ports found so far while the task runs (omitted for unusually long lists). */
   openPorts?: number[];
   httpPorts?: number[];
+  /** Compact identified services while the task runs; the full inventory arrives with the final report. */
+  services?: { port: number; kind: string; scheme?: string; software?: string; version?: string; title?: string; tls?: boolean }[];
 }
 export interface TaskLog {
   id: string;

@@ -369,7 +369,7 @@ func (s *RuntimeStore) UpdateRuntimeTaskProgress(ctx context.Context, worker str
 	if !validRuntimeTaskProgress(detail.Input.Engine, portTotal, update) {
 		return ErrInvalidTask
 	}
-	if len(update.OpenPorts) > 0 || len(update.HTTPPorts) > 0 {
+	if len(update.OpenPorts) > 0 || len(update.HTTPPorts) > 0 || len(update.Services) > 0 {
 		var dispatchedPorts []int
 		if err := json.Unmarshal(detail.ProbePorts, &dispatchedPorts); err != nil {
 			return ErrInvalidTask
@@ -378,7 +378,7 @@ func (s *RuntimeStore) UpdateRuntimeTaskProgress(ctx context.Context, worker str
 		for _, port := range dispatchedPorts {
 			dispatched[port] = true
 		}
-		if detail.Input.Engine != "auto" || !validLivePorts(update.OpenPorts, dispatched) || !validLivePorts(update.HTTPPorts, dispatched) {
+		if detail.Input.Engine != "auto" || !validLivePorts(update.OpenPorts, dispatched) || !validLivePorts(update.HTTPPorts, dispatched) || !validLiveServices(update.Services, dispatched) {
 			return ErrInvalidTask
 		}
 	}
@@ -803,6 +803,7 @@ type liveProgress struct {
 	Phases    map[string]taskflow.PhaseCount `json:"phases,omitempty"`
 	OpenPorts []int                          `json:"openPorts,omitempty"`
 	HTTPPorts []int                          `json:"httpPorts,omitempty"`
+	Services  []taskflow.LiveService         `json:"services,omitempty"`
 }
 
 func decodeLiveProgress(raw string) liveProgress {
@@ -815,7 +816,7 @@ func decodeLiveProgress(raw string) liveProgress {
 
 func withLiveProgress(progress taskflow.TaskProgress, raw string) taskflow.TaskProgress {
 	live := decodeLiveProgress(raw)
-	progress.Phases, progress.OpenPorts, progress.HTTPPorts = live.Phases, live.OpenPorts, live.HTTPPorts
+	progress.Phases, progress.OpenPorts, progress.HTTPPorts, progress.Services = live.Phases, live.OpenPorts, live.HTTPPorts, live.Services
 	return progress
 }
 
@@ -836,7 +837,10 @@ func nextLiveProgress(raw, oldPhase string, oldTotal int, update taskflow.Progre
 	if update.HTTPPorts != nil {
 		live.HTTPPorts = update.HTTPPorts
 	}
-	if len(live.Phases) == 0 && live.OpenPorts == nil && live.HTTPPorts == nil {
+	if update.Services != nil {
+		live.Services = update.Services
+	}
+	if len(live.Phases) == 0 && live.OpenPorts == nil && live.HTTPPorts == nil && live.Services == nil {
 		return ""
 	}
 	encoded, err := json.Marshal(live)
@@ -844,6 +848,28 @@ func nextLiveProgress(raw, oldPhase string, oldTotal int, update taskflow.Progre
 		return ""
 	}
 	return string(encoded)
+}
+
+// validLiveServices accepts only a compact, text-bounded view of services on
+// ports this task was dispatched to probe, one per port.
+func validLiveServices(services []taskflow.LiveService, dispatched map[int]bool) bool {
+	if len(services) > taskflow.MaxLiveServices {
+		return false
+	}
+	seen := make(map[int]bool, len(services))
+	for _, service := range services {
+		if !dispatched[service.Port] || seen[service.Port] || service.Kind != "HTTP" && service.Kind != "OTHER" ||
+			service.Kind == "HTTP" && service.Scheme != "http" && service.Scheme != "https" || service.Kind == "OTHER" && service.Scheme != "" {
+			return false
+		}
+		for _, text := range []string{service.Software, service.Version, service.Title} {
+			if !validInventoryText(text, taskflow.MaxLiveText) {
+				return false
+			}
+		}
+		seen[service.Port] = true
+	}
+	return true
 }
 
 // validLivePorts accepts only ports this task was dispatched to probe.
