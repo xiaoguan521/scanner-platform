@@ -56,6 +56,15 @@ func (p *workerProgress) update(value TaskProgress) {
 	if p.set && p.value.Phase == value.Phase && value.Completed < p.value.Completed {
 		return
 	}
+	// Found-port lists are sent once; later counters must not erase them.
+	if p.set {
+		if value.OpenPorts == nil {
+			value.OpenPorts = p.value.OpenPorts
+		}
+		if value.HTTPPorts == nil {
+			value.HTTPPorts = p.value.HTTPPorts
+		}
+	}
 	p.value, p.set = value, true
 }
 
@@ -235,7 +244,7 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 					payload["localRuleVersion"] = localRuleVersion
 				}
 				if current, ok := progress.snapshot(); ok {
-					payload["progress"] = ProgressUpdate{TaskID: task.ID, Phase: current.Phase, Completed: current.Completed, Total: current.Total}
+					payload["progress"] = ProgressUpdate{TaskID: task.ID, Phase: current.Phase, Completed: current.Completed, Total: current.Total, OpenPorts: current.OpenPorts, HTTPPorts: current.HTTPPorts}
 				}
 				_, e := w.post(heartbeatCtx, "/api/v1/nodes/heartbeat", payload, &state)
 				if e != nil {

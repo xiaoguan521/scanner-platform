@@ -75,3 +75,43 @@ func TestRuntimeTaskProgressAllowsSingleEngineCompletion(t *testing.T) {
 		t.Fatal("over-complete engine progress accepted")
 	}
 }
+
+func TestRuntimeTaskProgressStoresLivePortsAndRejectsUndispatched(t *testing.T) {
+	store, err := OpenRuntime(filepath.Join(t.TempDir(), "runtime.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	detail, _ := json.Marshal(taskDetails{Input: taskflow.TaskInput{Engine: "auto"}, ProbePorts: []int{22, 80, 8080}})
+	ctx := context.Background()
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO scan_tasks(id,status,worker_id,created_at,targets,details) VALUES(?,?,?,?,?,?)`,
+		"live-ports", "RUNNING", "worker", time.Now().UTC().Format(time.RFC3339Nano), `["192.0.2.10"]`, string(detail)); err != nil {
+		t.Fatal(err)
+	}
+	for _, update := range []taskflow.ProgressUpdate{
+		{TaskID: "live-ports", Phase: "tcp_probe", Completed: 3, Total: 3},
+		{TaskID: "live-ports", Phase: "service_identification", Total: 2, OpenPorts: []int{22, 80}},
+		{TaskID: "live-ports", Phase: "http_scan", Total: 1, HTTPPorts: []int{80}},
+		{TaskID: "live-ports", Phase: "http_scan", Completed: 1, Total: 1}, // later counter keeps the lists
+	} {
+		if err := store.UpdateRuntimeTaskProgress(ctx, "worker", update); err != nil {
+			t.Fatalf("update %+v rejected: %v", update, err)
+		}
+	}
+	progress, err := store.runtimeTaskProgress(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := progress["live-ports"]
+	if len(got.OpenPorts) != 2 || len(got.HTTPPorts) != 1 || got.Phases["tcp_probe"].Total != 3 || got.Phases["service_identification"].Total != 2 {
+		t.Fatalf("stored progress = %+v", got)
+	}
+	for _, bad := range []taskflow.ProgressUpdate{
+		{TaskID: "live-ports", Phase: "http_scan", Completed: 1, Total: 1, OpenPorts: []int{443}},
+		{TaskID: "live-ports", Phase: "http_scan", Completed: 1, Total: 1, HTTPPorts: []int{80, 80}},
+	} {
+		if err := store.UpdateRuntimeTaskProgress(ctx, "worker", bad); err == nil {
+			t.Fatalf("invalid live ports accepted: %+v", bad)
+		}
+	}
+}

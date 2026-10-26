@@ -156,7 +156,7 @@ func (r *fencedTaskRunner) run(ctx context.Context, operation string, task taskf
 }
 
 const (
-	maxFencedProgressLine   = 4096
+	maxFencedProgressLine   = 16384
 	maxFencedProgressEvents = 100000
 )
 
@@ -185,7 +185,11 @@ func readFencedProgress(ctx context.Context, r io.Reader) error {
 			firstErr = errors.New("invalid progress event")
 			continue
 		}
-		taskflow.ReportProgress(ctx, update.Phase, update.Completed, update.Total)
+		if !validLivePorts(update.OpenPorts) || !validLivePorts(update.HTTPPorts) {
+			firstErr = errors.New("invalid progress event")
+			continue
+		}
+		taskflow.ReportProgressValue(ctx, update)
 	}
 	if err := scanner.Err(); err != nil {
 		if firstErr == nil {
@@ -196,6 +200,18 @@ func readFencedProgress(ctx context.Context, r io.Reader) error {
 		_, _ = io.Copy(io.Discard, r)
 	}
 	return firstErr
+}
+
+func validLivePorts(ports []int) bool {
+	if len(ports) > taskflow.MaxLivePorts {
+		return false
+	}
+	for _, port := range ports {
+		if port < 1 || port > 65535 {
+			return false
+		}
+	}
+	return true
 }
 
 func readFencedInput(r io.Reader) ([]byte, fencedTaskInput, error) {

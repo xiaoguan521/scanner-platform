@@ -112,6 +112,9 @@ export interface TaskProgress {
   updatedAt: string;
   /** Final counts of phases already left behind (older Servers omit it). */
   phases?: Record<string, { completed: number; total: number }>;
+  /** Ports found so far while the task runs (omitted for unusually long lists). */
+  openPorts?: number[];
+  httpPorts?: number[];
 }
 export interface TaskLog {
   id: string;

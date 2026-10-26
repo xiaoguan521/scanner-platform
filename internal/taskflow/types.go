@@ -176,7 +176,16 @@ type TaskProgress struct {
 	// each phase worked on the result of the previous one (open ports, HTTP
 	// services) while a later phase is still running.
 	Phases map[string]PhaseCount `json:"phases,omitempty"`
+	// OpenPorts and HTTPPorts are the ports found so far, reported while the
+	// scan is still running. They are omitted when longer than MaxLivePorts.
+	OpenPorts []int `json:"openPorts,omitempty"`
+	HTTPPorts []int `json:"httpPorts,omitempty"`
 }
+
+// MaxLivePorts bounds the live port lists carried by progress telemetry. A host
+// with more open ports is unusual; the UI then falls back to counts and the
+// complete list arrives with the final report.
+const MaxLivePorts = 512
 
 // FenceTelemetry is the small trusted projection returned by a fenced Worker.
 // Raw firewall rules, addresses and packet contents never cross this boundary.
@@ -191,6 +200,8 @@ type ProgressUpdate struct {
 	Phase     string `json:"phase"`
 	Completed int    `json:"completed"`
 	Total     int    `json:"total"`
+	OpenPorts []int  `json:"openPorts,omitempty"`
+	HTTPPorts []int  `json:"httpPorts,omitempty"`
 }
 
 type ProgressReporter func(TaskProgress)
@@ -210,6 +221,31 @@ func ReportProgress(ctx context.Context, phase string, completed, total int) {
 		return
 	}
 	reporter(TaskProgress{Phase: phase, Completed: completed, Total: total, UpdatedAt: time.Now().UTC()})
+}
+
+// ReportFoundPorts publishes the ports discovered so far together with the
+// phase counter. Lists over MaxLivePorts are dropped, not truncated.
+func ReportFoundPorts(ctx context.Context, phase string, completed, total int, open, http []int) {
+	reporter, ok := ctx.Value(progressReporterKey{}).(ProgressReporter)
+	if !ok || reporter == nil {
+		return
+	}
+	progress := TaskProgress{Phase: phase, Completed: completed, Total: total, UpdatedAt: time.Now().UTC()}
+	if len(open) <= MaxLivePorts {
+		progress.OpenPorts = append([]int(nil), open...)
+	}
+	if len(http) <= MaxLivePorts {
+		progress.HTTPPorts = append([]int(nil), http...)
+	}
+	reporter(progress)
+}
+
+// ReportProgressValue forwards a progress value received from the fenced child.
+func ReportProgressValue(ctx context.Context, progress TaskProgress) {
+	if reporter, ok := ctx.Value(progressReporterKey{}).(ProgressReporter); ok && reporter != nil {
+		progress.UpdatedAt = time.Now().UTC()
+		reporter(progress)
+	}
 }
 
 // PortProbeResult records only a successful TCP connection. It contains no

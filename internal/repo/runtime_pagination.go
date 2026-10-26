@@ -276,7 +276,7 @@ func (s *RuntimeStore) attachRuntimeTaskPageMetadata(ctx context.Context, items 
 			progressRows.Close()
 			return fmt.Errorf("parse task progress time: %w", err)
 		}
-		progress[taskID] = taskflow.TaskProgress{Phase: phase, Completed: completed, Total: total, UpdatedAt: updated, Phases: decodePhaseHistory(history)}
+		progress[taskID] = withLiveProgress(taskflow.TaskProgress{Phase: phase, Completed: completed, Total: total, UpdatedAt: updated}, history)
 	}
 	if err := progressRows.Err(); err != nil {
 		progressRows.Close()

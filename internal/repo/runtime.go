@@ -315,7 +315,7 @@ func (s *RuntimeStore) runtimeTaskProgress(ctx context.Context) (map[string]task
 		if err != nil {
 			return nil, fmt.Errorf("parse task progress time: %w", err)
 		}
-		progress[taskID] = taskflow.TaskProgress{Phase: phase, Completed: completed, Total: total, UpdatedAt: updated, Phases: decodePhaseHistory(history)}
+		progress[taskID] = withLiveProgress(taskflow.TaskProgress{Phase: phase, Completed: completed, Total: total, UpdatedAt: updated}, history)
 	}
 	return progress, rows.Err()
 }
@@ -361,6 +361,19 @@ func (s *RuntimeStore) UpdateRuntimeTaskProgress(ctx context.Context, worker str
 	if !validRuntimeTaskProgress(detail.Input.Engine, portTotal, update) {
 		return ErrInvalidTask
 	}
+	if len(update.OpenPorts) > 0 || len(update.HTTPPorts) > 0 {
+		var dispatchedPorts []int
+		if err := json.Unmarshal(detail.ProbePorts, &dispatchedPorts); err != nil {
+			return ErrInvalidTask
+		}
+		dispatched := make(map[int]bool, len(dispatchedPorts))
+		for _, port := range dispatchedPorts {
+			dispatched[port] = true
+		}
+		if detail.Input.Engine != "auto" || !validLivePorts(update.OpenPorts, dispatched) || !validLivePorts(update.HTTPPorts, dispatched) {
+			return ErrInvalidTask
+		}
+	}
 	var oldWorker, oldPhase, oldHistory string
 	var oldCompleted, oldTotal int
 	readErr := tx.QueryRowContext(ctx, `SELECT worker_id,phase,completed,total,history FROM scan_task_progress WHERE task_id=?`, update.TaskID).Scan(&oldWorker, &oldPhase, &oldCompleted, &oldTotal, &oldHistory)
@@ -374,10 +387,11 @@ func (s *RuntimeStore) UpdateRuntimeTaskProgress(ctx context.Context, worker str
 			return ErrInvalidTask
 		}
 	}
-	history := ""
+	baseHistory, basePhase := "", ""
 	if readErr == nil && oldWorker == worker {
-		history = nextPhaseHistory(oldHistory, oldPhase, oldTotal, update.Phase)
+		baseHistory, basePhase = oldHistory, oldPhase
 	}
+	history := nextLiveProgress(baseHistory, basePhase, oldTotal, update)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if _, err := tx.ExecContext(ctx, `INSERT INTO scan_task_progress(task_id,worker_id,phase,completed,total,updated_at,history)
 		VALUES (?,?,?,?,?,?,?) ON CONFLICT(task_id) DO UPDATE SET worker_id=excluded.worker_id,phase=excluded.phase,
@@ -775,34 +789,66 @@ func (s *RuntimeStore) ListRuntimeFindings(ctx context.Context) ([]taskflow.Find
 	return page.Items, nil
 }
 
-func decodePhaseHistory(raw string) map[string]taskflow.PhaseCount {
-	if raw == "" {
-		return nil
-	}
-	var phases map[string]taskflow.PhaseCount
-	if err := json.Unmarshal([]byte(raw), &phases); err != nil {
-		return nil
-	}
-	return phases
+// liveProgress is the server-side memory behind scan_task_progress.history: the
+// final counts of finished phases and the ports found so far.
+type liveProgress struct {
+	Phases    map[string]taskflow.PhaseCount `json:"phases,omitempty"`
+	OpenPorts []int                          `json:"openPorts,omitempty"`
+	HTTPPorts []int                          `json:"httpPorts,omitempty"`
 }
 
-// nextPhaseHistory records the phase a Worker just left as fully done. A phase
-// only advances after it finished, and its total is the input size of the next
-// phase (ports probed, open ports identified, HTTP services checked).
-func nextPhaseHistory(raw, oldPhase string, oldTotal int, newPhase string) string {
-	phases := decodePhaseHistory(raw)
-	if newPhase != oldPhase {
-		if phases == nil {
-			phases = map[string]taskflow.PhaseCount{}
-		}
-		phases[oldPhase] = taskflow.PhaseCount{Completed: oldTotal, Total: oldTotal}
+func decodeLiveProgress(raw string) liveProgress {
+	var live liveProgress
+	if raw == "" || json.Unmarshal([]byte(raw), &live) != nil {
+		return liveProgress{}
 	}
-	if len(phases) == 0 {
+	return live
+}
+
+func withLiveProgress(progress taskflow.TaskProgress, raw string) taskflow.TaskProgress {
+	live := decodeLiveProgress(raw)
+	progress.Phases, progress.OpenPorts, progress.HTTPPorts = live.Phases, live.OpenPorts, live.HTTPPorts
+	return progress
+}
+
+// nextLiveProgress records the phase a Worker just left as fully done (a phase
+// only advances after it finished, and its total is the input size of the next
+// one) and keeps the newest found-port lists.
+func nextLiveProgress(raw, oldPhase string, oldTotal int, update taskflow.ProgressUpdate) string {
+	live := decodeLiveProgress(raw)
+	if oldPhase != "" && update.Phase != oldPhase {
+		if live.Phases == nil {
+			live.Phases = map[string]taskflow.PhaseCount{}
+		}
+		live.Phases[oldPhase] = taskflow.PhaseCount{Completed: oldTotal, Total: oldTotal}
+	}
+	if update.OpenPorts != nil {
+		live.OpenPorts = update.OpenPorts
+	}
+	if update.HTTPPorts != nil {
+		live.HTTPPorts = update.HTTPPorts
+	}
+	if len(live.Phases) == 0 && live.OpenPorts == nil && live.HTTPPorts == nil {
 		return ""
 	}
-	encoded, err := json.Marshal(phases)
+	encoded, err := json.Marshal(live)
 	if err != nil {
 		return ""
 	}
 	return string(encoded)
+}
+
+// validLivePorts accepts only ports this task was dispatched to probe.
+func validLivePorts(ports []int, dispatched map[int]bool) bool {
+	if len(ports) > taskflow.MaxLivePorts {
+		return false
+	}
+	seen := make(map[int]bool, len(ports))
+	for _, port := range ports {
+		if !dispatched[port] || seen[port] {
+			return false
+		}
+		seen[port] = true
+	}
+	return true
 }

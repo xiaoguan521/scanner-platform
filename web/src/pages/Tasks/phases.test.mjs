@@ -47,8 +47,9 @@ const noOpen = taskPhases({ engines: ['auto'], status: 'COMPLETED', portProbePor
 assert.deepEqual(noOpen.map(p => p.state), ['done', 'done', 'skipped', 'skipped', 'skipped', 'skipped'], 'no open port ends the scan after identification');
 assert.equal(noOpen[1].detail, '0 / 0 个开放端口');
 assert.equal(noOpen[2].detail, '没有开放端口，已跳过');
-assert.deepEqual(liveScanCounts({ progress: { phase: 'http_scan', completed: 1, total: 2, phases: { service_identification: { completed: 5, total: 5 } } } }), { open: 5, http: 2 });
-assert.deepEqual(liveScanCounts({ progress: { phase: 'tcp_probe', completed: 1, total: 10 } }), { open: null, http: null });
+assert.deepEqual(liveScanCounts({ progress: { phase: 'http_scan', completed: 1, total: 2, phases: { service_identification: { completed: 5, total: 5 } } } }), { open: 5, http: 2, openPorts: [], httpPorts: [] });
+assert.deepEqual(liveScanCounts({ progress: { phase: 'tcp_probe', completed: 1, total: 10 } }), { open: null, http: null, openPorts: [], httpPorts: [] });
+assert.deepEqual(liveScanCounts({ progress: { phase: 'http_scan', completed: 0, total: 1, openPorts: [22, 80], httpPorts: [80] } }), { open: 2, http: 1, openPorts: [22, 80], httpPorts: [80] }, 'live port lists win over counters');
 assert.equal(isTerminalTask('RUNNING'), false);
 assert.equal(isTerminalTask('CANCELED'), true);
 console.log('task phases and coverage: all checks passed');

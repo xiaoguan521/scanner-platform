@@ -95,17 +95,38 @@ func TestRuntimeAtomicClaimAcrossConnections(t *testing.T) {
 	}
 }
 
-func TestNextPhaseHistoryKeepsFinishedPhaseTotals(t *testing.T) {
-	history := nextPhaseHistory("", "tcp_probe", 65535, "service_identification")
-	history = nextPhaseHistory(history, "service_identification", 5, "http_scan")
-	phases := decodePhaseHistory(history)
-	if phases["tcp_probe"] != (taskflow.PhaseCount{Completed: 65535, Total: 65535}) || phases["service_identification"] != (taskflow.PhaseCount{Completed: 5, Total: 5}) {
-		t.Fatalf("history = %#v", phases)
+func TestNextLiveProgressKeepsFinishedPhasesAndFoundPorts(t *testing.T) {
+	history := nextLiveProgress("", "", 0, taskflow.ProgressUpdate{Phase: "tcp_probe", Total: 65535})
+	history = nextLiveProgress(history, "tcp_probe", 65535, taskflow.ProgressUpdate{Phase: "service_identification", Total: 2, OpenPorts: []int{22, 80}})
+	history = nextLiveProgress(history, "service_identification", 2, taskflow.ProgressUpdate{Phase: "http_scan", Total: 1, HTTPPorts: []int{80}})
+	history = nextLiveProgress(history, "http_scan", 1, taskflow.ProgressUpdate{Phase: "http_scan", Completed: 1, Total: 1})
+	live := decodeLiveProgress(history)
+	if live.Phases["tcp_probe"] != (taskflow.PhaseCount{Completed: 65535, Total: 65535}) || live.Phases["service_identification"] != (taskflow.PhaseCount{Completed: 2, Total: 2}) {
+		t.Fatalf("phases = %#v", live.Phases)
 	}
-	if again := nextPhaseHistory(history, "http_scan", 2, "http_scan"); again != history {
-		t.Fatalf("same phase must not change history: %q", again)
+	if len(live.OpenPorts) != 2 || len(live.HTTPPorts) != 1 || live.HTTPPorts[0] != 80 {
+		t.Fatalf("found ports were lost: %#v", live)
 	}
-	if nextPhaseHistory("", "tcp_probe", 3, "tcp_probe") != "" || decodePhaseHistory("not json") != nil {
+	if nextLiveProgress("", "", 0, taskflow.ProgressUpdate{Phase: "tcp_probe", Total: 3}) != "" || decodeLiveProgress("not json").Phases != nil {
 		t.Fatal("empty or corrupt history must stay empty")
+	}
+}
+
+func TestValidLivePortsRejectsUndispatchedDuplicateAndOversized(t *testing.T) {
+	dispatched := map[int]bool{22: true, 80: true}
+	if !validLivePorts([]int{22, 80}, dispatched) || !validLivePorts(nil, dispatched) {
+		t.Fatal("dispatched ports must be accepted")
+	}
+	if validLivePorts([]int{443}, dispatched) || validLivePorts([]int{80, 80}, dispatched) {
+		t.Fatal("undispatched or duplicate ports must be rejected")
+	}
+	many := make([]int, taskflow.MaxLivePorts+1)
+	all := map[int]bool{}
+	for i := range many {
+		many[i] = i + 1
+		all[i+1] = true
+	}
+	if validLivePorts(many, all) {
+		t.Fatal("oversized lists must be rejected")
 	}
 }

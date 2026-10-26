@@ -49,7 +49,7 @@ func (r *Runner) AutoScan(ctx context.Context, task taskflow.Task) (taskflow.Aut
 			openApproved = append(openApproved, result.Port)
 		}
 	}
-	taskflow.ReportProgress(ctx, "service_identification", 0, len(openApproved))
+	taskflow.ReportFoundPorts(ctx, "service_identification", 0, len(openApproved), openPorts(open), nil)
 	services := identifyServicesWithProgress(ctx, task.Chunks[0].Targets[0], openApproved, task.PortProbeConfig, func(completed, total int) {
 		taskflow.ReportProgress(ctx, "service_identification", completed, total)
 	})
@@ -95,7 +95,13 @@ func (r *Runner) AutoScan(ctx context.Context, task taskflow.Task) (taskflow.Aut
 	}
 	httpTotal := len(byScheme["http"]) + len(byScheme["https"])
 	if httpTotal > 0 {
-		taskflow.ReportProgress(ctx, "http_scan", 0, httpTotal)
+		var httpPorts []int
+		for _, service := range services {
+			if !service.Quarantined && (service.Scheme == "http" || service.Scheme == "https") {
+				httpPorts = append(httpPorts, service.Port)
+			}
+		}
+		taskflow.ReportFoundPorts(ctx, "http_scan", 0, httpTotal, nil, httpPorts)
 	}
 	httpCompleted := 0
 	httpScanFailed := false

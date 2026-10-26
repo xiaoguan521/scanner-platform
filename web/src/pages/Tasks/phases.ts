@@ -35,7 +35,7 @@ export function taskPhases(task: PhaseTask): PhaseView[] {
     return null;
   };
   const unit: Record<string, string> = { tcp_probe: '个端口', service_identification: '个开放端口', http_scan: '个 HTTP(S) 服务' };
-  const openCount = (): number | null => task.portProbeResults?.length ?? task.progress?.phases?.service_identification?.total ?? (current === 1 ? task.progress?.total ?? null : null);
+  const openCount = (): number | null => task.portProbeResults?.length ?? task.progress?.openPorts?.length ?? task.progress?.phases?.service_identification?.total ?? (current === 1 ? task.progress?.total ?? null : null);
   const details: Record<string, string> = {
     tcp_probe: '',
     service_identification: '',
@@ -71,10 +71,12 @@ export function taskPhases(task: PhaseTask): PhaseView[] {
 }
 
 /** Open-port and HTTP(S)-service counts known so far; null until the phase producing them has started. */
-export function liveScanCounts(task: Pick<ScanTask, 'progress'>): { open: number | null; http: number | null } {
+export function liveScanCounts(task: Pick<ScanTask, 'progress'>): { open: number | null; http: number | null; openPorts: number[]; httpPorts: number[] } {
   const progress = task.progress;
   const count = (phase: string): number | null => progress?.phase === phase ? progress.total : progress?.phases?.[phase]?.total ?? null;
-  return { open: count('service_identification'), http: count('http_scan') };
+  const openPorts = progress?.openPorts ?? [];
+  const httpPorts = progress?.httpPorts ?? [];
+  return { open: openPorts.length ? openPorts.length : count('service_identification'), http: httpPorts.length ? httpPorts.length : count('http_scan'), openPorts, httpPorts };
 }
 
 export function isTerminalTask(status: string): boolean {
