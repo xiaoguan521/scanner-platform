@@ -264,3 +264,35 @@ func TestScanKeepsSmallOpenSetsUntouched(t *testing.T) {
 		t.Fatalf("small open sets must not be re-filtered, got %v", got)
 	}
 }
+
+type countingDialer struct {
+	middleboxDialer
+	mu    sync.Mutex
+	dials int
+}
+
+func (d *countingDialer) DialContext(ctx context.Context, network, target string) (net.Conn, error) {
+	d.mu.Lock()
+	d.dials++
+	d.mu.Unlock()
+	return d.middleboxDialer.DialContext(ctx, network, target)
+}
+
+func TestWildcardHostIsHandledInOnePass(t *testing.T) {
+	ports := make([]int, 0, 5000)
+	for port := 1; port <= 5000; port++ {
+		ports = append(ports, port)
+	}
+	dialer := &countingDialer{middleboxDialer: middleboxDialer{real: map[int]bool{22: true, 3000: true}}}
+	got, err := scanWithDialer(context.Background(), "192.0.2.10", ports, dialer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, []int{22, 3000}) {
+		t.Fatalf("expected only real listeners, got %d ports", len(got))
+	}
+	// One attempt per port plus a bounded re-check of the early sample, never a second full pass.
+	if limit := len(ports) + 2*wildcardSampleSize; dialer.dials > limit {
+		t.Fatalf("wildcard handling dialed %d times, limit %d", dialer.dials, limit)
+	}
+}

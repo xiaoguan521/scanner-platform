@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -217,6 +218,7 @@ func scanWithPolicyProgress(ctx context.Context, target string, ports []int, d d
 	}
 	jobs := make(chan int)
 	open := make(chan int, len(ports))
+	wildcard := &wildcardDetector{}
 	var done sync.WaitGroup
 	var progressMu sync.Mutex
 	progressCompleted, lastProgress := 0, 0
@@ -229,12 +231,21 @@ func scanWithPolicyProgress(ctx context.Context, target string, ports []int, d d
 				probeCtx, cancel := context.WithTimeout(ctx, policy.Timeout)
 				conn, err := d.DialContext(probeCtx, "tcp", net.JoinHostPort(address.String(), strconv.Itoa(port)))
 				cancel()
+				if err == nil {
+					wasStrict := wildcard.strict.Load()
+					if !wasStrict || connectionStaysOpen(conn) {
+						open <- port
+						if !wasStrict {
+							wildcard.mu.Lock()
+							wildcard.early = append(wildcard.early, port)
+							wildcard.mu.Unlock()
+						}
+					}
+				}
 				if conn != nil {
 					_ = conn.Close()
 				}
-				if err == nil {
-					open <- port
-				}
+				wildcard.observe(err == nil)
 				if reportProgress != nil {
 					progressMu.Lock()
 					progressCompleted++
@@ -281,10 +292,85 @@ func scanWithPolicyProgress(ctx context.Context, target string, ports []int, d d
 		result = append(result, port)
 	}
 	sort.Ints(result)
+	if wildcard.strict.Load() {
+		// Ports accepted before the pattern was recognised were counted without the
+		// silence check; re-check only those (at most wildcardSampleSize of them).
+		return wildcard.recheckEarly(ctx, address, result, d, policy)
+	}
 	if suspiciousOpenSet(len(result), len(ports)) {
 		return dropAcceptThenClose(ctx, address, result, d, policy)
 	}
 	return result, nil
+}
+
+const (
+	wildcardSampleSize = 200
+	wildcardOpenRatio  = 0.9
+)
+
+// wildcardDetector watches the first connection attempts. When nearly all of them
+// succeed the target is answering every port, so the rest of the same pass keeps a
+// port only if its connection also stays open; this avoids a second full pass.
+type wildcardDetector struct {
+	strict            atomic.Bool
+	completed, opened atomic.Int64
+	mu                sync.Mutex
+	early             []int
+}
+
+func (w *wildcardDetector) observe(connected bool) {
+	completed := w.completed.Add(1)
+	opened := w.opened.Load()
+	if connected {
+		opened = w.opened.Add(1)
+	}
+	if completed >= wildcardSampleSize && float64(opened) >= wildcardOpenRatio*float64(completed) {
+		w.strict.Store(true)
+	}
+}
+
+func (w *wildcardDetector) recheckEarly(ctx context.Context, address netip.Addr, result []int, d dialer, policy Policy) ([]int, error) {
+	w.mu.Lock()
+	early := append([]int(nil), w.early...)
+	w.mu.Unlock()
+	if len(early) == 0 {
+		return result, nil
+	}
+	verified, err := dropAcceptThenClose(ctx, address, early, d, policy)
+	if err != nil {
+		return nil, err
+	}
+	keep := make(map[int]bool, len(verified))
+	for _, port := range verified {
+		keep[port] = true
+	}
+	isEarly := make(map[int]bool, len(early))
+	for _, port := range early {
+		isEarly[port] = true
+	}
+	final := make([]int, 0, len(result))
+	for _, port := range result {
+		if !isEarly[port] || keep[port] {
+			final = append(final, port)
+		}
+	}
+	return final, nil
+}
+
+// connectionStaysOpen reports whether the peer keeps an established connection
+// silent or sends data, as a real listener does. It sends nothing.
+func connectionStaysOpen(conn net.Conn) bool {
+	if conn == nil {
+		return false
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(settleWait))
+	var buf [1]byte
+	n, err := conn.Read(buf[:])
+	if n > 0 {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
 const (
@@ -362,14 +448,7 @@ func settlesOpen(ctx context.Context, address netip.Addr, port int, d dialer, ti
 	if err != nil {
 		return false
 	}
-	_ = conn.SetReadDeadline(time.Now().Add(settleWait))
-	var buf [1]byte
-	n, err := conn.Read(buf[:])
-	if n > 0 {
-		return true
-	}
-	var netErr net.Error
-	return errors.As(err, &netErr) && netErr.Timeout()
+	return connectionStaysOpen(conn)
 }
 
 // Policy is a bounded per-target connection policy.
