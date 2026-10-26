@@ -1054,6 +1054,7 @@ func (s *PostgresRuntimeStore) CompleteRuntimeTask(ctx context.Context, report t
 		}
 		task.PortProbeResults = append([]taskflow.PortProbeResult(nil), report.PortProbeResults...)
 		task.TCPWrapped = report.TCPWrapped
+		task.UnconfirmedPorts = append([]int(nil), report.UnconfirmedPorts...)
 		task.ServiceResults = append([]taskflow.ServiceResult(nil), report.ServiceResults...)
 		task.SystemScanStatus = report.SystemScanStatus
 		task.ApplicationScanStatus = report.ApplicationScanStatus

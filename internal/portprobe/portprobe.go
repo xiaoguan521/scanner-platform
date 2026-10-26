@@ -200,6 +200,10 @@ func scanWithPolicy(ctx context.Context, target string, ports []int, d dialer, p
 type Result struct {
 	Open       []int
 	TCPWrapped []int
+	// Unconfirmed ports gave no consistent observation across repeated checks (for
+	// example the re-check could not connect, or the port held a connection once and
+	// closed it once). They are neither reported open nor tcpwrapped.
+	Unconfirmed []int
 }
 
 func scanWithPolicyProgress(ctx context.Context, target string, ports []int, d dialer, policy Policy, reportProgress ScanProgressFunc) ([]int, error) {
@@ -307,18 +311,10 @@ func scanDetailed(ctx context.Context, target string, ports []int, d dialer, pol
 		result.TCPWrapped = append(result.TCPWrapped, port)
 	}
 	sort.Ints(result.Open)
-	if wildcard.strict.Load() || suspiciousOpenSet(len(result.Open), len(ports)) {
-		// The in-pass check used a short window and skipped the earliest ports; verify
-		// every survivor again with the longer window. Fake ports close at once, so
-		// only the few real listeners wait for the full period.
-		kept, dropped, err := dropAcceptThenClose(ctx, address, result.Open, d, policy)
-		if err != nil {
-			return Result{}, err
-		}
-		result.Open = kept
-		result.TCPWrapped = append(result.TCPWrapped, dropped...)
-	}
 	sort.Ints(result.TCPWrapped)
+	if wildcard.strict.Load() || suspiciousOpenSet(len(result.Open), len(ports)) {
+		return verifyWildcardResult(ctx, address, result, d, policy)
+	}
 	return result, nil
 }
 
@@ -381,102 +377,6 @@ var finalSettleWait = 3 * time.Second
 
 func suspiciousOpenSet(open, probed int) bool {
 	return open >= wildcardMinOpen && open*2 >= probed
-}
-
-// dropAcceptThenClose re-checks an implausibly large open set and keeps only the
-// ports whose connection stays open or sends data. It sends no data, so it stays
-// a passive connect-and-read check against the same authorized IP and ports.
-func dropAcceptThenClose(ctx context.Context, address netip.Addr, open []int, d dialer, policy Policy) (kept, dropped []int, err error) {
-	workers := min(max(policy.Concurrency, 1), len(open))
-	jobs := make(chan int)
-	var mu sync.Mutex
-	kept = make([]int, 0, 64)
-	var done sync.WaitGroup
-	for range workers {
-		done.Add(1)
-		go func() {
-			defer done.Done()
-			for port := range jobs {
-				result := settleCheck(ctx, address, port, d, policy.Timeout)
-				mu.Lock()
-				if result == settleClosed {
-					dropped = append(dropped, port)
-				} else {
-					kept = append(kept, port) // Open, or inconclusive: only an observed close drops a port.
-				}
-				mu.Unlock()
-			}
-		}()
-	}
-	var ticker *time.Ticker
-	if policy.Rate > 0 {
-		ticker = time.NewTicker(time.Second / time.Duration(policy.Rate))
-		defer ticker.Stop()
-	}
-feed:
-	for _, port := range open {
-		if ticker != nil {
-			select {
-			case <-ticker.C:
-			case <-ctx.Done():
-				break feed
-			}
-		}
-		select {
-		case jobs <- port:
-		case <-ctx.Done():
-			break feed
-		}
-	}
-	close(jobs)
-	done.Wait()
-	if err := ctx.Err(); err != nil {
-		return nil, nil, err
-	}
-	sort.Ints(kept)
-	sort.Ints(dropped)
-	return kept, dropped, nil
-}
-
-type settleResult int
-
-const (
-	settleStaysOpen settleResult = iota
-	settleClosed
-	// settleUnknown means the re-check could not connect at all. A failed second
-	// connection says nothing about whether the port ends connections, so it must not
-	// count as tcpwrapped (a busy middlebox drops or delays some connections).
-	settleUnknown
-)
-
-const settleDialAttempts = 3
-
-func settleCheck(ctx context.Context, address netip.Addr, port int, d dialer, timeout time.Duration) settleResult {
-	for attempt := 1; attempt <= settleDialAttempts; attempt++ {
-		dialCtx, cancel := context.WithTimeout(ctx, timeout)
-		conn, err := d.DialContext(dialCtx, "tcp", net.JoinHostPort(address.String(), strconv.Itoa(port)))
-		cancel()
-		if err == nil {
-			stays := connectionStaysOpen(conn, finalSettleWait)
-			_ = conn.Close()
-			if stays {
-				return settleStaysOpen
-			}
-			return settleClosed
-		}
-		if conn != nil {
-			_ = conn.Close()
-		}
-		if ctx.Err() != nil {
-			return settleUnknown
-		}
-		select {
-		case <-time.After(time.Duration(attempt) * 200 * time.Millisecond):
-		case <-ctx.Done():
-			return settleUnknown
-		}
-	}
-	return settleUnknown
 }
 
 // Policy is a bounded per-target connection policy.

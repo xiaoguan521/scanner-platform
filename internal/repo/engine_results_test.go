@@ -739,3 +739,47 @@ func TestAutomaticTaskStoresTCPWrappedCountWithinDispatchedPorts(t *testing.T) {
 		t.Fatalf("tcpWrapped count not persisted: %+v %v", tasks, err)
 	}
 }
+
+func TestAutomaticTaskStoresUnconfirmedPortsOnlyFromDispatchedClosedOnes(t *testing.T) {
+	store, actor := localFixture(t)
+	ctx := context.Background()
+	bundle, _ := json.Marshal(rules.Bundle{Version: "20261019.01", Engines: []string{"nuclei", "trivy"}, IsCurrent: true, IntegrityVerified: true})
+	if _, err := store.db.ExecContext(ctx, "INSERT INTO local_rule_bundles(version,data) VALUES(?,?)", "20261019.01", string(bundle)); err != nil {
+		t.Fatal(err)
+	}
+	var assetID string
+	if err := store.db.QueryRowContext(ctx, "SELECT id FROM assets WHERE address=?", "192.0.2.20").Scan(&assetID); err != nil {
+		t.Fatal(err)
+	}
+	input := taskflow.TaskInput{Engine: "auto", AssetID: assetID, Targets: []string{}, PortProbe: portprobe.Config{Preset: "custom", Ranges: []portprobe.Range{{Start: 22, End: 22}, {Start: 80, End: 80}}, OpsApproved: true}}
+	task, err := store.CreateLocalTask(ctx, input, actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed, err := store.ClaimRuntimeTask(ctx, "auto-worker"); err != nil || claimed == nil {
+		t.Fatalf("auto task claim failed: %+v %v", claimed, err)
+	}
+	report := taskflow.Report{TaskID: task.ID, WorkerID: "auto-worker", Status: "COMPLETED", SystemScanStatus: taskflow.SystemScanNotConfigured,
+		ApplicationScanStatus: taskflow.ApplicationScanNotConfigured, PortProbeResults: []taskflow.PortProbeResult{{Port: 80}},
+		ServiceResults: []taskflow.ServiceResult{{Port: 80, Kind: "HTTP", Scheme: "http"}}, UnconfirmedPorts: []int{22}}
+
+	for name, ports := range map[string][]int{"a port that was reported open": {80}, "a port that was never dispatched": {23}, "duplicates": {22, 22}} {
+		bad := report
+		bad.UnconfirmedPorts = ports
+		if err := store.CompleteRuntimeTask(ctx, bad); !errors.Is(err, ErrInvalidTask) {
+			t.Fatalf("unconfirmed list with %s accepted: %v", name, err)
+		}
+	}
+	tooMany := report
+	tooMany.TCPWrapped = 1 // 1 tcpwrapped + 1 unconfirmed exceeds the single port left unreported
+	if err := store.CompleteRuntimeTask(ctx, tooMany); !errors.Is(err, ErrInvalidTask) {
+		t.Fatalf("more classified ports than dispatched accepted: %v", err)
+	}
+	if err := store.CompleteRuntimeTask(ctx, report); err != nil {
+		t.Fatalf("valid unconfirmed list rejected: %v", err)
+	}
+	tasks, err := store.ListRuntimeTasks(ctx)
+	if err != nil || len(tasks) != 1 || len(tasks[0].UnconfirmedPorts) != 1 || tasks[0].UnconfirmedPorts[0] != 22 {
+		t.Fatalf("unconfirmed ports not persisted: %+v %v", tasks, err)
+	}
+}

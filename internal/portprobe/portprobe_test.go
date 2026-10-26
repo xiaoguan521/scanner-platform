@@ -294,8 +294,9 @@ func TestWildcardHostIsHandledInOnePass(t *testing.T) {
 	if !reflect.DeepEqual(got, []int{22, 3000}) {
 		t.Fatalf("expected only real listeners, got %d ports", len(got))
 	}
-	// One attempt per port plus a bounded re-check of the early sample, never a second full pass.
-	if limit := len(ports) + 2*wildcardSampleSize; dialer.dials > limit {
+	// One attempt per port plus bounded verification (consensus on the early sample
+	// and an audit sample), never a second full pass.
+	if limit := len(ports) + 2*wildcardSampleSize + 2*auditSampleSize + 200; dialer.dials > limit {
 		t.Fatalf("wildcard handling dialed %d times, limit %d", dialer.dials, limit)
 	}
 }
@@ -399,13 +400,83 @@ func TestFailedRecheckConnectionsAreNotReportedAsTCPWrapped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 22 recovers on the third attempt; 443 never reconnects, which proves nothing about it.
-	if !reflect.DeepEqual(result.Open, []int{22, 443}) {
-		t.Fatalf("a failed re-check connection must not drop a port, got %v", result.Open)
+	// 22 recovers on a later attempt and is confirmed. 443 never reconnects: that
+	// proves nothing, so it is unconfirmed rather than open or tcpwrapped.
+	if !reflect.DeepEqual(result.Open, []int{22}) || !reflect.DeepEqual(result.Unconfirmed, []int{443}) {
+		t.Fatalf("expected open [22] and unconfirmed [443], got open %v unconfirmed %v", result.Open, result.Unconfirmed)
 	}
 	for _, port := range result.TCPWrapped {
 		if port == 22 || port == 443 {
 			t.Fatalf("port %d wrongly reported as tcpwrapped", port)
 		}
+	}
+}
+
+// scriptedDialer replays a per-port behaviour for each successive dial:
+// "hold" keeps the connection silent, "close" ends it at once, "fail" refuses the dial.
+type scriptedDialer struct {
+	script map[int][]string
+	mu     sync.Mutex
+	calls  map[int]int
+}
+
+func (d *scriptedDialer) DialContext(_ context.Context, _, target string) (net.Conn, error) {
+	_, portText, _ := net.SplitHostPort(target)
+	port, _ := strconv.Atoi(portText)
+	d.mu.Lock()
+	n := d.calls[port]
+	d.calls[port]++
+	d.mu.Unlock()
+	behaviour := "close"
+	if steps := d.script[port]; n < len(steps) {
+		behaviour = steps[n]
+	} else if len(steps) > 0 {
+		behaviour = steps[len(steps)-1]
+	}
+	if behaviour == "fail" {
+		return nil, errors.New("simulated failure")
+	}
+	client, server := net.Pipe()
+	if behaviour == "close" {
+		_ = server.Close()
+	}
+	return client, nil
+}
+
+func scanScripted(t *testing.T, total int, script map[int][]string) Result {
+	t.Helper()
+	shortenFinalWait(t)
+	ports := make([]int, 0, total)
+	for port := 1; port <= total; port++ {
+		ports = append(ports, port)
+	}
+	result, err := scanDetailed(context.Background(), "192.0.2.10", ports, &scriptedDialer{script: script, calls: map[int]int{}}, Policy{Concurrency: 64, Timeout: ProbeTimeout}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
+}
+
+func TestInconsistentObservationsAreUnconfirmedNotGuessed(t *testing.T) {
+	// Port 10 is among the first ports (counted open before the wildcard is noticed).
+	// Its checks disagree (closed, open) and then cannot connect: no consensus.
+	result := scanScripted(t, 600, map[int][]string{10: {"hold", "close", "hold", "fail", "fail"}, 22: {"hold"}})
+	if !reflect.DeepEqual(result.Open, []int{22}) || !reflect.DeepEqual(result.Unconfirmed, []int{10}) {
+		t.Fatalf("open %v unconfirmed %v", result.Open, result.Unconfirmed)
+	}
+	for _, port := range result.TCPWrapped {
+		if port == 10 || port == 22 {
+			t.Fatalf("port %d must not be tcpwrapped", port)
+		}
+	}
+}
+
+func TestUnreliableInPassRuleTriggersFullVerification(t *testing.T) {
+	// Port 250 is called tcpwrapped by the in-pass check (closes on the first dial)
+	// but keeps connections afterwards. The audit sample catches it and every in-pass
+	// tcpwrapped port is then judged by consensus.
+	result := scanScripted(t, 300, map[int][]string{250: {"close", "hold"}})
+	if !reflect.DeepEqual(result.Open, []int{250}) {
+		t.Fatalf("a port the in-pass rule wrongly rejected must be recovered, got open %v", result.Open)
 	}
 }

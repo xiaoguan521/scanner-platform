@@ -442,7 +442,8 @@ func (s *RuntimeStore) completeEngineTask(ctx context.Context, report taskflow.R
 		return ErrInvalidTask
 	}
 	// tcpwrapped ports are a subset of the dispatched ports that did not report open.
-	if report.TCPWrapped < 0 || !autoTask && report.TCPWrapped != 0 || autoTask && report.TCPWrapped > len(task.PortProbePorts)-len(report.PortProbeResults) {
+	if report.TCPWrapped < 0 || !autoTask && (report.TCPWrapped != 0 || len(report.UnconfirmedPorts) != 0) ||
+		autoTask && (report.TCPWrapped+len(report.UnconfirmedPorts) > len(task.PortProbePorts)-len(report.PortProbeResults) || !validUnconfirmedPorts(report.UnconfirmedPorts, task, report.PortProbeResults)) {
 		return ErrInvalidTask
 	}
 	quarantined := map[int]bool{}
@@ -508,6 +509,7 @@ func (s *RuntimeStore) completeEngineTask(ctx context.Context, report taskflow.R
 		if portProbeTask || autoTask {
 			detail.ProbeResults = append([]taskflow.PortProbeResult{}, report.PortProbeResults...)
 			detail.TCPWrapped = report.TCPWrapped
+			detail.UnconfirmedPorts = append([]int(nil), report.UnconfirmedPorts...)
 			detail.Services = append([]taskflow.ServiceResult{}, report.ServiceResults...)
 			detail.SystemStatus = report.SystemScanStatus
 			detail.ApplicationStatus = report.ApplicationScanStatus
@@ -643,4 +645,30 @@ func (s *RuntimeStore) completeEngineTask(ctx context.Context, report taskflow.R
 		return err
 	}
 	return tx.Commit()
+}
+
+// validUnconfirmedPorts accepts only dispatched ports that were not reported open,
+// without duplicates, and within the bounded list size.
+func validUnconfirmedPorts(ports []int, task taskflow.Task, open []taskflow.PortProbeResult) bool {
+	if len(ports) > taskflow.MaxUnconfirmedPorts {
+		return false
+	}
+	dispatched := make(map[int]bool, len(task.PortProbePorts))
+	for _, port := range task.PortProbePorts {
+		dispatched[port] = true
+	}
+	for _, result := range open {
+		if !dispatched[result.Port] {
+			continue
+		}
+		dispatched[result.Port] = false // reported open: cannot also be unconfirmed
+	}
+	seen := make(map[int]bool, len(ports))
+	for _, port := range ports {
+		if !dispatched[port] || seen[port] {
+			return false
+		}
+		seen[port] = true
+	}
+	return true
 }

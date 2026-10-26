@@ -267,6 +267,7 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 	var portProbeResults []PortProbeResult
 	var serviceResults []ServiceResult
 	var tcpWrapped int
+	var unconfirmedPorts []int
 	var systemScanStatus string
 	var applicationScanStatus string
 	var applicationResults []ApplicationResult
@@ -300,7 +301,7 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 			var executeErr error
 			result, executeErr = w.AutoScan(execCtx, task)
 			detections, portProbeResults, serviceResults = result.Findings, result.Ports, result.Services
-			tcpWrapped = result.TCPWrapped
+			tcpWrapped, unconfirmedPorts = result.TCPWrapped, result.UnconfirmedPorts
 			completedFully, rulesExecuted, executedEngines = result.CompletedFully, result.RulesExecuted, append([]string(nil), result.ExecutedEngines...)
 			if result.SystemStatus != "" {
 				systemScanStatus = result.SystemStatus
@@ -344,6 +345,7 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 		} else if len(task.Engines) == 1 && task.Engines[0] == "auto" {
 			report.PortProbeResults = portProbeResults
 			report.TCPWrapped = tcpWrapped
+			report.UnconfirmedPorts = unconfirmedPorts
 			report.ServiceResults = serviceResults
 			report.SystemScanStatus = systemScanStatus
 			report.AssetProfile = assetProfile

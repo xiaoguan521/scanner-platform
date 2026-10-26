@@ -184,33 +184,37 @@ func (r *Runner) Execute(ctx context.Context, task taskflow.Task) ([]taskflow.De
 // ProbePorts performs a bounded TCP connect probe for the single Server-bound
 // asset IP in the task. It does not send application data or identify services.
 func (r *Runner) ProbePorts(ctx context.Context, task taskflow.Task) ([]taskflow.PortProbeResult, error) {
-	results, _, err := r.probePortsDetailed(ctx, task)
+	results, _, _, err := r.probePortsDetailed(ctx, task)
 	return results, err
 }
 
 // probePortsDetailed also returns how many ports completed the handshake without
 // running a service (tcpwrapped), so the Server can show them apart from open ports.
-func (r *Runner) probePortsDetailed(ctx context.Context, task taskflow.Task) ([]taskflow.PortProbeResult, int, error) {
+func (r *Runner) probePortsDetailed(ctx context.Context, task taskflow.Task) ([]taskflow.PortProbeResult, int, []int, error) {
 	if os.Geteuid() == 0 {
-		return nil, 0, fmt.Errorf("run scanning Worker as an ordinary user")
+		return nil, 0, nil, fmt.Errorf("run scanning Worker as an ordinary user")
 	}
 	if task.Synthetic || len(task.Engines) != 1 || task.Engines[0] != "port-probe" || len(task.Chunks) != 1 || len(task.Chunks[0].Targets) != 1 || task.AssetID == "" || !task.PortProbeConfig.OpsApproved {
-		return nil, 0, fmt.Errorf("invalid TCP port probe task")
+		return nil, 0, nil, fmt.Errorf("invalid TCP port probe task")
 	}
 	if !validProbePortPlan(task.PortProbeConfig, task.PortProbePorts) {
-		return nil, 0, fmt.Errorf("invalid TCP port probe task")
+		return nil, 0, nil, fmt.Errorf("invalid TCP port probe task")
 	}
 	scan, err := portprobe.ScanConfiguredDetailed(ctx, task.Chunks[0].Targets[0], task.PortProbePorts, task.PortProbeConfig, func(completed, total int) {
 		taskflow.ReportProgress(ctx, "tcp_probe", completed, total)
 	})
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 	results := make([]taskflow.PortProbeResult, 0, len(scan.Open))
 	for _, port := range scan.Open {
 		results = append(results, taskflow.PortProbeResult{Port: port})
 	}
-	return results, len(scan.TCPWrapped), nil
+	unconfirmed := scan.Unconfirmed
+	if len(unconfirmed) > taskflow.MaxUnconfirmedPorts {
+		unconfirmed = unconfirmed[:taskflow.MaxUnconfirmedPorts]
+	}
+	return results, len(scan.TCPWrapped), append([]int(nil), unconfirmed...), nil
 }
 
 func validProbePortPlan(config portprobe.Config, dispatched []int) bool {

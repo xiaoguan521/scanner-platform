@@ -69,6 +69,9 @@ const (
 
 const MaxReportBytes = 32 << 20
 
+// MaxUnconfirmedPorts bounds the list of ports whose state could not be decided.
+const MaxUnconfirmedPorts = 1000
+
 // Application scan reports contain configured aliases and bounded counters,
 // never remote deployment paths, file names, credentials or engine output.
 const (
@@ -141,6 +144,7 @@ type Task struct {
 	PortProbePorts        []int               `json:"portProbePorts,omitempty"`
 	PortProbeResults      []PortProbeResult   `json:"portProbeResults,omitempty"`
 	TCPWrapped            int                 `json:"tcpWrapped,omitempty"`
+	UnconfirmedPorts      []int               `json:"unconfirmedPorts,omitempty"`
 	VulnerabilityPorts    []int               `json:"vulnerabilityPorts,omitempty"`
 	CustomTemplates       []json.RawMessage   `json:"customTemplates,omitempty"`
 	CustomRuleCount       int                 `json:"customRuleCount,omitempty"`
@@ -343,6 +347,7 @@ type Report struct {
 	Findings              []Detection         `json:"findings,omitempty"`
 	PortProbeResults      []PortProbeResult   `json:"portProbeResults,omitempty"`
 	TCPWrapped            int                 `json:"tcpWrapped,omitempty"`
+	UnconfirmedPorts      []int               `json:"unconfirmedPorts,omitempty"`
 	ServiceResults        []ServiceResult     `json:"serviceResults,omitempty"`
 	SystemScanStatus      string              `json:"systemScanStatus,omitempty"`
 	ApplicationScanStatus string              `json:"applicationScanStatus,omitempty"`
@@ -362,6 +367,7 @@ type Report struct {
 type AutoResult struct {
 	// TCPWrapped counts ports that completed the handshake but ran no service.
 	TCPWrapped         int
+	UnconfirmedPorts   []int
 	Findings           []Detection
 	Ports              []PortProbeResult
 	Services           []ServiceResult

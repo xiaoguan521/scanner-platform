@@ -38,6 +38,7 @@ type taskDetails struct {
 	ProbePorts          []int                        `json:"probePorts,omitempty"`
 	ProbeResults        []taskflow.PortProbeResult   `json:"probeResults,omitempty"`
 	TCPWrapped          int                          `json:"tcpWrapped,omitempty"`
+	UnconfirmedPorts    []int                        `json:"unconfirmedPorts,omitempty"`
 	VulnPorts           []int                        `json:"vulnerabilityPorts,omitempty"`
 	CustomRules         [][]byte                     `json:"customRules,omitempty"`
 	Services            []taskflow.ServiceResult     `json:"services,omitempty"`
