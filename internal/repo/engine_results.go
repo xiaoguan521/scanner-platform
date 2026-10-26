@@ -263,7 +263,17 @@ func updateMissingFindingLifecycle(ctx context.Context, tx *sql.Tx, task taskflo
 	if err := observedRows.Close(); err != nil {
 		return err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT id,data FROM security_findings`)
+	// Only active findings can advance toward FIXED, and an automatic scan can only
+	// have covered its own host, so both bounds are applied in SQL on indexed
+	// expressions instead of decoding every stored finding in this transaction.
+	query := `SELECT id,data FROM security_findings WHERE json_extract(data,'$.status') NOT IN ('FIXED','FALSE_POSITIVE','ACCEPTED_RISK')`
+	args := []any{}
+	if len(task.Engines) == 1 && task.Engines[0] == "auto" && len(task.Chunks) == 1 && len(task.Chunks[0].Targets) == 1 {
+		prefix := net.JoinHostPort(task.Chunks[0].Targets[0], "") // "host:" or "[v6]:"
+		query += ` AND json_extract(data,'$.target')>=? AND json_extract(data,'$.target')<?`
+		args = append(args, prefix, prefix[:len(prefix)-1]+";")
+	}
+	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return err
 	}

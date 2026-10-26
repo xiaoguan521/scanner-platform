@@ -107,6 +107,9 @@ func NewRuntime(db *sql.DB) (*RuntimeStore, error) {
 	if err := store.migrateFindings(ctx); err != nil {
 		return nil, err
 	}
+	if err := store.initFindingIndexes(ctx); err != nil {
+		return nil, err
+	}
 	if err := store.initFindingWork(ctx); err != nil {
 		return nil, err
 	}
