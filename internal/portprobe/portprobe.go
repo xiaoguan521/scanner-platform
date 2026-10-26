@@ -281,7 +281,95 @@ func scanWithPolicyProgress(ctx context.Context, target string, ports []int, d d
 		result = append(result, port)
 	}
 	sort.Ints(result)
+	if suspiciousOpenSet(len(result), len(ports)) {
+		return dropAcceptThenClose(ctx, address, result, d, policy)
+	}
 	return result, nil
+}
+
+const (
+	// A host answering most of a large port list is almost always a middlebox that
+	// completes the handshake for every port, not thousands of real listeners.
+	wildcardMinOpen = 256
+	// settleWait is how long a connected port may stay silent before it counts as
+	// a real listener: servers keep the connection and wait for the client or send
+	// a banner, while a middlebox closes it within a round trip.
+	settleWait = 400 * time.Millisecond
+)
+
+func suspiciousOpenSet(open, probed int) bool {
+	return open >= wildcardMinOpen && open*2 >= probed
+}
+
+// dropAcceptThenClose re-checks an implausibly large open set and keeps only the
+// ports whose connection stays open or sends data. It sends no data, so it stays
+// a passive connect-and-read check against the same authorized IP and ports.
+func dropAcceptThenClose(ctx context.Context, address netip.Addr, open []int, d dialer, policy Policy) ([]int, error) {
+	workers := min(max(policy.Concurrency, 1), len(open))
+	jobs := make(chan int)
+	var mu sync.Mutex
+	kept := make([]int, 0, 64)
+	var done sync.WaitGroup
+	for range workers {
+		done.Add(1)
+		go func() {
+			defer done.Done()
+			for port := range jobs {
+				if settlesOpen(ctx, address, port, d, policy.Timeout) {
+					mu.Lock()
+					kept = append(kept, port)
+					mu.Unlock()
+				}
+			}
+		}()
+	}
+	var ticker *time.Ticker
+	if policy.Rate > 0 {
+		ticker = time.NewTicker(time.Second / time.Duration(policy.Rate))
+		defer ticker.Stop()
+	}
+feed:
+	for _, port := range open {
+		if ticker != nil {
+			select {
+			case <-ticker.C:
+			case <-ctx.Done():
+				break feed
+			}
+		}
+		select {
+		case jobs <- port:
+		case <-ctx.Done():
+			break feed
+		}
+	}
+	close(jobs)
+	done.Wait()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	sort.Ints(kept)
+	return kept, nil
+}
+
+func settlesOpen(ctx context.Context, address netip.Addr, port int, d dialer, timeout time.Duration) bool {
+	dialCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	conn, err := d.DialContext(dialCtx, "tcp", net.JoinHostPort(address.String(), strconv.Itoa(port)))
+	if conn != nil {
+		defer conn.Close()
+	}
+	if err != nil {
+		return false
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(settleWait))
+	var buf [1]byte
+	n, err := conn.Read(buf[:])
+	if n > 0 {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
 // Policy is a bounded per-target connection policy.

@@ -226,3 +226,41 @@ func FuzzSelectPorts(f *testing.F) {
 		}
 	})
 }
+
+// middleboxDialer completes every connection; only the real ports keep it open.
+type middleboxDialer struct{ real map[int]bool }
+
+func (d middleboxDialer) DialContext(_ context.Context, _, target string) (net.Conn, error) {
+	_, portText, _ := net.SplitHostPort(target)
+	port, _ := strconv.Atoi(portText)
+	client, server := net.Pipe()
+	if !d.real[port] {
+		_ = server.Close() // accept-then-close: the peer ends the connection at once
+	}
+	return client, nil
+}
+
+func TestScanDropsAcceptThenCloseWhenNearlyEveryPortAnswers(t *testing.T) {
+	ports := make([]int, 0, 1000)
+	for port := 1; port <= 1000; port++ {
+		ports = append(ports, port)
+	}
+	got, err := scanWithDialer(context.Background(), "192.0.2.10", ports, middleboxDialer{real: map[int]bool{22: true, 443: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, []int{22, 443}) {
+		t.Fatalf("expected only real listeners, got %d ports: %v", len(got), got)
+	}
+}
+
+func TestScanKeepsSmallOpenSetsUntouched(t *testing.T) {
+	// Few answering ports are normal: a service that closes at once is still reported.
+	got, err := scanWithDialer(context.Background(), "192.0.2.10", []int{22, 80, 443}, middleboxDialer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, []int{22, 80, 443}) {
+		t.Fatalf("small open sets must not be re-filtered, got %v", got)
+	}
+}
