@@ -229,12 +229,12 @@ func (s *PostgresTaskProjection) readChunks(ctx context.Context, taskID string) 
 }
 
 func (s *PostgresTaskProjection) readProgress(ctx context.Context, taskID string) (*taskflow.TaskProgress, error) {
-	var phase, worker string
+	var phase, worker, history string
 	var completed, total int
 	var updatedAt time.Time
-	err := s.db.QueryRowContext(ctx, `SELECT phase,worker_id,completed,total,updated_at
+	err := s.db.QueryRowContext(ctx, `SELECT phase,worker_id,completed,total,updated_at,history
 		FROM scan_task_progress WHERE task_id=$1`, taskID).Scan(&phase, &worker,
-		&completed, &total, &updatedAt)
+		&completed, &total, &updatedAt, &history)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -242,7 +242,8 @@ func (s *PostgresTaskProjection) readProgress(ctx context.Context, taskID string
 		return nil, fmt.Errorf("read postgres task progress: %w", err)
 	}
 	_ = worker // ownership is checked when progress is written, not exposed.
-	return &taskflow.TaskProgress{Phase: phase, Completed: completed, Total: total, UpdatedAt: updatedAt.UTC()}, nil
+	progress := withLiveProgress(taskflow.TaskProgress{Phase: phase, Completed: completed, Total: total, UpdatedAt: updatedAt.UTC()}, history)
+	return &progress, nil
 }
 
 // SaveProgress accepts only progress for the Worker currently holding the
@@ -285,11 +286,20 @@ func (s *PostgresTaskProjection) SaveProgress(ctx context.Context, worker string
 	if !validRuntimeTaskProgress(engine, len(task.PortProbePorts), update) {
 		return ErrPostgresProjectionInvalid
 	}
-	var oldWorker, oldPhase string
+	if len(update.OpenPorts) > 0 || len(update.HTTPPorts) > 0 {
+		dispatched := make(map[int]bool, len(task.PortProbePorts))
+		for _, port := range task.PortProbePorts {
+			dispatched[port] = true
+		}
+		if engine != "auto" || !validLivePorts(update.OpenPorts, dispatched) || !validLivePorts(update.HTTPPorts, dispatched) {
+			return ErrPostgresProjectionInvalid
+		}
+	}
+	var oldWorker, oldPhase, oldHistory string
 	var oldCompleted, oldTotal int
-	readErr := tx.QueryRowContext(ctx, `SELECT worker_id,phase,completed,total
+	readErr := tx.QueryRowContext(ctx, `SELECT worker_id,phase,completed,total,history
 		FROM scan_task_progress WHERE task_id=$1 FOR UPDATE`, update.TaskID).Scan(
-		&oldWorker, &oldPhase, &oldCompleted, &oldTotal)
+		&oldWorker, &oldPhase, &oldCompleted, &oldTotal, &oldHistory)
 	if readErr != nil && !errors.Is(readErr, sql.ErrNoRows) {
 		return fmt.Errorf("read previous postgres task progress: %w", readErr)
 	}
@@ -301,14 +311,19 @@ func (s *PostgresTaskProjection) SaveProgress(ctx context.Context, worker string
 			return ErrPostgresProjectionInvalid
 		}
 	}
+	baseHistory, basePhase := "", ""
+	if readErr == nil && oldWorker == worker {
+		baseHistory, basePhase = oldHistory, oldPhase
+	}
+	history := nextLiveProgress(baseHistory, basePhase, oldTotal, update)
 	now := s.currentTime()
 	if _, err := tx.ExecContext(ctx, `INSERT INTO scan_task_progress
-		(task_id,worker_id,phase,completed,total,updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6)
+		(task_id,worker_id,phase,completed,total,updated_at,history)
+		VALUES ($1,$2,$3,$4,$5,$6,$7)
 		ON CONFLICT(task_id) DO UPDATE SET worker_id=EXCLUDED.worker_id,
 		phase=EXCLUDED.phase,completed=EXCLUDED.completed,total=EXCLUDED.total,
-		updated_at=EXCLUDED.updated_at`, update.TaskID, worker, update.Phase,
-		update.Completed, update.Total, now); err != nil {
+		updated_at=EXCLUDED.updated_at,history=EXCLUDED.history`, update.TaskID, worker, update.Phase,
+		update.Completed, update.Total, now, history); err != nil {
 		return fmt.Errorf("save postgres task progress: %w", err)
 	}
 	if err := tx.Commit(); err != nil {

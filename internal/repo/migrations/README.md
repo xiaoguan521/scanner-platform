@@ -23,6 +23,7 @@ These files implement the schema in [architecture-v3.2.md §7](../../../docs/arc
 | `postgres/0015_finding_work.sql` | frozen task lifecycle threshold, finding notes, assignment history and retest relations | 3 |
 | `postgres/0016_freeze_threshold_marker.sql` | marks newly created task thresholds as frozen; legacy projections fail closed | 0 new tables |
 | `postgres/0017_node_lifecycle.sql` | registered node lifecycle, revocation state and offline/recovery events | 2 |
+| `postgres/0018_task_progress_history.sql` | `scan_task_progress.history`: finished-phase counts and live found ports | 0 new tables |
 
 There are **45 business tables** plus the internal `schema_migrations` journal. All SQL scripts use a transaction, include constraints/indexes and record their version. No users, tokens, rules, targets or example data are seeded.
 
@@ -53,7 +54,7 @@ unknown or gapped journal entries, and prints only the applied version names.
 It does not create a database, seed users/assets/rules, or switch the running
 SQLite Server to PostgreSQL.
 
-The runner refuses a non-empty public schema with no migration journal, applies versions in order, skips already-recorded versions and aborts on the first SQL error. It does **not** create the PostgreSQL database itself. To run manually, apply migrations `0001_core.sql` through `0017_node_lifecycle.sql` in order. Run one migrator at a time. Never edit an applied migration: add a higher-numbered file. After applying, use the read-only inventory script `bash scripts/check-postgres-schema.sh` to check all 46 tables including the journal, the seventeen recorded migrations, and the task archive/projection columns. The seventeen migrations were executed and journal-checked against the isolated PostgreSQL fixture on 2026-10-21. The Server-side runtime now wires the account, asset, approval, task queue/projection, finding work, report, rule-catalog, rule-job, schedule, notification, product-catalog and node-lifecycle adapters when explicitly selected; only remaining non-core system administration endpoints are capability-gated.
+The runner refuses a non-empty public schema with no migration journal, applies versions in order, skips already-recorded versions and aborts on the first SQL error. It does **not** create the PostgreSQL database itself. To run manually, apply migrations `0001_core.sql` through `0018_task_progress_history.sql` in order. Run one migrator at a time. Never edit an applied migration: add a higher-numbered file. After applying, use the read-only inventory script `bash scripts/check-postgres-schema.sh` to check all 46 tables including the journal, the eighteen recorded migrations, and the task archive/projection columns. The seventeen migrations were executed and journal-checked against the isolated PostgreSQL fixture on 2026-10-21. The Server-side runtime now wires the account, asset, approval, task queue/projection, finding work, report, rule-catalog, rule-job, schedule, notification, product-catalog and node-lifecycle adapters when explicitly selected; only remaining non-core system administration endpoints are capability-gated.
 
 ## Important schema differences and boundaries
 
