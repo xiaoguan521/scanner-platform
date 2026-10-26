@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestSelectPortsPresetsRangesAndExclusions(t *testing.T) {
@@ -241,6 +242,7 @@ func (d middleboxDialer) DialContext(_ context.Context, _, target string) (net.C
 }
 
 func TestScanDropsAcceptThenCloseWhenNearlyEveryPortAnswers(t *testing.T) {
+	shortenFinalWait(t)
 	ports := make([]int, 0, 1000)
 	for port := 1; port <= 1000; port++ {
 		ports = append(ports, port)
@@ -279,6 +281,7 @@ func (d *countingDialer) DialContext(ctx context.Context, network, target string
 }
 
 func TestWildcardHostIsHandledInOnePass(t *testing.T) {
+	shortenFinalWait(t)
 	ports := make([]int, 0, 5000)
 	for port := 1; port <= 5000; port++ {
 		ports = append(ports, port)
@@ -294,5 +297,46 @@ func TestWildcardHostIsHandledInOnePass(t *testing.T) {
 	// One attempt per port plus a bounded re-check of the early sample, never a second full pass.
 	if limit := len(ports) + 2*wildcardSampleSize; dialer.dials > limit {
 		t.Fatalf("wildcard handling dialed %d times, limit %d", dialer.dials, limit)
+	}
+}
+
+func shortenFinalWait(t *testing.T) {
+	t.Helper()
+	previous := finalSettleWait
+	finalSettleWait = 50 * time.Millisecond
+	t.Cleanup(func() { finalSettleWait = previous })
+}
+
+// slowCloseDialer models a middlebox that is slow under load: it ends fake
+// connections only after a delay longer than the in-pass silence window.
+type slowCloseDialer struct {
+	real  map[int]bool
+	delay time.Duration
+}
+
+func (d slowCloseDialer) DialContext(_ context.Context, _, target string) (net.Conn, error) {
+	_, portText, _ := net.SplitHostPort(target)
+	port, _ := strconv.Atoi(portText)
+	client, server := net.Pipe()
+	if !d.real[port] {
+		time.AfterFunc(d.delay, func() { _ = server.Close() })
+	}
+	return client, nil
+}
+
+func TestSlowClosingMiddleboxPortsAreDroppedByTheLowLoadRecheck(t *testing.T) {
+	previous := finalSettleWait
+	finalSettleWait = 1500 * time.Millisecond
+	t.Cleanup(func() { finalSettleWait = previous })
+	ports := make([]int, 0, 600)
+	for port := 1; port <= 600; port++ {
+		ports = append(ports, port)
+	}
+	got, err := scanWithDialer(context.Background(), "192.0.2.10", ports, slowCloseDialer{real: map[int]bool{22: true, 443: true}, delay: settleWait + 100*time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, []int{22, 443}) {
+		t.Fatalf("ports that close after the short window must still be dropped, got %d ports", len(got))
 	}
 }

@@ -232,14 +232,8 @@ func scanWithPolicyProgress(ctx context.Context, target string, ports []int, d d
 				conn, err := d.DialContext(probeCtx, "tcp", net.JoinHostPort(address.String(), strconv.Itoa(port)))
 				cancel()
 				if err == nil {
-					wasStrict := wildcard.strict.Load()
-					if !wasStrict || connectionStaysOpen(conn) {
+					if !wildcard.strict.Load() || connectionStaysOpen(conn, settleWait) {
 						open <- port
-						if !wasStrict {
-							wildcard.mu.Lock()
-							wildcard.early = append(wildcard.early, port)
-							wildcard.mu.Unlock()
-						}
 					}
 				}
 				if conn != nil {
@@ -293,9 +287,10 @@ func scanWithPolicyProgress(ctx context.Context, target string, ports []int, d d
 	}
 	sort.Ints(result)
 	if wildcard.strict.Load() {
-		// Ports accepted before the pattern was recognised were counted without the
-		// silence check; re-check only those (at most wildcardSampleSize of them).
-		return wildcard.recheckEarly(ctx, address, result, d, policy)
+		// The in-pass check used a short window and skipped the earliest ports; verify
+		// every survivor again with the longer window. Fake ports close at once, so
+		// only the few real listeners wait for the full period.
+		return dropAcceptThenClose(ctx, address, result, d, policy)
 	}
 	if suspiciousOpenSet(len(result), len(ports)) {
 		return dropAcceptThenClose(ctx, address, result, d, policy)
@@ -314,8 +309,6 @@ const (
 type wildcardDetector struct {
 	strict            atomic.Bool
 	completed, opened atomic.Int64
-	mu                sync.Mutex
-	early             []int
 }
 
 func (w *wildcardDetector) observe(connected bool) {
@@ -329,41 +322,13 @@ func (w *wildcardDetector) observe(connected bool) {
 	}
 }
 
-func (w *wildcardDetector) recheckEarly(ctx context.Context, address netip.Addr, result []int, d dialer, policy Policy) ([]int, error) {
-	w.mu.Lock()
-	early := append([]int(nil), w.early...)
-	w.mu.Unlock()
-	if len(early) == 0 {
-		return result, nil
-	}
-	verified, err := dropAcceptThenClose(ctx, address, early, d, policy)
-	if err != nil {
-		return nil, err
-	}
-	keep := make(map[int]bool, len(verified))
-	for _, port := range verified {
-		keep[port] = true
-	}
-	isEarly := make(map[int]bool, len(early))
-	for _, port := range early {
-		isEarly[port] = true
-	}
-	final := make([]int, 0, len(result))
-	for _, port := range result {
-		if !isEarly[port] || keep[port] {
-			final = append(final, port)
-		}
-	}
-	return final, nil
-}
-
 // connectionStaysOpen reports whether the peer keeps an established connection
 // silent or sends data, as a real listener does. It sends nothing.
-func connectionStaysOpen(conn net.Conn) bool {
+func connectionStaysOpen(conn net.Conn, wait time.Duration) bool {
 	if conn == nil {
 		return false
 	}
-	_ = conn.SetReadDeadline(time.Now().Add(settleWait))
+	_ = conn.SetReadDeadline(time.Now().Add(wait))
 	var buf [1]byte
 	n, err := conn.Read(buf[:])
 	if n > 0 {
@@ -382,6 +347,12 @@ const (
 	// a banner, while a middlebox closes it within a round trip.
 	settleWait = 400 * time.Millisecond
 )
+
+// finalSettleWait is the quiet period a surviving port must keep in the low-load
+// re-check. A middlebox that is slow under scan load can miss the short window
+// above, but it still closes an idle connection within milliseconds when probed
+// alone. A variable so tests can shorten it.
+var finalSettleWait = 2 * time.Second
 
 func suspiciousOpenSet(open, probed int) bool {
 	return open >= wildcardMinOpen && open*2 >= probed
@@ -448,7 +419,7 @@ func settlesOpen(ctx context.Context, address netip.Addr, port int, d dialer, ti
 	if err != nil {
 		return false
 	}
-	return connectionStaysOpen(conn)
+	return connectionStaysOpen(conn, finalSettleWait)
 }
 
 // Policy is a bounded per-target connection policy.
