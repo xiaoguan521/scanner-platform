@@ -603,3 +603,58 @@ func TestLegacySingleFindingSchemaKeepsStoredRows(t *testing.T) {
 		t.Fatal(findings, err)
 	}
 }
+
+func TestAutomaticTaskStoresSSHAuditFindingsOnlyForOpenSelectedPorts(t *testing.T) {
+	store, actor := localFixture(t)
+	ctx := context.Background()
+	bundle, _ := json.Marshal(rules.Bundle{Version: "20261019.01", Engines: []string{"nuclei", "trivy"}, IsCurrent: true, IntegrityVerified: true})
+	if _, err := store.db.ExecContext(ctx, "INSERT INTO local_rule_bundles(version,data) VALUES(?,?)", "20261019.01", string(bundle)); err != nil {
+		t.Fatal(err)
+	}
+	var assetID string
+	if err := store.db.QueryRowContext(ctx, "SELECT id FROM assets WHERE address=?", "192.0.2.20").Scan(&assetID); err != nil {
+		t.Fatal(err)
+	}
+	input := taskflow.TaskInput{Engine: "auto", AssetID: assetID, Targets: []string{}, PortProbe: portprobe.Config{Preset: "custom", Ranges: []portprobe.Range{{Start: 22, End: 22}, {Start: 80, End: 80}}, OpsApproved: true}}
+	task, err := store.CreateLocalTask(ctx, input, actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed, err := store.ClaimRuntimeTask(ctx, "auto-worker"); err != nil || claimed == nil {
+		t.Fatalf("auto task claim failed: %+v %v", claimed, err)
+	}
+	weak := taskflow.Detection{Engine: "ssh-audit", Target: "192.0.2.20:22", Port: 22, TemplateID: "ssh-weak-cipher", Title: "SSH 服务支持弱加密算法", Severity: "LOW",
+		RiskType: "system", DetectMethod: "configuration", Confidence: "high", ContentLanguage: "zh-CN", Evidence: "服务端公布的弱算法：aes128-cbc"}
+	report := taskflow.Report{TaskID: task.ID, WorkerID: "auto-worker", Status: "COMPLETED", SystemScanStatus: taskflow.SystemScanNotConfigured,
+		ApplicationScanStatus: taskflow.ApplicationScanNotConfigured, PortProbeResults: []taskflow.PortProbeResult{{Port: 22}},
+		ServiceResults: []taskflow.ServiceResult{{Port: 22, Kind: "OTHER", ServiceName: "ssh"}},
+		Findings:       []taskflow.Detection{weak}, RulesExecuted: true, ExecutedEngines: []string{"ssh-audit"}}
+
+	outOfScope := report
+	outOfScope.Findings = []taskflow.Detection{weak}
+	outOfScope.Findings[0].Target, outOfScope.Findings[0].Port = "192.0.2.20:23", 23
+	if err := store.CompleteRuntimeTask(ctx, outOfScope); !errors.Is(err, ErrInvalidTask) {
+		t.Fatalf("ssh-audit finding on an unselected port accepted: %v", err)
+	}
+	closedPort := report
+	closedPort.Findings = []taskflow.Detection{weak}
+	closedPort.Findings[0].Target, closedPort.Findings[0].Port = "192.0.2.20:80", 80
+	if err := store.CompleteRuntimeTask(ctx, closedPort); !errors.Is(err, ErrInvalidTask) {
+		t.Fatalf("ssh-audit finding on a port that was not open accepted: %v", err)
+	}
+	unknownEngine := report
+	unknownEngine.ExecutedEngines = []string{"ssh-audit", "ssh-brute"}
+	if err := store.CompleteRuntimeTask(ctx, unknownEngine); !errors.Is(err, ErrInvalidTask) {
+		t.Fatalf("unknown executed engine accepted: %v", err)
+	}
+	if err := store.CompleteRuntimeTask(ctx, report); err != nil {
+		t.Fatalf("valid ssh-audit report rejected: %v", err)
+	}
+	stored, err := store.ListRuntimeFindings(ctx)
+	if err != nil || len(stored) != 1 {
+		t.Fatalf("ssh-audit finding not stored: %+v %v", stored, err)
+	}
+	if got := stored[0]; got.Engine != "ssh-audit" || got.Port != 22 || got.Target != "192.0.2.20:22" || got.TemplateOrCVE != "ssh-weak-cipher" || got.Status != "OPEN" || got.DetectMethod != "configuration" {
+		t.Fatalf("unexpected stored finding: %+v", got)
+	}
+}
