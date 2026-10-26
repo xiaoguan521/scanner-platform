@@ -365,3 +365,47 @@ func TestScanDetailedReportsHandshakeOnlyPortsAsTCPWrapped(t *testing.T) {
 		seen[port] = true
 	}
 }
+
+// flakyDialer lets the first connection to a port through, then fails the next
+// `failures` dials to it, as a busy middlebox does right after a heavy scan.
+type flakyDialer struct {
+	middleboxDialer
+	failures map[int]int
+	mu       sync.Mutex
+	dials    map[int]int
+}
+
+func (d *flakyDialer) DialContext(ctx context.Context, network, target string) (net.Conn, error) {
+	_, portText, _ := net.SplitHostPort(target)
+	port, _ := strconv.Atoi(portText)
+	d.mu.Lock()
+	d.dials[port]++
+	n := d.dials[port]
+	d.mu.Unlock()
+	if n > 1 && n <= 1+d.failures[port] {
+		return nil, errors.New("simulated timeout")
+	}
+	return d.middleboxDialer.DialContext(ctx, network, target)
+}
+
+func TestFailedRecheckConnectionsAreNotReportedAsTCPWrapped(t *testing.T) {
+	shortenFinalWait(t)
+	ports := make([]int, 0, 600)
+	for port := 1; port <= 600; port++ {
+		ports = append(ports, port)
+	}
+	dialer := &flakyDialer{middleboxDialer: middleboxDialer{real: map[int]bool{22: true, 443: true}}, failures: map[int]int{22: 2, 443: 99}, dials: map[int]int{}}
+	result, err := scanDetailed(context.Background(), "192.0.2.10", ports, dialer, Policy{Concurrency: 64, Timeout: ProbeTimeout}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 22 recovers on the third attempt; 443 never reconnects, which proves nothing about it.
+	if !reflect.DeepEqual(result.Open, []int{22, 443}) {
+		t.Fatalf("a failed re-check connection must not drop a port, got %v", result.Open)
+	}
+	for _, port := range result.TCPWrapped {
+		if port == 22 || port == 443 {
+			t.Fatalf("port %d wrongly reported as tcpwrapped", port)
+		}
+	}
+}

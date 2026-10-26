@@ -397,12 +397,12 @@ func dropAcceptThenClose(ctx context.Context, address netip.Addr, open []int, d 
 		go func() {
 			defer done.Done()
 			for port := range jobs {
-				stays := settlesOpen(ctx, address, port, d, policy.Timeout)
+				result := settleCheck(ctx, address, port, d, policy.Timeout)
 				mu.Lock()
-				if stays {
-					kept = append(kept, port)
-				} else {
+				if result == settleClosed {
 					dropped = append(dropped, port)
+				} else {
+					kept = append(kept, port) // Open, or inconclusive: only an observed close drops a port.
 				}
 				mu.Unlock()
 			}
@@ -438,17 +438,45 @@ feed:
 	return kept, dropped, nil
 }
 
-func settlesOpen(ctx context.Context, address netip.Addr, port int, d dialer, timeout time.Duration) bool {
-	dialCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	conn, err := d.DialContext(dialCtx, "tcp", net.JoinHostPort(address.String(), strconv.Itoa(port)))
-	if conn != nil {
-		defer conn.Close()
+type settleResult int
+
+const (
+	settleStaysOpen settleResult = iota
+	settleClosed
+	// settleUnknown means the re-check could not connect at all. A failed second
+	// connection says nothing about whether the port ends connections, so it must not
+	// count as tcpwrapped (a busy middlebox drops or delays some connections).
+	settleUnknown
+)
+
+const settleDialAttempts = 3
+
+func settleCheck(ctx context.Context, address netip.Addr, port int, d dialer, timeout time.Duration) settleResult {
+	for attempt := 1; attempt <= settleDialAttempts; attempt++ {
+		dialCtx, cancel := context.WithTimeout(ctx, timeout)
+		conn, err := d.DialContext(dialCtx, "tcp", net.JoinHostPort(address.String(), strconv.Itoa(port)))
+		cancel()
+		if err == nil {
+			stays := connectionStaysOpen(conn, finalSettleWait)
+			_ = conn.Close()
+			if stays {
+				return settleStaysOpen
+			}
+			return settleClosed
+		}
+		if conn != nil {
+			_ = conn.Close()
+		}
+		if ctx.Err() != nil {
+			return settleUnknown
+		}
+		select {
+		case <-time.After(time.Duration(attempt) * 200 * time.Millisecond):
+		case <-ctx.Done():
+			return settleUnknown
+		}
 	}
-	if err != nil {
-		return false
-	}
-	return connectionStaysOpen(conn, finalSettleWait)
+	return settleUnknown
 }
 
 // Policy is a bounded per-target connection policy.
