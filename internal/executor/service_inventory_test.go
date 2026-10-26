@@ -178,3 +178,23 @@ func TestExplicitProxyProtocolBannerIsQuarantined(t *testing.T) {
 		t.Fatal(result, budget.remaining)
 	}
 }
+
+func TestHTTPInventoryIdentifiesTomcatAndJettyVersions(t *testing.T) {
+	for name, tc := range map[string]struct {
+		server, body, software, version string
+	}{
+		"coyote header is not a Tomcat version":   {"Apache-Coyote/1.1", "<html><title>Apache Tomcat</title></html>", "tomcat", ""},
+		"tomcat title carries the version":        {"Apache-Coyote/1.1", "<title>Apache Tomcat/8.5.50</title>", "tomcat", "8.5.50"},
+		"tomcat error page footer":                {"", "<h3>Apache Tomcat/9.0.31</h3>", "tomcat", "9.0.31"},
+		"jetty server header with build suffix":   {"Jetty(9.4.48.v20220622)", "", "jetty", "9.4.48"},
+		"jetty error page footer":                 {"", "<a href=\"https://eclipse.org/jetty\">Powered by Jetty:// 9.4.44.v20210927</a>", "jetty", "9.4.44"},
+		"plain nginx is unchanged":                {"nginx/1.24.0", "", "nginx", "1.24.0"},
+		"jetty without version stays versionless": {"Jetty", "", "jetty", ""},
+	} {
+		s := inventory.Service{Port: 7001}
+		applyHTTPInventory(&s, capturedResponse{URL: "http://192.0.2.20:7001/", Headers: http.Header{"Server": []string{tc.server}}, Body: []byte(tc.body)})
+		if s.Software != tc.software || s.Version != tc.version {
+			t.Errorf("%s: got software=%q version=%q, want %q %q", name, s.Software, s.Version, tc.software, tc.version)
+		}
+	}
+}

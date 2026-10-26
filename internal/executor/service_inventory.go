@@ -225,7 +225,10 @@ func identifyConnection(ctx context.Context, target, scheme string, timeout time
 
 var titlePattern = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
 var tagPattern = regexp.MustCompile(`<[^>]+>`)
-var componentPattern = regexp.MustCompile(`(?i)(nginx|apache(?:-coyote)?|tomcat|jetty|microsoft-iis|openresty|caddy|gunicorn|werkzeug|express|php|asp\.net)[/ :]*([0-9][a-z0-9._+-]*)?`)
+var componentPattern = regexp.MustCompile(`(?i)(nginx|apache(?:-coyote)?|tomcat|jetty|microsoft-iis|openresty|caddy|gunicorn|werkzeug|express|php|asp\.net)[/ :(]*([0-9][a-z0-9._+-]*)?`)
+var tomcatBodyVersion = regexp.MustCompile(`(?i)apache tomcat/([0-9][0-9a-z._-]*)`)
+var jettyBodyVersion = regexp.MustCompile(`(?i)jetty:?//\s*([0-9][0-9a-z._]*)`)
+var jettyBuildSuffix = regexp.MustCompile(`\.v[0-9]{8}.*$`)
 var linkPattern = regexp.MustCompile(`(?is)(?:href|action)\s*=\s*["']([^"']+)["']`)
 
 func applyHTTPInventory(s *inventory.Service, c capturedResponse) {
@@ -253,6 +256,12 @@ func applyHTTPInventory(s *inventory.Service, c capturedResponse) {
 			s.Middleware = name
 		}
 	}
+	if s.Software == "apache-coyote" {
+		// Coyote is Tomcat's connector; its "1.1" is the protocol revision, not a Tomcat
+		// version, and must never be matched against Tomcat vulnerability ranges.
+		s.Software, s.Version, s.Middleware = "tomcat", "", "tomcat"
+		s.Language = "Java"
+	}
 	if strings.Contains(lower, "apache tomcat") {
 		s.Middleware = "tomcat"
 		s.Application = "Apache Tomcat"
@@ -260,6 +269,18 @@ func applyHTTPInventory(s *inventory.Service, c capturedResponse) {
 		if s.Software == "" {
 			s.Software = "tomcat"
 		}
+		if match := tomcatBodyVersion.FindStringSubmatch(body); len(match) > 1 && s.Software == "tomcat" && s.Version == "" {
+			s.Version = safeText(match[1], 100)
+		}
+	}
+	if match := jettyBodyVersion.FindStringSubmatch(body); len(match) > 1 && (s.Software == "" || s.Software == "jetty") {
+		s.Software, s.Middleware, s.Language = "jetty", "jetty", "Java"
+		if s.Version == "" {
+			s.Version = safeText(match[1], 100)
+		}
+	}
+	if s.Software == "jetty" {
+		s.Version = jettyBuildSuffix.ReplaceAllString(s.Version, "") // 9.4.48.v20220622 -> 9.4.48
 	}
 	if strings.Contains(lower, "welcome to nginx") && s.Software == "" {
 		s.Software = "nginx"
