@@ -340,3 +340,28 @@ func TestSlowClosingMiddleboxPortsAreDroppedByTheLowLoadRecheck(t *testing.T) {
 		t.Fatalf("ports that close after the short window must still be dropped, got %d ports", len(got))
 	}
 }
+
+func TestScanDetailedReportsHandshakeOnlyPortsAsTCPWrapped(t *testing.T) {
+	shortenFinalWait(t)
+	ports := make([]int, 0, 1000)
+	for port := 1; port <= 1000; port++ {
+		ports = append(ports, port)
+	}
+	result, err := scanDetailed(context.Background(), "192.0.2.10", ports, middleboxDialer{real: map[int]bool{22: true, 443: true}}, Policy{Concurrency: 64, Timeout: ProbeTimeout}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(result.Open, []int{22, 443}) {
+		t.Fatalf("unexpected open ports %v", result.Open)
+	}
+	if len(result.TCPWrapped) != 998 {
+		t.Fatalf("every other answering port must be reported as tcpwrapped, got %d", len(result.TCPWrapped))
+	}
+	seen := map[int]bool{22: true, 443: true}
+	for _, port := range result.TCPWrapped {
+		if seen[port] {
+			t.Fatalf("port %d is reported twice or as both open and tcpwrapped", port)
+		}
+		seen[port] = true
+	}
+}

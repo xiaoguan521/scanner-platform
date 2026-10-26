@@ -441,6 +441,10 @@ func (s *RuntimeStore) completeEngineTask(ctx context.Context, report taskflow.R
 	if !validAssetProfile(report.AssetProfile) {
 		return ErrInvalidTask
 	}
+	// tcpwrapped ports are a subset of the dispatched ports that did not report open.
+	if report.TCPWrapped < 0 || !autoTask && report.TCPWrapped != 0 || autoTask && report.TCPWrapped > len(task.PortProbePorts)-len(report.PortProbeResults) {
+		return ErrInvalidTask
+	}
 	quarantined := map[int]bool{}
 	for _, service := range report.ServiceResults {
 		if service.Quarantined {
@@ -503,6 +507,7 @@ func (s *RuntimeStore) completeEngineTask(ctx context.Context, report taskflow.R
 		}
 		if portProbeTask || autoTask {
 			detail.ProbeResults = append([]taskflow.PortProbeResult{}, report.PortProbeResults...)
+			detail.TCPWrapped = report.TCPWrapped
 			detail.Services = append([]taskflow.ServiceResult{}, report.ServiceResults...)
 			detail.SystemStatus = report.SystemScanStatus
 			detail.ApplicationStatus = report.ApplicationScanStatus

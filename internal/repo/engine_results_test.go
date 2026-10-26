@@ -700,3 +700,42 @@ func TestAutomaticTaskStoresTLSAuditFindingsOnlyForOpenSelectedPorts(t *testing.
 		t.Fatalf("tls-audit finding not stored: %+v %v", stored, err)
 	}
 }
+
+func TestAutomaticTaskStoresTCPWrappedCountWithinDispatchedPorts(t *testing.T) {
+	store, actor := localFixture(t)
+	ctx := context.Background()
+	bundle, _ := json.Marshal(rules.Bundle{Version: "20261019.01", Engines: []string{"nuclei", "trivy"}, IsCurrent: true, IntegrityVerified: true})
+	if _, err := store.db.ExecContext(ctx, "INSERT INTO local_rule_bundles(version,data) VALUES(?,?)", "20261019.01", string(bundle)); err != nil {
+		t.Fatal(err)
+	}
+	var assetID string
+	if err := store.db.QueryRowContext(ctx, "SELECT id FROM assets WHERE address=?", "192.0.2.20").Scan(&assetID); err != nil {
+		t.Fatal(err)
+	}
+	input := taskflow.TaskInput{Engine: "auto", AssetID: assetID, Targets: []string{}, PortProbe: portprobe.Config{Preset: "custom", Ranges: []portprobe.Range{{Start: 22, End: 22}, {Start: 80, End: 80}}, OpsApproved: true}}
+	task, err := store.CreateLocalTask(ctx, input, actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed, err := store.ClaimRuntimeTask(ctx, "auto-worker"); err != nil || claimed == nil {
+		t.Fatalf("auto task claim failed: %+v %v", claimed, err)
+	}
+	report := taskflow.Report{TaskID: task.ID, WorkerID: "auto-worker", Status: "COMPLETED", SystemScanStatus: taskflow.SystemScanNotConfigured,
+		ApplicationScanStatus: taskflow.ApplicationScanNotConfigured, PortProbeResults: []taskflow.PortProbeResult{{Port: 80}},
+		ServiceResults: []taskflow.ServiceResult{{Port: 80, Kind: "HTTP", Scheme: "http"}}, TCPWrapped: 1}
+
+	for name, wrapped := range map[string]int{"negative": -1, "more than the ports left unreported": 2} {
+		bad := report
+		bad.TCPWrapped = wrapped
+		if err := store.CompleteRuntimeTask(ctx, bad); !errors.Is(err, ErrInvalidTask) {
+			t.Fatalf("%s tcpWrapped count accepted: %v", name, err)
+		}
+	}
+	if err := store.CompleteRuntimeTask(ctx, report); err != nil {
+		t.Fatalf("valid tcpWrapped count rejected: %v", err)
+	}
+	tasks, err := store.ListRuntimeTasks(ctx)
+	if err != nil || len(tasks) != 1 || tasks[0].TCPWrapped != 1 {
+		t.Fatalf("tcpWrapped count not persisted: %+v %v", tasks, err)
+	}
+}

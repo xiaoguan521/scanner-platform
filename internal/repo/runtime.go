@@ -222,6 +222,7 @@ func readRuntimeTask(row rowScanner) (taskflow.Task, error) {
 	task.PortProbeConfig = detail.Input.PortProbe
 	task.PortProbePorts = detail.ProbePorts
 	task.PortProbeResults = detail.ProbeResults
+	task.TCPWrapped = detail.TCPWrapped
 	task.VulnerabilityPorts = detail.VulnPorts
 	task.ServiceResults = detail.Services
 	task.SystemScanStatus = detail.SystemStatus

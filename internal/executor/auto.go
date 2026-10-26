@@ -35,7 +35,7 @@ func (r *Runner) AutoScan(ctx context.Context, task taskflow.Task) (taskflow.Aut
 	ctx = withHTTPBudget(ctx, rate, maxHTTPRequestsPerTarget)
 	probeTask := task
 	probeTask.Engines = []string{"port-probe"}
-	open, err := r.ProbePorts(ctx, probeTask)
+	open, tcpWrapped, err := r.probePortsDetailed(ctx, probeTask)
 	if err != nil {
 		return taskflow.AutoResult{}, err
 	}
@@ -53,7 +53,7 @@ func (r *Runner) AutoScan(ctx context.Context, task taskflow.Task) (taskflow.Aut
 	services := identifyServicesWithProgress(ctx, task.Chunks[0].Targets[0], openApproved, task.PortProbeConfig, func(completed, total int) {
 		taskflow.ReportProgress(ctx, "service_identification", completed, total)
 	})
-	result := taskflow.AutoResult{Ports: open, Services: services, Findings: []taskflow.Detection{}, SystemStatus: taskflow.SystemScanNotStarted, ApplicationStatus: taskflow.ApplicationScanNotStarted, AssetProfile: inferProfile(services)}
+	result := taskflow.AutoResult{TCPWrapped: tcpWrapped, Ports: open, Services: services, Findings: []taskflow.Detection{}, SystemStatus: taskflow.SystemScanNotStarted, ApplicationStatus: taskflow.ApplicationScanNotStarted, AssetProfile: inferProfile(services)}
 	markEngine := func(engine string) {
 		for _, existing := range result.ExecutedEngines {
 			if existing == engine {

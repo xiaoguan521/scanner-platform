@@ -140,6 +140,7 @@ type Task struct {
 	PortProbeConfig       portprobe.Config    `json:"portProbeConfig,omitempty"`
 	PortProbePorts        []int               `json:"portProbePorts,omitempty"`
 	PortProbeResults      []PortProbeResult   `json:"portProbeResults,omitempty"`
+	TCPWrapped            int                 `json:"tcpWrapped,omitempty"`
 	VulnerabilityPorts    []int               `json:"vulnerabilityPorts,omitempty"`
 	CustomTemplates       []json.RawMessage   `json:"customTemplates,omitempty"`
 	CustomRuleCount       int                 `json:"customRuleCount,omitempty"`
@@ -341,6 +342,7 @@ type Report struct {
 	Error                 string              `json:"error,omitempty"`
 	Findings              []Detection         `json:"findings,omitempty"`
 	PortProbeResults      []PortProbeResult   `json:"portProbeResults,omitempty"`
+	TCPWrapped            int                 `json:"tcpWrapped,omitempty"`
 	ServiceResults        []ServiceResult     `json:"serviceResults,omitempty"`
 	SystemScanStatus      string              `json:"systemScanStatus,omitempty"`
 	ApplicationScanStatus string              `json:"applicationScanStatus,omitempty"`
@@ -358,6 +360,8 @@ type Report struct {
 }
 
 type AutoResult struct {
+	// TCPWrapped counts ports that completed the handshake but ran no service.
+	TCPWrapped         int
 	Findings           []Detection
 	Ports              []PortProbeResult
 	Services           []ServiceResult

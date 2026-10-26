@@ -193,23 +193,37 @@ func scanWithPolicy(ctx context.Context, target string, ports []int, d dialer, p
 	return scanWithPolicyProgress(ctx, target, ports, d, policy, nil)
 }
 
+// Result separates ports that run a service from ports that completed the TCP
+// handshake but ended the connection without sending or keeping anything. The
+// latter are what nmap reports as tcpwrapped; a large number of them usually means
+// a firewall or load balancer answers on the host's behalf.
+type Result struct {
+	Open       []int
+	TCPWrapped []int
+}
+
 func scanWithPolicyProgress(ctx context.Context, target string, ports []int, d dialer, policy Policy, reportProgress ScanProgressFunc) ([]int, error) {
+	result, err := scanDetailed(ctx, target, ports, d, policy, reportProgress)
+	return result.Open, err
+}
+
+func scanDetailed(ctx context.Context, target string, ports []int, d dialer, policy Policy, reportProgress ScanProgressFunc) (Result, error) {
 	address, err := netip.ParseAddr(target)
 	if err != nil || address.Zone() != "" || address.IsUnspecified() || address.IsMulticast() || len(ports) == 0 || len(ports) > MaxPorts || d == nil {
-		return nil, ErrInvalidTarget
+		return Result{}, ErrInvalidTarget
 	}
 	seen := make(map[int]struct{}, len(ports))
 	for _, port := range ports {
 		if port < 1 || port > 65535 {
-			return nil, ErrInvalidConfig
+			return Result{}, ErrInvalidConfig
 		}
 		if _, ok := seen[port]; ok {
-			return nil, ErrInvalidConfig
+			return Result{}, ErrInvalidConfig
 		}
 		seen[port] = struct{}{}
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return Result{}, err
 	}
 	address = address.Unmap()
 	workers := policy.Concurrency
@@ -218,6 +232,7 @@ func scanWithPolicyProgress(ctx context.Context, target string, ports []int, d d
 	}
 	jobs := make(chan int)
 	open := make(chan int, len(ports))
+	wrapped := make(chan int, len(ports))
 	wildcard := &wildcardDetector{}
 	var done sync.WaitGroup
 	var progressMu sync.Mutex
@@ -234,6 +249,8 @@ func scanWithPolicyProgress(ctx context.Context, target string, ports []int, d d
 				if err == nil {
 					if !wildcard.strict.Load() || connectionStaysOpen(conn, settleWait) {
 						open <- port
+					} else {
+						wrapped <- port
 					}
 				}
 				if conn != nil {
@@ -264,7 +281,7 @@ func scanWithPolicyProgress(ctx context.Context, target string, ports []int, d d
 			case <-ctx.Done():
 				close(jobs)
 				done.Wait()
-				return nil, ctx.Err()
+				return Result{}, ctx.Err()
 			}
 		}
 		select {
@@ -272,29 +289,36 @@ func scanWithPolicyProgress(ctx context.Context, target string, ports []int, d d
 		case <-ctx.Done():
 			close(jobs)
 			done.Wait()
-			return nil, ctx.Err()
+			return Result{}, ctx.Err()
 		}
 	}
 	close(jobs)
 	done.Wait()
 	close(open)
+	close(wrapped)
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return Result{}, err
 	}
-	result := make([]int, 0, len(open))
+	result := Result{Open: make([]int, 0, len(open))}
 	for port := range open {
-		result = append(result, port)
+		result.Open = append(result.Open, port)
 	}
-	sort.Ints(result)
-	if wildcard.strict.Load() {
+	for port := range wrapped {
+		result.TCPWrapped = append(result.TCPWrapped, port)
+	}
+	sort.Ints(result.Open)
+	if wildcard.strict.Load() || suspiciousOpenSet(len(result.Open), len(ports)) {
 		// The in-pass check used a short window and skipped the earliest ports; verify
 		// every survivor again with the longer window. Fake ports close at once, so
 		// only the few real listeners wait for the full period.
-		return dropAcceptThenClose(ctx, address, result, d, policy)
+		kept, dropped, err := dropAcceptThenClose(ctx, address, result.Open, d, policy)
+		if err != nil {
+			return Result{}, err
+		}
+		result.Open = kept
+		result.TCPWrapped = append(result.TCPWrapped, dropped...)
 	}
-	if suspiciousOpenSet(len(result), len(ports)) {
-		return dropAcceptThenClose(ctx, address, result, d, policy)
-	}
+	sort.Ints(result.TCPWrapped)
 	return result, nil
 }
 
@@ -348,11 +372,12 @@ const (
 	settleWait = 400 * time.Millisecond
 )
 
-// finalSettleWait is the quiet period a surviving port must keep in the low-load
+// finalSettleWait matches nmap's tcpwrapped rule (a connection that ends within
+// about three seconds without data is not a service). It is the quiet period a surviving port must keep in the low-load
 // re-check. A middlebox that is slow under scan load can miss the short window
 // above, but it still closes an idle connection within milliseconds when probed
 // alone. A variable so tests can shorten it.
-var finalSettleWait = 2 * time.Second
+var finalSettleWait = 3 * time.Second
 
 func suspiciousOpenSet(open, probed int) bool {
 	return open >= wildcardMinOpen && open*2 >= probed
@@ -361,22 +386,25 @@ func suspiciousOpenSet(open, probed int) bool {
 // dropAcceptThenClose re-checks an implausibly large open set and keeps only the
 // ports whose connection stays open or sends data. It sends no data, so it stays
 // a passive connect-and-read check against the same authorized IP and ports.
-func dropAcceptThenClose(ctx context.Context, address netip.Addr, open []int, d dialer, policy Policy) ([]int, error) {
+func dropAcceptThenClose(ctx context.Context, address netip.Addr, open []int, d dialer, policy Policy) (kept, dropped []int, err error) {
 	workers := min(max(policy.Concurrency, 1), len(open))
 	jobs := make(chan int)
 	var mu sync.Mutex
-	kept := make([]int, 0, 64)
+	kept = make([]int, 0, 64)
 	var done sync.WaitGroup
 	for range workers {
 		done.Add(1)
 		go func() {
 			defer done.Done()
 			for port := range jobs {
-				if settlesOpen(ctx, address, port, d, policy.Timeout) {
-					mu.Lock()
+				stays := settlesOpen(ctx, address, port, d, policy.Timeout)
+				mu.Lock()
+				if stays {
 					kept = append(kept, port)
-					mu.Unlock()
+				} else {
+					dropped = append(dropped, port)
 				}
+				mu.Unlock()
 			}
 		}()
 	}
@@ -403,10 +431,11 @@ feed:
 	close(jobs)
 	done.Wait()
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	sort.Ints(kept)
-	return kept, nil
+	sort.Ints(dropped)
+	return kept, dropped, nil
 }
 
 func settlesOpen(ctx context.Context, address netip.Addr, port int, d dialer, timeout time.Duration) bool {
@@ -455,13 +484,20 @@ func ScanConfigured(ctx context.Context, target string, ports []int, config Conf
 // ScanConfiguredWithProgress probes the Server-approved port list and reports
 // completed attempts at a bounded cadence. Progress does not expose results.
 func ScanConfiguredWithProgress(ctx context.Context, target string, ports []int, config Config, reportProgress ScanProgressFunc) ([]int, error) {
+	result, err := ScanConfiguredDetailed(ctx, target, ports, config, reportProgress)
+	return result.Open, err
+}
+
+// ScanConfiguredDetailed is ScanConfiguredWithProgress that also returns the ports
+// that answered the handshake without running a service.
+func ScanConfiguredDetailed(ctx context.Context, target string, ports []int, config Config, reportProgress ScanProgressFunc) (Result, error) {
 	policy, err := PolicyFor(config)
 	if err != nil {
-		return nil, err
+		return Result{}, err
 	}
 	selected, err := SelectPorts(config)
 	if err != nil {
-		return nil, err
+		return Result{}, err
 	}
 	allowed := make(map[int]bool, len(selected))
 	for _, p := range selected {
@@ -469,8 +505,8 @@ func ScanConfiguredWithProgress(ctx context.Context, target string, ports []int,
 	}
 	for _, p := range ports {
 		if !allowed[p] {
-			return nil, ErrInvalidConfig
+			return Result{}, ErrInvalidConfig
 		}
 	}
-	return scanWithPolicyProgress(ctx, target, ports, &net.Dialer{}, policy, reportProgress)
+	return scanDetailed(ctx, target, ports, &net.Dialer{}, policy, reportProgress)
 }

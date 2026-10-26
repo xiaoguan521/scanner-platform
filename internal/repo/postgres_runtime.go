@@ -1053,6 +1053,7 @@ func (s *PostgresRuntimeStore) CompleteRuntimeTask(ctx context.Context, report t
 			return fmt.Errorf("save postgres inventory: %w", err)
 		}
 		task.PortProbeResults = append([]taskflow.PortProbeResult(nil), report.PortProbeResults...)
+		task.TCPWrapped = report.TCPWrapped
 		task.ServiceResults = append([]taskflow.ServiceResult(nil), report.ServiceResults...)
 		task.SystemScanStatus = report.SystemScanStatus
 		task.ApplicationScanStatus = report.ApplicationScanStatus

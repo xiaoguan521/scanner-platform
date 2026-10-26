@@ -37,6 +37,7 @@ type taskDetails struct {
 	Owners              map[string]targetOwner       `json:"owners"`
 	ProbePorts          []int                        `json:"probePorts,omitempty"`
 	ProbeResults        []taskflow.PortProbeResult   `json:"probeResults,omitempty"`
+	TCPWrapped          int                          `json:"tcpWrapped,omitempty"`
 	VulnPorts           []int                        `json:"vulnerabilityPorts,omitempty"`
 	CustomRules         [][]byte                     `json:"customRules,omitempty"`
 	Services            []taskflow.ServiceResult     `json:"services,omitempty"`

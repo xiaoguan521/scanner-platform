@@ -84,6 +84,8 @@ export interface ScanTask {
   assetProfile?: AssetProfile;
   portProbePorts?: number[];
   portProbeResults?: PortProbeResult[];
+  /** Ports that completed the TCP handshake but ran no service (nmap's tcpwrapped). */
+  tcpWrapped?: number;
   vulnerabilityPorts?: number[];
   serviceResults?: ServiceResult[];
   systemScanStatus?: string;
