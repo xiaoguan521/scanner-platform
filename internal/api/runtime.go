@@ -1,12 +1,14 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"regexp"
+	"time"
 
 	"scanner-platform/internal/account"
 	"scanner-platform/internal/repo"
@@ -271,8 +273,12 @@ func NewRuntimeHandlerWithUI(store repo.RuntimeBackend, fallback http.Handler, u
 			bad(w, http.StatusUnauthorized, "node_identity_mismatch")
 			return
 		}
-		if !runtimeStoreError(w, store.CompleteRuntimeTask(r.Context(), report)) {
-			if runtimeStoreError(w, store.TouchNode(r.Context(), report.WorkerID, "worker", "")) {
+		// Detach from the client connection: a Worker timeout must not roll back a
+		// nearly finished result transaction that the retry would redo from scratch.
+		reportCtx, cancelReport := context.WithTimeout(context.WithoutCancel(r.Context()), 2*time.Minute)
+		defer cancelReport()
+		if !runtimeStoreError(w, store.CompleteRuntimeTask(reportCtx, report)) {
+			if runtimeStoreError(w, store.TouchNode(reportCtx, report.WorkerID, "worker", "")) {
 				return
 			}
 			runtimeJSON(w, http.StatusOK, map[string]string{"state": "completed"})

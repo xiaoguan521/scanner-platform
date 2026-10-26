@@ -411,6 +411,8 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
+const reportTimeout = 90 * time.Second
+
 func (w *Worker) post(ctx context.Context, path string, payload, result any) (int, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -428,6 +430,14 @@ func (w *Worker) post(ctx context.Context, path string, payload, result any) (in
 	client := w.Client
 	if client == nil {
 		client = &http.Client{Timeout: 5 * time.Second}
+	}
+	if path == "/api/v1/worker/report" && (client.Timeout == 0 || client.Timeout < reportTimeout) {
+		// A final report writes the whole result in one Server transaction. Cutting it
+		// at the 5s heartbeat timeout cancels that transaction and every retry restarts
+		// it, so a briefly slow database could never accept the report.
+		copied := *client
+		copied.Timeout = reportTimeout
+		client = &copied
 	}
 	response, err := client.Do(req)
 	if err != nil {
